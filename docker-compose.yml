@@ -1,0 +1,111 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# docker-compose.yml
+#
+# Defines all services that make up the ProcureOps AI local development
+# environment. Run with: docker compose up --build
+#
+# Services:
+#   backend   — Python / FastAPI (port 8000)
+#   frontend  — Next.js / TypeScript (port 3000)
+#   postgres  — PostgreSQL 16 (port 5432)
+#   qdrant    — Qdrant vector database (port 6333)
+#   redis     — Redis 7 (port 6379)
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── Python / FastAPI backend ────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"           # API is available at http://localhost:8000
+    volumes:
+      # Mount the entire backend directory so code changes are reflected
+      # immediately without rebuilding the image. --reload in the CMD handles
+      # the automatic restart.
+      - ./backend:/app
+    env_file:
+      - .env                  # All POSTGRES_*, QDRANT_*, REDIS_* variables
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+      redis:
+        condition: service_started
+    restart: unless-stopped
+
+  # ── Next.js frontend ────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"           # App is available at http://localhost:3000
+    volumes:
+      # Mount only the source directories — NOT node_modules.
+      # Keeping node_modules inside the container avoids Windows/Linux
+      # compatibility issues with native binaries.
+      - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=development
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  # ── PostgreSQL 16 ───────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - "5432:5432"           # Also accessible from your host machine
+    environment:
+      # These must match the values in .env
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      # Named volume: data persists between container restarts.
+      # Without this, the database resets every time you run docker compose down.
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      # depends_on with condition: service_healthy waits for this to pass
+      # before starting the backend. Prevents "connection refused" on startup.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ── Qdrant vector database ──────────────────────────────────────────────────
+  qdrant:
+    image: qdrant/qdrant:v1.13.6
+    ports:
+      - "6333:6333"           # REST API — used for health checks and data
+      - "6334:6334"           # gRPC — higher performance (used later)
+    volumes:
+      - qdrant_data:/qdrant/storage
+    restart: unless-stopped
+
+  # ── Redis 7 ─────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    # --appendonly yes: persist data to disk so it survives restarts
+    command: redis-server --appendonly yes
+    restart: unless-stopped
+
+# ─── Named volumes ────────────────────────────────────────────────────────────
+# Docker manages these. They persist until you explicitly run:
+#   docker compose down -v   (WARNING: this deletes all data)
+volumes:
+  postgres_data:
+  qdrant_data:
+  redis_data:

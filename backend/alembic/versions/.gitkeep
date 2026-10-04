@@ -1,0 +1,4 @@
+# Bu klasör Alembic tarafından üretilen migration dosyalarını içerir.
+# "alembic revision --autogenerate" komutu burada yeni .py dosyaları oluşturur.
+# Bu .gitkeep dosyası klasörün Git'e dahil edilmesini sağlar
+# (Git boş klasörleri takip etmez).

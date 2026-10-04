@@ -1,0 +1,37 @@
+/*
+ * globals.css
+ *
+ * In Tailwind v4, a single @import is all you need.
+ * Tailwind injects its base styles, components, and utilities here.
+ *
+ * We can add custom CSS variables and base styles below this import.
+ */
+@import "tailwindcss";
+
+/* Custom CSS variables for our design system (extended as we build the UI) */
+:root {
+  --color-background: #0f1117;
+  --color-surface: #1a1f2e;
+  --color-border: #2a3042;
+  --color-accent: #3b82f6;   /* blue-500 — our primary action colour */
+  --color-accent-hover: #2563eb;
+  --color-text-primary: #f1f5f9;
+  --color-text-secondary: #94a3b8;
+  --color-success: #22c55e;
+  --color-warning: #f59e0b;
+  --color-error: #ef4444;
+}
+
+/* Smooth scrolling for the whole page */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Default body styles */
+body {
+  background-color: var(--color-background);
+  color: var(--color-text-primary);
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
