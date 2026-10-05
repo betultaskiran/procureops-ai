@@ -100,16 +100,16 @@ procureops-ai/
 |-------|-------------|--------|
 | 0 | Product & Architecture | ✅ Complete |
 | 1 | Development Foundation | ✅ Complete |
-| 2 | Domain Model | ⏳ Next |
-| 3 | Quote Ingestion & Extraction | — |
-| 4 | TCO Calculator | — |
-| 5 | Policy Knowledge Base (RAG) | — |
-| 6 | BM25 & Hybrid Retrieval | — |
-| 7 | Reranking | — |
+| 2 | Domain Model | ✅ Complete |
+| 3 | Quote Ingestion & Extraction | ✅ Complete |
+| 4 | TCO Calculator & Hard Rules | ✅ Complete |
+| 5 | Policy Knowledge Base (RAG) | ✅ Complete |
+| 6 | Agentic AI Reasoning | ⏳ Next |
+| 7 | BM25, Hybrid Search & Reranking | — |
 | 8 | Supplier Memory (SQL) | — |
-| 9 | Agentic Orchestration | — |
-| 10 | Verification & Evidence | — |
-| 11 | Frontend Workflow | — |
+| 9 | Verification & Evidence | — |
+| 10 | Frontend API Integration | — |
+| 11 | Frontend UI / UX | — |
 | 12 | Authentication & Authorization | — |
 | 13 | Background Jobs & Production AI | — |
 | 14 | AI Evaluation | — |

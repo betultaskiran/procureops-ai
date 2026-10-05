@@ -63,6 +63,9 @@ dependencies = [
 
     # Async file I/O. Used to save uploaded files without blocking the event loop.
     "aiofiles>=24.0.0",
+
+    # RAG / Vector DB (Phase 5)
+    "qdrant-client>=1.11.0",
 ]
 
 # ─── Build system ─────────────────────────────────────────────────────────────

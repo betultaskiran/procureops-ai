@@ -239,3 +239,12 @@ Format for each decision:
 - **Seçilen: Özetlenmiş eleme sonucu** → LLM A'nın neden olmadığını bilir, ama trade-off tartışmasına temeli olan tam veriye erişemez.
 
 **Trade-offs**: Kural tablosunun bakımı gerektirir. Yeni bir hard constraint eklemek için hem kural tablosuna hem de policy belgesine yazılması gerekebilir (çift kayıt riski). Bu risk Phase 5'te policy parsing geldiğinde azaltılabilir.
+
+## ADR-011: Vector Store and Embedding Provider Selection (Phase 5)
+**Date:** 2026-10-05
+**Context:** To support Enterprise Knowledge (RAG), we need a vector database to store document chunks and an embedding model to convert text to vectors.
+**Decision:** We selected **Qdrant** as the vector database because of its lightweight nature, excellent local Docker support, and robust asynchronous Python client. For embeddings, we selected Google's `gemini-embedding-2` model via the `google-genai` SDK.
+**Consequences:**
+* `gemini-embedding-2` outputs vectors of dimension 3072, requiring the Qdrant collection to be strictly initialized with `size=3072`.
+* By implementing `EmbeddingProvider` and `QdrantService` abstractions, the architecture remains vendor-agnostic. We can easily switch to OpenAI `text-embedding-3` or a local SentenceTransformer model in the future.
+* Tenant isolation is enforced natively via Qdrant's `PayloadSchemaType.KEYWORD` on `organization_id`, ensuring users only search across their organization's knowledge base.

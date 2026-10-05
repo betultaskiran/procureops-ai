@@ -187,3 +187,15 @@ Index de maliyeti var: her INSERT/UPDATE biraz yavaşlar. Denge önemli.
 ---
 
 *More phases will be added as we progress.*
+
+## Phase 4: Deterministic Policy & Financial Engine
+**What we learned:**
+* **Deterministic vs. Generative Math:** LLMs hallucinate math. TCO (Total Cost of Ownership) calculations must be deterministic (Python `Decimal` math) to guarantee 100% financial accuracy.
+* **Pre-LLM Filtering (Hard Rules):** Not every quote needs LLM reasoning. By passing quotes through strict business rules (e.g., `max_delivery_days`) first, we can instantly eliminate non-compliant quotes (`is_compliant=False`). This saves token costs, reduces latency, and prevents the LLM from making unauthorized compromises on strict policies.
+
+## Phase 5: Enterprise Knowledge (RAG)
+**What we learned:**
+* **Vector Dimensionality:** Different embedding models output vectors of different lengths (e.g., `text-embedding-004` is 768, `gemini-embedding-2` is 3072). The vector database collection MUST be configured to match this exact dimension, otherwise insertion will fail.
+* **Semantic Search (Cosine Similarity):** Unlike SQL `LIKE` queries, vector search understands meaning. Searching for "dikkat etmeliyiz" successfully retrieved chunks about "teslimat gecikmeleri" and "ceza şartı".
+* **Chunking Strategy:** Long documents cannot be fed entirely into the LLM context. We built an overlapping chunking algorithm (`chunk_size=1000`, `overlap=200`) to split documents without losing sentence context.
+* **Async SDK Evolution:** Ecosystem libraries change rapidly. Qdrant's async Python client deprecated `.search()` in favor of `.query_points()`, requiring agility in code updates.
