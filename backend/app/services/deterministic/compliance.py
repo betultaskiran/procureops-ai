@@ -7,6 +7,7 @@ Böylece halüsinasyon riski engellenir.
 """
 
 import uuid
+import json
 from typing import List
 
 from app.models.quote import Quote
@@ -101,6 +102,36 @@ class ComplianceChecker:
                         str(tco_result.total_tco), str(rules.max_tco_budget), "Uygun."
                     )
                 )
+
+        # 4. Ödeme Koşulları (Payment Terms) Kuralı
+        if rules.require_payment_terms is not None and len(rules.require_payment_terms) > 0:
+            rule_name = "require_payment_terms"
+            desc = "Zorunlu ödeme koşulu kontrolü"
+            allowed_terms = rules.require_payment_terms
+            
+            if quote.payment_terms is None:
+                checks.append(
+                    cls._create_check(
+                        analysis_id, quote.id, rule_name, desc, ComplianceResult.FAIL,
+                        "None", json.dumps(allowed_terms), "Ödeme koşulu belirtilmemiş."
+                    )
+                )
+            else:
+                # Basit string eşleştirme (Gerçekte daha esnek yapılabilir)
+                if quote.payment_terms.strip().lower() in [term.lower() for term in allowed_terms]:
+                    checks.append(
+                        cls._create_check(
+                            analysis_id, quote.id, rule_name, desc, ComplianceResult.PASS,
+                            quote.payment_terms, json.dumps(allowed_terms), "Uygun."
+                        )
+                    )
+                else:
+                    checks.append(
+                        cls._create_check(
+                            analysis_id, quote.id, rule_name, desc, ComplianceResult.FAIL,
+                            quote.payment_terms, json.dumps(allowed_terms), "Kabul edilemez ödeme koşulu."
+                        )
+                    )
 
         return checks
 

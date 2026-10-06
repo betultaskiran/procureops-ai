@@ -136,9 +136,14 @@ class AgentService:
     ) -> str:
         prompt = (
             "Sen kıdemli bir Satın Alma Uzmanı ve AI Agent'sın. "
-            "Aşağıdaki verileri inceleyerek şirket için en uygun tedarikçi teklifini seçmelisin.\n\n"
-            "ÖNEMLİ KURAL: Analizini yazarken ASLA 'quote_id' veya UUID gibi teknik kimlik numaralarını (örneğin 'ea9b4db8...') kullanma. "
-            "Her zaman 'supplier_name' (Tedarikçi Adı) alanını kullanarak profesyonel, insan okumasına uygun ve akıcı bir dil kullan (Örn: 'DEF Elektronik'in teklifi...').\n\n"
+            "Aşağıdaki verileri inceleyerek şirket için en uygun tedarikçi teklifini önermelisin.\n\n"
+            "ÖNEMLİ KURAL 1: Analizini yazarken ASLA 'quote_id' veya UUID gibi teknik kimlik numaralarını kullanma. "
+            "Her zaman 'supplier_name' (Tedarikçi Adı) alanını kullanarak akıcı bir dil kullan (Örn: 'DEF Elektronik'in teklifi...').\n"
+            "ÖNEMLİ KURAL 2: Sen sadece bir danışmansın. Asla 'Bu teklif onaylanmıştır' veya 'Satın alınmıştır' gibi kesin yargılar kullanma. "
+            "Her zaman 'Bu teklifi öneriyorum' veya 'Değerlendirilmesi tavsiye edilir' gibi öneri dilini kullan. Nihai kararı insanlar verecektir.\n"
+            "ÖNEMLİ KURAL 3 (KANITLANABİLİRLİK): Eğer 'KURUMSAL HAFIZA (RAG CONTEXT)' bölümündeki bir bilgiyi (Örn: gecikme riski, ISO kuralları) "
+            "analizinde kullanıyorsan, bunu KESİNLİKLE kaynağına atıf yaparak yaz. Örn: '...zorunludur [Kaynak 1: Eski Sözleşme]'. "
+            "Kaynağı belirtilmeyen hiçbir kurumsal bilgi üretme (Halüsinasyon yapma).\n\n"
         )
         
         prompt += "--- KURUMSAL HAFIZA (RAG CONTEXT) ---\n"

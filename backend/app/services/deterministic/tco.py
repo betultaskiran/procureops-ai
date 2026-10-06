@@ -45,11 +45,11 @@ class TCOCalculator:
         # Toplam TCO
         total_tco = taxable_amount + calculated_vat + shipping + other_costs
         
-        # Not oluştur
+        # Not oluştur (İnsan okumasına uygun formatlama)
         notes = (
-            f"Subtotal: {subtotal}, Discount: {discount}, "
-            f"Taxable: {taxable_amount}, VAT({vat_rate*100}%): {calculated_vat}, "
-            f"Shipping: {shipping}, Other: {other_costs} => TCO: {total_tco}"
+            f"Subtotal: {subtotal:,.2f}, Discount: {discount:,.2f}, "
+            f"Taxable: {taxable_amount:,.2f}, VAT({vat_rate*100:.0f}%): {calculated_vat:,.2f}, "
+            f"Shipping: {shipping:,.2f}, Other: {other_costs:,.2f} => TCO: {total_tco:,.2f}"
         )
         
         return TCOResult(
