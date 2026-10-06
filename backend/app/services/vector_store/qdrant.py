@@ -32,25 +32,31 @@ class QdrantService:
 
     async def initialize_collection(self):
         """
-        Koleksiyon yoksa oluşturur.
-        Bu genelde uygulamanın başlangıcında çağrılır.
+        Koleksiyon yoksa oluşturur. Hybrid Search için hem Dense hem de Sparse vektör yapılandırır.
         """
-        # Koleksiyon var mı kontrol et
         exists = await self.client.collection_exists(collection_name=self.COLLECTION_NAME)
         
         if not exists:
-            # Boyutu embedding provider'dan alıyoruz (Örn Gemini için 768)
             dimension = self.embedding_provider.dimension
             
             await self.client.create_collection(
                 collection_name=self.COLLECTION_NAME,
-                vectors_config=models.VectorParams(
-                    size=dimension,
-                    distance=models.Distance.COSINE,
-                )
+                # Çoklu vektör (Named Vectors) kullanıyoruz. 
+                # Biri "text-dense" (Gemini Anlamsal), diğeri "text-sparse" (BM25 Kelime)
+                vectors_config={
+                    "text-dense": models.VectorParams(
+                        size=dimension,
+                        distance=models.Distance.COSINE,
+                    )
+                },
+                sparse_vectors_config={
+                    "text-sparse": models.SparseVectorParams(
+                        modifier=models.Modifier.IDF
+                    )
+                }
             )
 
-            # Metadata bazlı filtreleme için indeksler (Hız için)
+            # Metadata bazlı filtreleme için indeks
             await self.client.create_payload_index(
                 collection_name=self.COLLECTION_NAME,
                 field_name="organization_id",
@@ -65,16 +71,21 @@ class QdrantService:
         metadata: Dict[str, Any] = None
     ):
         """
-        Metin parçalarını (chunks) alır, vektöre çevirir ve Qdrant'a yazar.
+        Metin parçalarını (chunks) alır, vektöre çevirir (Dense + Sparse) ve Qdrant'a yazar.
         """
         if not chunks:
             return
 
-        # Vektörleri oluştur (Batch)
-        embeddings = await self.embedding_provider.embed_batch(chunks)
+        # 1. Dense Vektörleri (Anlam) oluştur
+        dense_embeddings = await self.embedding_provider.embed_batch(chunks)
+        
+        # 2. Sparse Vektörleri (BM25 Kelime) oluştur
+        from app.services.embeddings.sparse import SparseEmbeddingService
+        sparse_service = SparseEmbeddingService()
+        sparse_embeddings = sparse_service.embed_texts(chunks)
 
         points = []
-        for i, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
+        for i, (chunk, d_emb, s_emb) in enumerate(zip(chunks, dense_embeddings, sparse_embeddings)):
             payload = {
                 "organization_id": str(organization_id),
                 "doc_id": str(doc_id),
@@ -86,8 +97,15 @@ class QdrantService:
 
             points.append(
                 models.PointStruct(
-                    id=str(uuid.uuid4()),  # Qdrant için rastgele UUID
-                    vector=embedding,
+                    id=str(uuid.uuid4()),
+                    # Named vectors kullanıyoruz
+                    vector={
+                        "text-dense": d_emb,
+                        "text-sparse": models.SparseVector(
+                            indices=s_emb["indices"],
+                            values=s_emb["values"]
+                        )
+                    },
                     payload=payload
                 )
             )
@@ -106,13 +124,19 @@ class QdrantService:
         score_threshold: float = 0.5
     ) -> List[Dict[str, Any]]:
         """
-        Kullanıcının sorgusuna (query) en yakın belgeleri bulur.
-        Sadece kullanıcının ait olduğu organizasyonun belgelerinde arama yapar.
+        Kullanıcının sorgusuna en yakın belgeleri bulur.
+        Dense (Anlam) ve Sparse (Kelime) vektörleri aynı anda arar (Hybrid Search)
+        ve Reciprocal Rank Fusion (RRF) ile sonuçları birleştirir.
         """
-        # Sorguyu vektöre çevir
-        query_vector = await self.embedding_provider.embed_text(query)
+        # 1. Sorguyu Dense Vektöre Çevir
+        query_dense = await self.embedding_provider.embed_text(query)
 
-        # Filtre (Tenant izolasyonu)
+        # 2. Sorguyu Sparse Vektöre Çevir
+        from app.services.embeddings.sparse import SparseEmbeddingService
+        sparse_service = SparseEmbeddingService()
+        query_sparse = sparse_service.embed_texts([query])[0]
+
+        # 3. Filtre (Tenant izolasyonu)
         filter = models.Filter(
             must=[
                 models.FieldCondition(
@@ -122,13 +146,29 @@ class QdrantService:
             ]
         )
 
+        # 4. Hybrid Search (RRF)
         response = await self.client.query_points(
             collection_name=self.COLLECTION_NAME,
-            query=query_vector,
-            query_filter=filter,
-            limit=limit,
-            score_threshold=score_threshold
+            prefetch=[
+                models.Prefetch(
+                    query=query_dense,
+                    using="text-dense",
+                    limit=limit * 2,
+                    filter=filter
+                ),
+                models.Prefetch(
+                    query=models.SparseVector(
+                        indices=query_sparse["indices"],
+                        values=query_sparse["values"]
+                    ),
+                    using="text-sparse",
+                    limit=limit * 2,
+                    filter=filter
+                )
+            ],
+            query=models.FusionQuery(fusion=models.Fusion.RRF),
+            limit=limit
         )
 
-        # Sadece payload'u döndür (metin ve diğer metadata'lar)
+        # Sadece payload'u döndür
         return [hit.payload for hit in response.points]

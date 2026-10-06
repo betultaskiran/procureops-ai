@@ -82,7 +82,7 @@ class RAGService:
         # Bulunan metinleri alt alta ekle
         context_parts = []
         for i, payload in enumerate(results, 1):
-            source_doc = payload.get("source_name", "Bilinmeyen Belge")
+            source_doc = payload.get("source") or payload.get("source_name") or "Bilinmeyen Belge"
             text = payload.get("text", "")
             context_parts.append(f"[Kaynak {i}: {source_doc}]\n{text}\n")
 
