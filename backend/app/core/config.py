@@ -54,7 +54,7 @@ class Settings(BaseSettings):
 
     # Which Gemini model to use for extraction tasks.
     # thinking_budget is controlled per-call, not here.
-    GEMINI_MODEL: str = "gemini-3.8-flash"
+    GEMINI_MODEL: str = "gemini-3.5-flash"
 
     # ── File Storage ─────────────────────────────────────────────────────────
     # Relative to the working directory (/app inside Docker).
