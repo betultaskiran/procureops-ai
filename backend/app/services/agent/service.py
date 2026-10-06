@@ -10,10 +10,11 @@ import json
 from typing import List, Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
-from sqlalchemy import select
+from sqlalchemy import select, func
 
 from app.models.analysis import Analysis, ComplianceResult, Recommendation, AnalysisStatus
 from app.models.quote import Quote
+from app.models.supplier import SupplierHistory
 from app.services.llm import get_llm_provider
 from app.services.llm.base import ExtractionConfig
 from app.services.rag.service import RAGService
@@ -85,7 +86,6 @@ class AgentService:
                 })
 
         # 3. RAG'dan kurumsal hafızayı (Context) çek
-        # Şimdilik genel bir arama yapıyoruz. Phase 8'de supplier geçmişini SQL'den çekeceğiz.
         rag_query = "Tedarikçi riskleri, satın alma yönergeleri ve ödeme kısıtlamaları."
         rag_context = await self.rag.retrieve_context(
             organization_id=organization_id,
@@ -93,8 +93,42 @@ class AgentService:
             top_k=3
         )
 
+        # 3.5 SQL'den Tedarikçi Geçmişini (Supplier Memory) çek (Phase 8)
+        supplier_ids = list(set([quote.supplier_id for quote in quotes]))
+        
+        sql_context = ""
+        if supplier_ids:
+            # Aggregate metrics for each supplier
+            history_query = (
+                select(
+                    SupplierHistory.supplier_id,
+                    func.count(SupplierHistory.id).label("total_orders"),
+                    func.avg(SupplierHistory.delay_days).label("avg_delay"),
+                    func.sum(SupplierHistory.quality_issues).label("total_quality_issues")
+                )
+                .where(SupplierHistory.supplier_id.in_(supplier_ids))
+                .group_by(SupplierHistory.supplier_id)
+            )
+            history_result = await self.db.execute(history_query)
+            metrics = history_result.all()
+
+            if metrics:
+                sql_context = "--- SQL TEDARİKÇİ GEÇMİŞİ (SUPPLIER MEMORY) ---\n"
+                for metric in metrics:
+                    # Find supplier name
+                    supplier_name = next(
+                        (q.supplier.name for q in quotes if q.supplier_id == metric.supplier_id), 
+                        "Bilinmeyen Tedarikçi"
+                    )
+                    sql_context += f"Tedarikçi: {supplier_name}\n"
+                    sql_context += f"- Toplam Geçmiş Sipariş: {metric.total_orders}\n"
+                    # Handle None values
+                    avg_d = round(float(metric.avg_delay), 1) if metric.avg_delay is not None else 0.0
+                    sql_context += f"- Ortalama Gecikme (Gün): {avg_d}\n"
+                    sql_context += f"- Toplam Kalite Sorunu: {metric.total_quality_issues or 0}\n\n"
+
         # 4. LLM Promptunu oluştur
-        prompt = self._build_prompt(eligible_quotes, eliminated_quotes, rag_context)
+        prompt = self._build_prompt(eligible_quotes, eliminated_quotes, rag_context, sql_context)
 
         # 5. LLM'den Yapılandırılmış Çıktı İste (Structured Output)
         config = ExtractionConfig(thinking_budget=1024)
@@ -132,7 +166,8 @@ class AgentService:
         self, 
         eligible_quotes: List[Dict[str, Any]], 
         eliminated_quotes: List[Dict[str, Any]],
-        rag_context: str
+        rag_context: str,
+        sql_context: str = ""
     ) -> str:
         prompt = (
             "Sen kıdemli bir Satın Alma Uzmanı ve AI Agent'sın. "
@@ -142,12 +177,16 @@ class AgentService:
             "ÖNEMLİ KURAL 2: Sen sadece bir danışmansın. Asla 'Bu teklif onaylanmıştır' veya 'Satın alınmıştır' gibi kesin yargılar kullanma. "
             "Her zaman 'Bu teklifi öneriyorum' veya 'Değerlendirilmesi tavsiye edilir' gibi öneri dilini kullan. Nihai kararı insanlar verecektir.\n"
             "ÖNEMLİ KURAL 3 (KANITLANABİLİRLİK): Eğer 'KURUMSAL HAFIZA (RAG CONTEXT)' bölümündeki bir bilgiyi (Örn: gecikme riski, ISO kuralları) "
-            "analizinde kullanıyorsan, bunu KESİNLİKLE kaynağına atıf yaparak yaz. Örn: '...zorunludur [Kaynak 1: Eski Sözleşme]'. "
-            "Kaynağı belirtilmeyen hiçbir kurumsal bilgi üretme (Halüsinasyon yapma).\n\n"
+            "veya 'SQL TEDARİKÇİ GEÇMİŞİ' bölümündeki geçmiş performans verilerini (Örn: ortalama gecikme günü, kalite sorunu) "
+            "analizinde kullanıyorsan, bunu KESİNLİKLE kaynağına atıf yaparak yaz. Örn: '...zorunludur [Kaynak 1: Eski Sözleşme]' veya '...5 gün gecikme yaşanmıştır [Kaynak 2: SQL Geçmişi]'. "
+            "Kaynağı belirtilmeyen hiçbir kurumsal veya geçmiş bilgi üretme (Halüsinasyon yapma).\n\n"
         )
         
         prompt += "--- KURUMSAL HAFIZA (RAG CONTEXT) ---\n"
         prompt += f"{rag_context}\n\n"
+        
+        if sql_context:
+            prompt += f"{sql_context}\n"
 
         prompt += "--- ELENEN TEKLİFLER (HARD FAIL) ---\n"
         prompt += "Bu teklifler deterministik kural motorundan geçemedi. Bunları ASLA seçme. Sadece kıyaslama (trade-off) analizinde kullanabilirsin (Örn: A daha ucuzdu ama kurallara uymadığı için eledik).\n"
