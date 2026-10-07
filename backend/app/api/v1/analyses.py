@@ -140,3 +140,67 @@ async def run_analysis(
             detail=f"Agent analysis failed: {str(e)}",
         )
 
+class ReviewRequest(BaseModel):
+    status: str # "approved", "rejected", "revision_requested", "exception_requested", "exception_approved"
+    comment: str | None = None
+    reviewer_id: uuid.UUID | None = None # Geliştirme ortamı için opsiyonel
+    selected_quote_id: uuid.UUID | None = None
+    acknowledged_policy_violation: bool = False
+
+class ReviewResponse(BaseModel):
+    id: uuid.UUID
+    analysis_id: uuid.UUID
+    status: str
+    comment: str | None
+    selected_quote_id: uuid.UUID | None
+    acknowledged_policy_violation: bool
+    
+    model_config = {"from_attributes": True}
+
+@router.post(
+    "/analyses/{analysis_id}/review",
+    response_model=ReviewResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Analiz Önerisini Değerlendir (Human Approval)"
+)
+async def review_analysis(
+    analysis_id: uuid.UUID,
+    request: ReviewRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Sistemin sunduğu LLM tavsiyesini bir insanın (manager) inceleyip 
+    onaylaması veya reddetmesi işlemini gerçekleştirir.
+    """
+    from app.models.analysis import Analysis, Approval, ApprovalStatus
+    from sqlalchemy import select
+    from datetime import datetime
+
+    # Analizin varlığını kontrol et
+    result = await db.execute(select(Analysis).where(Analysis.id == analysis_id))
+    analysis = result.scalars().first()
+    if not analysis:
+        raise HTTPException(status_code=404, detail="Analysis not found")
+
+    if request.status not in [e.value for e in ApprovalStatus]:
+        raise HTTPException(status_code=400, detail="Invalid approval status")
+
+    approval = Approval(
+        analysis_id=analysis_id,
+        reviewer_id=request.reviewer_id,
+        status=request.status,
+        comment=request.comment,
+        reviewed_at=datetime.utcnow(),
+        selected_quote_id=request.selected_quote_id,
+        acknowledged_policy_violation=request.acknowledged_policy_violation
+    )
+    
+    db.add(approval)
+    await db.commit()
+    await db.refresh(approval)
+
+    # İleride burada, onaylandıysa PO (satın alma siparişi) sistemini veya 
+    # mail servisini tetikleyen (Phase 12) kodlar yer alacak.
+
+    return ReviewResponse.model_validate(approval)
+

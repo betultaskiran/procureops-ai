@@ -63,6 +63,8 @@ class ApprovalStatus(str, enum.Enum):
     APPROVED = "approved"
     REJECTED = "rejected"
     REVISION_REQUESTED = "revision_requested"
+    EXCEPTION_REQUESTED = "exception_requested"
+    EXCEPTION_APPROVED = "exception_approved"
 
 
 class Analysis(Base, UUIDPrimaryKeyMixin, TimestampMixin):
@@ -351,6 +353,18 @@ class Approval(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
 
     comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # İnisiyatif (Exception) kullanımı durumunda seçilen özel teklif
+    selected_quote_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("quotes.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    # Politikaya aykırı olduğunu bilerek onaylama bayrağı
+    acknowledged_policy_violation: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
 
     # Karar verilen zaman (None = henüz karar verilmedi)
     reviewed_at: Mapped[datetime | None] = mapped_column(
