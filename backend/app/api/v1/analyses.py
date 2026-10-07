@@ -50,13 +50,23 @@ class AnalyzeRequest(BaseModel):
     rules: PolicyRules
 
 
+class EvidenceItemResponse(BaseModel):
+    source_type: str
+    source_reference: str
+    claim: str
+
+    model_config = {"from_attributes": True}
+
 class RecommendationResponse(BaseModel):
     recommended_quote_id: uuid.UUID | None
     reasoning: str
     risks: str | None
     alternative_notes: str | None
     verification_status: str
-
+    verification_notes: str | None = None
+    # evidence_items must not be mandatory or the model_validate will fail if it's not loaded
+    # wait, we didn't add evidence_items relationship to the Pydantic schema properly yet. We'll skip evidence_items in the schema for now and just show verification_notes.
+    
     model_config = {"from_attributes": True}
 
 
@@ -67,6 +77,7 @@ class AnalysisResponse(BaseModel):
     tco_results: List[TCOResultResponse] = []
     compliance_checks: List[ComplianceCheckResponse] = []
     recommendation: RecommendationResponse | None = None
+    evidence_items: List[EvidenceItemResponse] = []
 
     model_config = {"from_attributes": True}
 
@@ -111,8 +122,17 @@ async def run_analysis(
             analysis_id=analysis.id,
             organization_id=str(request.organization_id)
         )
+        
+        # 3. Doğrulama Katmanı (Verification)
+        from app.services.agent.verification import VerificationService
+        verification_service = VerificationService(db=db)
+        verified_recommendation = await verification_service.verify_recommendation(recommendation_id=recommendation.id)
+
+        # Reload analysis with evidence items
+        await db.refresh(analysis, ["evidence_items"])
+
         # SQLAlchemy ilişkiyi otomatik yansıtmamış olabilir, manually set for response
-        analysis.recommendation = recommendation
+        analysis.recommendation = verified_recommendation
         return AnalysisResponse.model_validate(analysis)
     except Exception as e:
         raise HTTPException(
