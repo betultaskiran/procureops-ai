@@ -8,7 +8,7 @@ Analiz endpoint'leri. Şimdilik sadece deterministik (TCO + Compliance) çalış
 import uuid
 from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -166,6 +166,7 @@ class ReviewResponse(BaseModel):
 async def review_analysis(
     analysis_id: uuid.UUID,
     request: ReviewRequest,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -173,6 +174,8 @@ async def review_analysis(
     onaylaması veya reddetmesi işlemini gerçekleştirir.
     """
     from app.models.analysis import Analysis, Approval, ApprovalStatus
+    from app.services.workflow.order import PurchaseOrderService
+    from app.services.workflow.email import EmailService
     from sqlalchemy import select
     from datetime import datetime
 
@@ -199,8 +202,14 @@ async def review_analysis(
     await db.commit()
     await db.refresh(approval)
 
-    # İleride burada, onaylandıysa PO (satın alma siparişi) sistemini veya 
-    # mail servisini tetikleyen (Phase 12) kodlar yer alacak.
+    # İş akışı (Workflow) ayrımı:
+    if request.status in [ApprovalStatus.APPROVED.value, ApprovalStatus.EXCEPTION_APPROVED.value]:
+        # 1. PO Kaydı oluştur (senkron)
+        po = await PurchaseOrderService.create_po_from_approval(db, approval)
+        # 2. Email Job'ı kuyruğa at (asenkron, BackgroundTasks)
+        background_tasks.add_task(EmailService.send_po_email, str(po.id))
+    
+    # REJECTED veya REVISION_REQUESTED durumlarında PO/Email çalışmaz.
 
     return ReviewResponse.model_validate(approval)
 

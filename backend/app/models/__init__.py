@@ -36,6 +36,7 @@ from app.models.analysis import (
     ApprovalStatus,
 )
 from app.models.audit import AuditEvent
+from app.models.order import PurchaseOrder
 
 __all__ = [
     # Base
@@ -75,4 +76,6 @@ __all__ = [
     "ApprovalStatus",
     # Audit
     "AuditEvent",
+    # Order
+    "PurchaseOrder",
 ]
