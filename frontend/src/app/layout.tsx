@@ -13,11 +13,15 @@
  */
 
 import type { Metadata } from "next";
+import { Inter } from "next/font/google";
 import "./globals.css";
+
+const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
+
+import { ThemeProvider } from "@/components/theme-provider";
 
 export const metadata: Metadata = {
   title: {
-    // %s is replaced by the page's title. "| ProcureOps AI" is the suffix.
     template: "%s | ProcureOps AI",
     default: "ProcureOps AI",
   },
@@ -33,13 +37,17 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
-      {/*
-       * suppressHydrationWarning: prevents a React warning when the server
-       * and client render slightly different HTML (e.g. browser extensions
-       * that add attributes to <body>). Safe to add here.
-       */}
-      <body suppressHydrationWarning>{children}</body>
+    <html lang="en" suppressHydrationWarning>
+      <body className={`${inter.variable} font-sans antialiased bg-bg text-text-primary`} suppressHydrationWarning>
+        <ThemeProvider
+          attribute="class"
+          defaultTheme="light"
+          enableSystem={false}
+          disableTransitionOnChange
+        >
+          {children}
+        </ThemeProvider>
+      </body>
     </html>
   );
 }
