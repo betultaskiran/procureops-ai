@@ -17,7 +17,9 @@ import {
   ChevronRight,
   FilterX,
   Loader2,
-  FileIcon
+  FileIcon,
+  Plus,
+  Trash2
 } from "lucide-react";
 import { rfqsApi } from "@/lib/api/rfqs";
 import { DashboardRFQResponse, SupplierResponse } from "@/lib/api/types";
@@ -34,6 +36,14 @@ export default function DashboardPage() {
   // Modal states
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const [uploadTitle, setUploadTitle] = useState("");
+  const [uploadDescription, setUploadDescription] = useState("");
+  const [uploadBudget, setUploadBudget] = useState("");
+  const [uploadMaxDeliveryDays, setUploadMaxDeliveryDays] = useState("");
+  const [uploadMinWarrantyMonths, setUploadMinWarrantyMonths] = useState("");
+  const [uploadPaymentTerms, setUploadPaymentTerms] = useState("net-30");
+  const [uploadItems, setUploadItems] = useState<{ description: string; quantity: string; unit: string }[]>([
+    { description: "", quantity: "1", unit: "Adet" }
+  ]);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
 
@@ -54,8 +64,8 @@ export default function DashboardPage() {
   }, []);
 
   const handleCreateSubmit = async () => {
-    if (!uploadTitle) {
-      setUploadError("Please enter a title.");
+    if (!uploadTitle.trim()) {
+      setUploadError("Please enter an RFQ title.");
       return;
     }
     
@@ -63,7 +73,23 @@ export default function DashboardPage() {
       setIsUploading(true);
       setUploadError(null);
       
-      const rfq = await rfqsApi.createRfq({ title: uploadTitle });
+      const validItems = uploadItems
+        .filter(it => it.description.trim())
+        .map(it => ({
+          description: it.description.trim(),
+          quantity: parseFloat(it.quantity) || 1,
+          unit: it.unit.trim() || null
+        }));
+
+      const rfq = await rfqsApi.createRfq({
+        title: uploadTitle.trim(),
+        description: uploadDescription.trim() || undefined,
+        budget: uploadBudget ? parseFloat(uploadBudget) : undefined,
+        max_delivery_days: uploadMaxDeliveryDays ? parseInt(uploadMaxDeliveryDays) : undefined,
+        min_warranty_months: uploadMinWarrantyMonths ? parseInt(uploadMinWarrantyMonths) : undefined,
+        payment_terms: uploadPaymentTerms.trim() || undefined,
+        items: validItems.length > 0 ? validItems : undefined
+      });
       
       router.push(`/dashboard/rfq/${rfq.id}`);
       
@@ -212,34 +238,173 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* ?? New RFQ Modal ?? */}
+      {/* ── New RFQ Modal ──────────────────────────────────────────────── */}
       {isUploadOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-          <div className="bg-surface-elevated border border-border rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-            <div className="px-6 py-4 border-b border-border flex items-center justify-between">
-              <h2 className="font-semibold text-text-primary">Create New RFQ</h2>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 overflow-y-auto">
+          <div className="bg-surface-elevated border border-border rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            <div className="px-6 py-4 border-b border-border flex items-center justify-between bg-surface/50">
+              <div>
+                <h2 className="font-semibold text-text-primary text-lg">Create New RFQ</h2>
+                <p className="text-xs text-text-muted mt-0.5">Define your procurement requirements and line items.</p>
+              </div>
               <button onClick={() => { setIsUploadOpen(false); setUploadError(null); }} className="text-text-muted hover:text-text-primary transition-colors">
                 <X size={20} />
               </button>
             </div>
             
-            <div className="p-6 flex flex-col gap-6">
-              <div className="flex flex-col gap-3">
-                <label className="text-xs font-semibold text-text-primary">RFQ Title <span className="text-red-500">*</span></label>
-                <input 
-                  type="text" 
-                  value={uploadTitle}
-                  onChange={(e) => setUploadTitle(e.target.value)}
-                  placeholder="e.g. Server Procurement 2026" 
-                  className="px-3 py-2 text-sm bg-bg border border-border rounded-md text-text-primary focus:outline-none focus:border-primary transition-colors"
-                />
-              </div>
-              
+            <div className="p-6 flex flex-col gap-6 overflow-y-auto flex-1">
               {uploadError && (
                 <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-500 text-xs rounded-md font-medium">
                   {uploadError}
                 </div>
               )}
+
+              {/* Basic Info */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="sm:col-span-2 flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-text-primary">RFQ Title <span className="text-red-500">*</span></label>
+                  <input 
+                    type="text" 
+                    value={uploadTitle}
+                    onChange={(e) => setUploadTitle(e.target.value)}
+                    placeholder="e.g. Server & Workstation Procurement 2026" 
+                    className="px-3 py-2 text-sm bg-bg border border-border rounded-md text-text-primary focus:outline-none focus:border-primary transition-colors"
+                  />
+                </div>
+
+                <div className="sm:col-span-2 flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-text-primary">Description</label>
+                  <textarea 
+                    rows={2}
+                    value={uploadDescription}
+                    onChange={(e) => setUploadDescription(e.target.value)}
+                    placeholder="Brief description of the procurement goal and requirements..." 
+                    className="px-3 py-2 text-sm bg-bg border border-border rounded-md text-text-primary focus:outline-none focus:border-primary transition-colors resize-none"
+                  />
+                </div>
+              </div>
+
+              {/* Line Items */}
+              <div className="flex flex-col gap-3">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold text-text-primary uppercase tracking-wider">
+                    Requested Items / Requirements ({uploadItems.length})
+                  </label>
+                  <button 
+                    type="button"
+                    onClick={() => setUploadItems([...uploadItems, { description: "", quantity: "1", unit: "Adet" }])}
+                    className="flex items-center gap-1 text-xs text-primary hover:text-primary-hover font-medium transition-colors"
+                  >
+                    <Plus size={14} /> Add Item
+                  </button>
+                </div>
+
+                <div className="flex flex-col gap-2.5">
+                  {uploadItems.map((item, idx) => (
+                    <div key={idx} className="flex items-center gap-2 bg-surface/50 p-2.5 rounded-lg border border-border">
+                      <div className="flex-1">
+                        <input 
+                          type="text"
+                          placeholder={`Item description (e.g. Dell PowerEdge R760)`}
+                          value={item.description}
+                          onChange={(e) => {
+                            const updated = [...uploadItems];
+                            updated[idx].description = e.target.value;
+                            setUploadItems(updated);
+                          }}
+                          className="w-full px-2.5 py-1.5 text-xs bg-bg border border-border rounded text-text-primary focus:outline-none focus:border-primary"
+                        />
+                      </div>
+                      <div className="w-20">
+                        <input 
+                          type="number"
+                          min="1"
+                          placeholder="Qty"
+                          value={item.quantity}
+                          onChange={(e) => {
+                            const updated = [...uploadItems];
+                            updated[idx].quantity = e.target.value;
+                            setUploadItems(updated);
+                          }}
+                          className="w-full px-2.5 py-1.5 text-xs bg-bg border border-border rounded text-text-primary focus:outline-none focus:border-primary"
+                        />
+                      </div>
+                      <div className="w-20">
+                        <input 
+                          type="text"
+                          placeholder="Unit"
+                          value={item.unit}
+                          onChange={(e) => {
+                            const updated = [...uploadItems];
+                            updated[idx].unit = e.target.value;
+                            setUploadItems(updated);
+                          }}
+                          className="w-full px-2.5 py-1.5 text-xs bg-bg border border-border rounded text-text-primary focus:outline-none focus:border-primary"
+                        />
+                      </div>
+                      {uploadItems.length > 1 && (
+                        <button 
+                          type="button"
+                          onClick={() => setUploadItems(uploadItems.filter((_, i) => i !== idx))}
+                          className="p-1 text-text-muted hover:text-red-500 transition-colors"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Conditions / Budget */}
+              <div className="flex flex-col gap-3 pt-2 border-t border-border">
+                <label className="text-xs font-semibold text-text-primary uppercase tracking-wider">Commercial & Delivery Conditions</label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs text-text-secondary">Target Budget (TRY)</label>
+                    <input 
+                      type="number"
+                      placeholder="e.g. 500000"
+                      value={uploadBudget}
+                      onChange={(e) => setUploadBudget(e.target.value)}
+                      className="px-3 py-2 text-sm bg-bg border border-border rounded-md text-text-primary focus:outline-none focus:border-primary"
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs text-text-secondary">Max Delivery Days</label>
+                    <input 
+                      type="number"
+                      placeholder="e.g. 15"
+                      value={uploadMaxDeliveryDays}
+                      onChange={(e) => setUploadMaxDeliveryDays(e.target.value)}
+                      className="px-3 py-2 text-sm bg-bg border border-border rounded-md text-text-primary focus:outline-none focus:border-primary"
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs text-text-secondary">Min Warranty (Months)</label>
+                    <input 
+                      type="number"
+                      placeholder="e.g. 24"
+                      value={uploadMinWarrantyMonths}
+                      onChange={(e) => setUploadMinWarrantyMonths(e.target.value)}
+                      className="px-3 py-2 text-sm bg-bg border border-border rounded-md text-text-primary focus:outline-none focus:border-primary"
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs text-text-secondary">Payment Terms</label>
+                    <input 
+                      type="text"
+                      placeholder="e.g. net-30, advance, etc."
+                      value={uploadPaymentTerms}
+                      onChange={(e) => setUploadPaymentTerms(e.target.value)}
+                      className="px-3 py-2 text-sm bg-bg border border-border rounded-md text-text-primary focus:outline-none focus:border-primary"
+                    />
+                  </div>
+                </div>
+              </div>
             </div>
 
             <div className="px-6 py-4 border-t border-border bg-surface/50 flex justify-end gap-3">
@@ -253,7 +418,7 @@ export default function DashboardPage() {
               <button 
                 onClick={handleCreateSubmit}
                 disabled={isUploading || !uploadTitle}
-                className="flex items-center gap-2 bg-primary hover:bg-primary-hover text-white px-4 py-2 rounded text-sm font-medium transition-colors shadow-sm disabled:opacity-70"
+                className="flex items-center gap-2 bg-primary hover:bg-primary-hover text-white px-5 py-2 rounded text-sm font-medium transition-colors shadow-sm disabled:opacity-70"
               >
                 {isUploading && <Loader2 size={14} className="animate-spin" />}
                 {isUploading ? "Creating..." : "Create RFQ"}

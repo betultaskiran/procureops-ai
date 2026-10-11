@@ -197,6 +197,7 @@ class QuoteExtractor:
             warranty_months=extraction.warranty_months,
             valid_until=valid_until_date,
             notes=extraction.notes,
+            extracted_supplier_name=extraction.supplier_name,
             extraction_confidence=Decimal(str(extraction.extraction_confidence)),
             is_compliant=None,  # Phase 4'te deterministik katman dolduracak
         )

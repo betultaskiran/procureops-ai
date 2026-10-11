@@ -18,6 +18,7 @@ from app.core.config import settings
 from app.api.health import router as health_router
 from app.api.v1.quotes import router as quotes_router
 from app.api.v1.rfqs import router as rfqs_router
+from app.api.v1.suppliers import router as suppliers_router
 from app.api.v1.dashboard import router as dashboard_router
 from app.api.v1.analyses import router as analyses_router
 from app.api.v1.knowledge import router as knowledge_router
@@ -67,6 +68,7 @@ async def on_startup():
 # Phase 4: /api/v1/rfqs/{id}/analyze
 # Phase 5: /api/v1/knowledge
 app.include_router(health_router)
+app.include_router(suppliers_router)
 app.include_router(rfqs_router)
 app.include_router(dashboard_router)
 app.include_router(quotes_router)

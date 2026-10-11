@@ -92,6 +92,8 @@ class Quote(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # ── Extraction Metadata ───────────────────────────────────────────────────
+    extracted_supplier_name: Mapped[str | None] = mapped_column(String(300), nullable=True)
+
     # LLM'in extraction'a ne kadar güvendiği. 0.0–1.0 arası.
     # Düşük confidence → insan incelemesi gerektirebilir.
     extraction_confidence: Mapped[Decimal | None] = mapped_column(Numeric(3, 2), nullable=True)

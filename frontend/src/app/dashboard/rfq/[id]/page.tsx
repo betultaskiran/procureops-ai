@@ -28,6 +28,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
   
   const [rfq, setRfq] = useState<RFQ | null>(null);
   const [quotes, setQuotes] = useState<Quote[]>([]);
+  const [selectedQuoteId, setSelectedQuoteId] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<AnalysisResponse | null>(null);
   const [purchaseOrders, setPurchaseOrders] = useState<any[]>([]);
   
@@ -42,13 +43,51 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
   const [isUploadQuoteOpen, setIsUploadQuoteOpen] = useState(false);
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploadSupplierId, setUploadSupplierId] = useState("");
-  const [suppliers, setSuppliers] = useState<{id: string, name: string}[]>([]);
+  const [suppliers, setSuppliers] = useState<{ id: string; name: string }[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploadWarning, setUploadWarning] = useState<string | null>(null);
+
+  // Inline supplier creation in modal
+  const [isCreatingSupplier, setIsCreatingSupplier] = useState(false);
+  const [newSupplierName, setNewSupplierName] = useState("");
+  const [newSupplierEmail, setNewSupplierEmail] = useState("");
+  const [newSupplierPhone, setNewSupplierPhone] = useState("");
+  const [newSupplierCity, setNewSupplierCity] = useState("");
+  const [isSavingSupplier, setIsSavingSupplier] = useState(false);
+  const [supplierCreateError, setSupplierCreateError] = useState<string | null>(null);
 
   useEffect(() => {
     rfqsApi.getSuppliers().then(setSuppliers).catch(console.error);
   }, []);
+
+  const handleCreateSupplier = async () => {
+    if (!newSupplierName.trim()) {
+      setSupplierCreateError("Lütfen tedarikçi adını girin.");
+      return;
+    }
+    try {
+      setIsSavingSupplier(true);
+      setSupplierCreateError(null);
+      const created = await rfqsApi.createSupplier({
+        name: newSupplierName.trim(),
+        email: newSupplierEmail.trim() || undefined,
+        phone: newSupplierPhone.trim() || undefined,
+        city: newSupplierCity.trim() || undefined,
+      });
+      setSuppliers(prev => [...prev, created]);
+      setUploadSupplierId(created.id);
+      setIsCreatingSupplier(false);
+      setNewSupplierName("");
+      setNewSupplierEmail("");
+      setNewSupplierPhone("");
+      setNewSupplierCity("");
+    } catch (err: any) {
+      setSupplierCreateError(err.message || "Tedarikçi eklenirken hata oluştu.");
+    } finally {
+      setIsSavingSupplier(false);
+    }
+  };
 
   const handleUploadSupplierQuote = async () => {
     if (!uploadFile || !uploadSupplierId) {
@@ -58,9 +97,19 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
     try {
       setIsUploading(true);
       setUploadError(null);
-      await rfqsApi.uploadQuoteDocument(rfqId, uploadSupplierId, uploadFile);
-      // Başarılı, sayfayı yenile
-      window.location.reload();
+      setUploadWarning(null);
+      const res = await rfqsApi.uploadQuoteDocument(rfqId, uploadSupplierId, uploadFile);
+      if (res.supplier_mismatch && res.warning) {
+        setUploadWarning(res.warning);
+      }
+      // Re-fetch quotes without page reload
+      const updatedQuotes = await rfqsApi.getRfqQuotes(rfqId);
+      setQuotes(updatedQuotes);
+      if (res.quote?.id) {
+        setSelectedQuoteId(res.quote.id);
+      }
+      setIsUploadQuoteOpen(false);
+      setUploadFile(null);
     } catch (err: any) {
       setUploadError(err.message || "Dosya yüklenirken bir hata oluştu.");
     } finally {
@@ -150,9 +199,11 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
     );
   }
 
-  // Find recommended quote if available, otherwise just use the first quote (if exists) for display purposes
+  // Find selected quote, or recommended quote if available, otherwise the first quote
   const recommendedQuoteId = analysis?.recommendation?.recommended_quote_id;
-  const displayQuote = quotes.find(q => q.id === recommendedQuoteId) || quotes[0];
+  const displayQuote = selectedQuoteId 
+    ? (quotes.find(q => q.id === selectedQuoteId) || quotes[0])
+    : (quotes.find(q => q.id === recommendedQuoteId) || quotes[0]);
   
   // Find TCO Result for this quote
   const displayTCO = analysis?.tco_results?.find(t => t.quote_id === displayQuote?.id);
@@ -225,14 +276,82 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
         </div>
       </div>
 
+      {/* Upload Warning Banner */}
+      {uploadWarning && (
+        <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-600 dark:text-amber-400 text-sm flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <ShieldAlert size={18} />
+            <span>{uploadWarning}</span>
+          </div>
+          <button onClick={() => setUploadWarning(null)} className="text-xs hover:underline font-medium">
+            Kapat
+          </button>
+        </div>
+      )}
+
+      {/* RFQ Requirements Card */}
+      <div className="bg-surface-elevated border border-border rounded-xl p-6 shadow-sm">
+        <h2 className="text-sm font-semibold text-text-primary uppercase tracking-wider mb-3 flex items-center gap-2">
+          <FileText size={16} className="text-primary" />
+          RFQ Requirements & Terms
+        </h2>
+        
+        {rfq.description && (
+          <p className="text-sm text-text-secondary mb-4">{rfq.description}</p>
+        )}
+
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 p-4 bg-surface/50 rounded-lg border border-border mb-4 text-xs">
+          <div>
+            <span className="text-text-muted block">Target Budget</span>
+            <span className="font-semibold text-text-primary mt-0.5 block">
+              {rfq.budget ? new Intl.NumberFormat('tr-TR', { style: 'currency', currency: 'TRY' }).format(rfq.budget) : 'Not specified'}
+            </span>
+          </div>
+          <div>
+            <span className="text-text-muted block">Max Delivery</span>
+            <span className="font-semibold text-text-primary mt-0.5 block">
+              {rfq.max_delivery_days ? `${rfq.max_delivery_days} days` : 'Not specified'}
+            </span>
+          </div>
+          <div>
+            <span className="text-text-muted block">Min Warranty</span>
+            <span className="font-semibold text-text-primary mt-0.5 block">
+              {rfq.min_warranty_months ? `${rfq.min_warranty_months} months` : 'Not specified'}
+            </span>
+          </div>
+          <div>
+            <span className="text-text-muted block">Payment Terms</span>
+            <span className="font-semibold text-text-primary mt-0.5 block">
+              {rfq.payment_terms || 'Not specified'}
+            </span>
+          </div>
+        </div>
+
+        {rfq.items && rfq.items.length > 0 && (
+          <div>
+            <h3 className="text-xs font-semibold text-text-secondary uppercase tracking-wider mb-2">Requested Items ({rfq.items.length})</h3>
+            <div className="divide-y divide-border border border-border rounded-lg overflow-hidden bg-surface/30">
+              {rfq.items.map((it) => (
+                <div key={it.id} className="p-3 flex items-center justify-between text-xs">
+                  <span className="font-medium text-text-primary">{it.line_number}. {it.description}</span>
+                  <span className="text-text-muted">{it.quantity} {it.unit || 'Adet'}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
       
       {/* Submitted Quotes Table */}
       {quotes.length > 0 && (
-        <div className="bg-surface-elevated border border-border rounded-xl p-6 shadow-sm mb-6">
-          <h2 className="text-sm font-semibold text-text-primary uppercase tracking-wider mb-4 flex items-center gap-2">
-            <FileText size={16} className="text-primary" />
-            Submitted Quotes ({quotes.length})
-          </h2>
+        <div className="bg-surface-elevated border border-border rounded-xl p-6 shadow-sm">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-sm font-semibold text-text-primary uppercase tracking-wider flex items-center gap-2">
+              <FileText size={16} className="text-primary" />
+              Submitted Quotes ({quotes.length})
+            </h2>
+            <span className="text-xs text-text-muted">Click &quot;View Details&quot; to inspect any quote below</span>
+          </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm text-left">
               <thead className="text-xs text-text-muted uppercase bg-surface/50 border-b border-border">
@@ -246,22 +365,41 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
-                {quotes.map(q => (
-                  <tr key={q.id} className={`hover:bg-surface/30 transition-colors ${q.id === displayQuote?.id ? 'bg-primary/5' : ''}`}>
-                    <td className="px-4 py-3 font-medium text-text-primary">{q.supplier_name || 'Unknown'}</td>
-                    <td className="px-4 py-3 text-text-secondary">{new Intl.NumberFormat('tr-TR', { style: 'currency', currency: q.currency || 'TRY' }).format(q.total_price)}</td>
-                    <td className="px-4 py-3 text-text-secondary">{q.delivery_days ? `${q.delivery_days} days` : '-'}</td>
-                    <td className="px-4 py-3 text-text-secondary">{q.warranty_months ? `${q.warranty_months} months` : '-'}</td>
-                    <td className="px-4 py-3">
-                      <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-success/10 text-success border border-success/20">
-                        Extracted
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <button className="text-primary hover:text-primary-hover text-xs font-medium">View Details</button>
-                    </td>
-                  </tr>
-                ))}
+                {quotes.map(q => {
+                  const isSelected = q.id === displayQuote?.id;
+                  return (
+                    <tr key={q.id} className={`hover:bg-surface/30 transition-colors ${isSelected ? 'bg-primary/10 border-l-4 border-l-primary' : ''}`}>
+                      <td className="px-4 py-3 font-medium text-text-primary">
+                        <div>{q.supplier_name || 'Unknown'}</div>
+                        {q.extracted_supplier_name && q.extracted_supplier_name.toLowerCase() !== (q.supplier_name || '').toLowerCase() && (
+                          <div className="text-[11px] text-amber-500 font-normal">
+                            Doc: {q.extracted_supplier_name}
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-text-secondary">{new Intl.NumberFormat('tr-TR', { style: 'currency', currency: q.currency || 'TRY' }).format(q.total_price)}</td>
+                      <td className="px-4 py-3 text-text-secondary">{q.delivery_days ? `${q.delivery_days} days` : '-'}</td>
+                      <td className="px-4 py-3 text-text-secondary">{q.warranty_months ? `${q.warranty_months} months` : '-'}</td>
+                      <td className="px-4 py-3">
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-success/10 text-success border border-success/20">
+                          Extracted
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <button 
+                          onClick={() => setSelectedQuoteId(q.id)}
+                          className={`text-xs font-semibold px-2.5 py-1 rounded transition-colors ${
+                            isSelected
+                              ? 'bg-primary text-white shadow-sm' 
+                              : 'text-primary hover:bg-primary/10'
+                          }`}
+                        >
+                          {isSelected ? 'Viewing' : 'View Details'}
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -275,10 +413,17 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
         <div className="lg:col-span-2 flex flex-col gap-6">
           
           <div className="bg-surface-elevated border border-border rounded-xl p-6 shadow-sm">
-            <h2 className="text-sm font-semibold text-text-primary uppercase tracking-wider mb-4 flex items-center gap-2">
-              <FileText size={16} className="text-primary" />
-              {displayQuote ? 'Extracted Quote Details' : 'No Quote Available'}
-            </h2>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-sm font-semibold text-text-primary uppercase tracking-wider flex items-center gap-2">
+                <FileText size={16} className="text-primary" />
+                {displayQuote ? `Quote Details: ${displayQuote.supplier_name || 'Unknown'}` : 'No Quote Available'}
+              </h2>
+              {displayQuote?.extracted_supplier_name && displayQuote.extracted_supplier_name.toLowerCase() !== (displayQuote.supplier_name || '').toLowerCase() && (
+                <span className="text-xs text-amber-500 font-medium">
+                  Belgeden Okunan: {displayQuote.extracted_supplier_name}
+                </span>
+              )}
+            </div>
             
             {displayQuote ? (
               <>
@@ -565,19 +710,103 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                 </div>
               )}
 
-              <div className="flex flex-col gap-2">
-                <label className="text-sm font-medium text-text-secondary">Supplier *</label>
-                <select 
-                  value={uploadSupplierId}
-                  onChange={(e) => setUploadSupplierId(e.target.value)}
-                  className="w-full bg-background border border-border rounded px-3 py-2 text-text-primary focus:outline-none focus:border-primary transition-colors"
-                >
-                  <option value="">Select a supplier...</option>
-                  {suppliers.map(s => (
-                    <option key={s.id} value={s.id}>{s.name}</option>
-                  ))}
-                </select>
-              </div>
+              {/* Supplier Selection or Creation */}
+              {isCreatingSupplier ? (
+                <div className="flex flex-col gap-3 p-3 bg-surface rounded-lg border border-border">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-text-primary uppercase">New Supplier Details</span>
+                    <button 
+                      type="button"
+                      onClick={() => { setIsCreatingSupplier(false); setSupplierCreateError(null); }}
+                      className="text-xs text-text-muted hover:text-text-primary"
+                    >
+                      Back to list
+                    </button>
+                  </div>
+
+                  {supplierCreateError && (
+                    <div className="p-2 rounded bg-danger/10 border border-danger/20 text-danger text-xs font-medium">
+                      {supplierCreateError}
+                    </div>
+                  )}
+
+                  <div className="flex flex-col gap-1">
+                    <label className="text-xs font-medium text-text-secondary">Company Name *</label>
+                    <input 
+                      type="text"
+                      placeholder="e.g. Acme Tech Solutions"
+                      value={newSupplierName}
+                      onChange={(e) => setNewSupplierName(e.target.value)}
+                      className="px-2.5 py-1.5 text-xs bg-background border border-border rounded text-text-primary focus:outline-none focus:border-primary"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="flex flex-col gap-1">
+                      <label className="text-xs font-medium text-text-secondary">Email</label>
+                      <input 
+                        type="email"
+                        placeholder="contact@acme.com"
+                        value={newSupplierEmail}
+                        onChange={(e) => setNewSupplierEmail(e.target.value)}
+                        className="px-2.5 py-1.5 text-xs bg-background border border-border rounded text-text-primary focus:outline-none focus:border-primary"
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <label className="text-xs font-medium text-text-secondary">Phone</label>
+                      <input 
+                        type="text"
+                        placeholder="+90 555 000 0000"
+                        value={newSupplierPhone}
+                        onChange={(e) => setNewSupplierPhone(e.target.value)}
+                        className="px-2.5 py-1.5 text-xs bg-background border border-border rounded text-text-primary focus:outline-none focus:border-primary"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end gap-2 mt-1">
+                    <button 
+                      type="button"
+                      onClick={() => { setIsCreatingSupplier(false); setSupplierCreateError(null); }}
+                      className="px-3 py-1.5 text-xs text-text-muted hover:text-text-primary"
+                    >
+                      Cancel
+                    </button>
+                    <button 
+                      type="button"
+                      onClick={handleCreateSupplier}
+                      disabled={isSavingSupplier || !newSupplierName.trim()}
+                      className="flex items-center gap-1.5 bg-primary hover:bg-primary-hover text-white px-3 py-1.5 rounded text-xs font-medium transition-colors disabled:opacity-50"
+                    >
+                      {isSavingSupplier && <Loader2 size={12} className="animate-spin" />}
+                      Save Supplier
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-sm font-medium text-text-secondary">Supplier *</label>
+                    <button 
+                      type="button"
+                      onClick={() => setIsCreatingSupplier(true)}
+                      className="text-xs text-primary hover:text-primary-hover font-medium flex items-center gap-1"
+                    >
+                      <Plus size={14} /> Add New Supplier
+                    </button>
+                  </div>
+                  <select 
+                    value={uploadSupplierId}
+                    onChange={(e) => setUploadSupplierId(e.target.value)}
+                    className="w-full bg-background border border-border rounded px-3 py-2 text-text-primary focus:outline-none focus:border-primary transition-colors text-sm"
+                  >
+                    <option value="">Select a supplier...</option>
+                    {suppliers.map(s => (
+                      <option key={s.id} value={s.id}>{s.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               <div className="flex flex-col gap-2">
                 <label className="text-sm font-medium text-text-secondary">Quote Document (PDF) *</label>

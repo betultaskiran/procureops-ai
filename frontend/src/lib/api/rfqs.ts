@@ -60,7 +60,15 @@ export const rfqsApi = {
     return apiClient.post(`/api/v1/analyses/${analysisId}/review`, req);
   },
   
+  async getRfqQuote(rfqId: string, quoteId: string): Promise<Quote> {
+    return apiClient.get<Quote>(`/api/v1/rfqs/${rfqId}/quotes/${quoteId}`);
+  },
+
   async getSuppliers(): Promise<SupplierResponse[]> {
-    return apiClient.get<SupplierResponse[]>("/api/v1/rfqs/suppliers/list");
+    return apiClient.get<SupplierResponse[]>("/api/v1/suppliers");
+  },
+
+  async createSupplier(req: import("./types").SupplierCreateRequest): Promise<SupplierResponse> {
+    return apiClient.post<SupplierResponse>("/api/v1/suppliers", req);
   }
 };

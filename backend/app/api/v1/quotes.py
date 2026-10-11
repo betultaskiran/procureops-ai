@@ -75,6 +75,7 @@ class QuoteResponse(BaseModel):
     rfq_id: uuid.UUID
     supplier_id: uuid.UUID
     supplier_name: str | None = None
+    extracted_supplier_name: str | None = None
     quote_document_id: uuid.UUID | None
     currency: str
     subtotal: float
@@ -94,15 +95,15 @@ class QuoteResponse(BaseModel):
 
     model_config = {"from_attributes": True}
 
-    # extraction_notes QuoteDocument'te saklı, Quote'ta değil.
-    # Phase 11'de join sorgusu ile doldurulacak.
-
 
 class UploadResponse(BaseModel):
     quote_document_id: uuid.UUID
     parse_status: str
     parse_error: str | None
     quote: QuoteResponse | None
+    extracted_supplier_name: str | None = None
+    supplier_mismatch: bool = False
+    warning: str | None = None
     message: str
 
 
@@ -152,6 +153,20 @@ async def upload_quote_document(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"RFQ {rfq_id} not found",
+        )
+
+    # ── Supplier kontrolü & Organization Doğrulaması ──────────────────────────
+    from app.models.supplier import Supplier
+    supplier = await db.get(Supplier, supplier_id)
+    if not supplier or not supplier.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Active supplier {supplier_id} not found",
+        )
+    if supplier.organization_id != rfq.organization_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Supplier does not belong to the same organization as the RFQ",
         )
 
     # ── Dosya boyutu kontrolü ──────────────────────────────────────────────────
@@ -213,16 +228,40 @@ async def upload_quote_document(
 
     # ── Response ───────────────────────────────────────────────────────────────
     quote_response = None
+    extracted_supplier_name = None
+    supplier_mismatch = False
+    warning_message = None
+
     if quote:
-        # QuoteItems'ı yükle (selectin ile)
+        # QuoteItems ve Supplier'ı yükle
         result = await db.execute(
             select(Quote)
             .where(Quote.id == quote.id)
-            .options(selectinload(Quote.items))
+            .options(
+                selectinload(Quote.items),
+                selectinload(Quote.supplier)
+            )
         )
         quote_with_items = result.scalar_one_or_none()
         if quote_with_items:
             quote_response = QuoteResponse.model_validate(quote_with_items)
+            if quote_with_items.supplier:
+                quote_response.supplier_name = quote_with_items.supplier.name
+            extracted_supplier_name = quote_with_items.extracted_supplier_name
+
+            # Supplier mismatch kontrolü
+            if extracted_supplier_name:
+                import re
+                def _words(text: str):
+                    return {w for w in re.sub(r"[^\w\s]", "", text.lower()).split() if len(w) >= 3}
+                sel_words = _words(supplier.name)
+                ext_words = _words(extracted_supplier_name)
+                if not (sel_words & ext_words):
+                    supplier_mismatch = True
+                    warning_message = (
+                        f"Belgeden çıkarılan tedarikçi adı ('{extracted_supplier_name}') "
+                        f"ile seçilen tedarikçi ('{supplier.name}') uyuşmuyor."
+                    )
 
     status_messages = {
         ParseStatus.COMPLETED: "Quote extracted successfully",
@@ -236,6 +275,9 @@ async def upload_quote_document(
         parse_status=quote_document.parse_status,
         parse_error=quote_document.parse_error,
         quote=quote_response,
+        extracted_supplier_name=extracted_supplier_name,
+        supplier_mismatch=supplier_mismatch,
+        warning=warning_message,
         message=status_messages.get(quote_document.parse_status, "Unknown status"),
     )
 
@@ -284,7 +326,10 @@ async def get_quote(
     result = await db.execute(
         select(Quote)
         .where(Quote.id == quote_id)
-        .options(selectinload(Quote.items))
+        .options(
+            selectinload(Quote.items),
+            selectinload(Quote.supplier),
+        )
     )
     quote = result.scalar_one_or_none()
     if not quote:
@@ -292,4 +337,39 @@ async def get_quote(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Quote {quote_id} not found",
         )
-    return QuoteResponse.model_validate(quote)
+    dto = QuoteResponse.model_validate(quote)
+    if quote.supplier:
+        dto.supplier_name = quote.supplier.name
+    return dto
+
+
+@router.get(
+    "/rfqs/{rfq_id}/quotes/{quote_id}",
+    response_model=QuoteResponse,
+    summary="Get a specific quote under an RFQ",
+)
+async def get_rfq_quote(
+    rfq_id: uuid.UUID,
+    quote_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> QuoteResponse:
+    """Belirli bir RFQ altındaki tek bir quote'u ve kalemlerini doğrula ve döndür."""
+    result = await db.execute(
+        select(Quote)
+        .where(Quote.id == quote_id, Quote.rfq_id == rfq_id)
+        .options(
+            selectinload(Quote.items),
+            selectinload(Quote.supplier),
+        )
+    )
+    quote = result.scalar_one_or_none()
+    if not quote:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Quote {quote_id} not found under RFQ {rfq_id}",
+        )
+    dto = QuoteResponse.model_validate(quote)
+    if quote.supplier:
+        dto.supplier_name = quote.supplier.name
+    return dto
+

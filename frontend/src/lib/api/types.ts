@@ -43,6 +43,7 @@ export interface Quote {
   rfq_id: string;
   supplier_id: string;
   supplier_name?: string; // Hydrated from backend if joined
+  extracted_supplier_name?: string | null;
   quote_document_id?: string | null;
   currency: string;
   subtotal: number;
@@ -152,10 +153,33 @@ export interface RFQCreateRequest {
 
 export interface SupplierResponse {
   id: string;
+  organization_id?: string;
   name: string;
+  email?: string | null;
+  phone?: string | null;
+  city?: string | null;
+  country?: string | null;
+  notes?: string | null;
+  is_active?: boolean;
+}
+
+export interface SupplierCreateRequest {
+  name: string;
+  email?: string;
+  phone?: string;
+  city?: string;
+  country?: string;
+  notes?: string;
 }
 
 export interface UploadResponse {
+  quote_document_id: string;
+  parse_status: string;
+  parse_error: string | null;
+  quote: Quote | null;
+  extracted_supplier_name?: string | null;
+  supplier_mismatch?: boolean;
+  warning?: string | null;
   message: string;
-  quote_id: string;
 }
+

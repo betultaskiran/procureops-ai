@@ -181,21 +181,28 @@ async def create_rfq(
     await db.refresh(rfq, ["items"])
     return RFQResponse.model_validate(rfq)
 
-class SupplierResponse(BaseModel):
-    id: uuid.UUID
-    name: str
-    
-    model_config = {"from_attributes": True}
+from app.api.v1.suppliers import SupplierResponse
 
 @router.get(
     "/suppliers/list",
     response_model=list[SupplierResponse],
-    summary="List all Suppliers",
+    summary="List all Suppliers (Alias)",
 )
-async def list_suppliers(
+async def list_suppliers_alias(
     db: AsyncSession = Depends(get_db)
 ) -> list[SupplierResponse]:
+    from app.models.organization import Organization
     from app.models.supplier import Supplier
-    result = await db.execute(select(Supplier))
+    
+    org_res = await db.execute(select(Organization).limit(1))
+    org = org_res.scalars().first()
+    if not org:
+        return []
+
+    result = await db.execute(
+        select(Supplier)
+        .where(Supplier.organization_id == org.id, Supplier.is_active == True)
+        .order_by(Supplier.name.asc())
+    )
     suppliers = result.scalars().all()
     return [SupplierResponse.model_validate(s) for s in suppliers]
