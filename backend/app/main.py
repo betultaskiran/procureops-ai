@@ -12,10 +12,13 @@ The file is intentionally small. Its only jobs are:
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
 from app.api.health import router as health_router
 from app.api.v1.quotes import router as quotes_router
+from app.api.v1.rfqs import router as rfqs_router
+from app.api.v1.dashboard import router as dashboard_router
 from app.api.v1.analyses import router as analyses_router
 from app.api.v1.knowledge import router as knowledge_router
 from app.services.vector_store.qdrant import QdrantService
@@ -31,6 +34,15 @@ app = FastAPI(
     version=settings.APP_VERSION,
     docs_url="/docs",
     redoc_url="/redoc",
+)
+
+# ── Add CORS Middleware ────────────────────────────────────────────────────────
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
@@ -55,6 +67,8 @@ async def on_startup():
 # Phase 4: /api/v1/rfqs/{id}/analyze
 # Phase 5: /api/v1/knowledge
 app.include_router(health_router)
+app.include_router(rfqs_router)
+app.include_router(dashboard_router)
 app.include_router(quotes_router)
 app.include_router(analyses_router)
 app.include_router(knowledge_router)

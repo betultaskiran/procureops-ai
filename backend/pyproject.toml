@@ -69,6 +69,10 @@ dependencies = [
     
     # BM25 Sparse Vector generation for Hybrid Search (Phase 7)
     "fastembed>=0.4.0",
+
+    # Testing
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
 ]
 
 # ─── Build system ─────────────────────────────────────────────────────────────

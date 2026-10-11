@@ -46,8 +46,8 @@ class ComplianceCheckResponse(BaseModel):
 # ── Request / Response Schemas ────────────────────────────────────────────────
 
 class AnalyzeRequest(BaseModel):
-    organization_id: uuid.UUID
-    rules: PolicyRules
+    organization_id: uuid.UUID | None = None
+    rules: PolicyRules | None = None
 
 
 class EvidenceItemResponse(BaseModel):
@@ -106,7 +106,7 @@ async def run_analysis(
     det_engine = DeterministicEngine(db=db)
     
     try:
-        analysis = await det_engine.run_analysis(rfq_id=rfq_id, rules=request.rules)
+        analysis = await det_engine.run_analysis(rfq_id=rfq_id, rules=request.rules or PolicyRules())
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -132,6 +132,13 @@ async def run_analysis(
         await db.refresh(analysis, ["evidence_items"])
 
         # SQLAlchemy ilişkiyi otomatik yansıtmamış olabilir, manually set for response
+        # Update RFQ status
+        from app.models.rfq import RFQ
+        rfq_obj = await db.get(RFQ, rfq_id)
+        if rfq_obj:
+            rfq_obj.status = "pending_approval"
+            await db.commit()
+
         analysis.recommendation = verified_recommendation
         return AnalysisResponse.model_validate(analysis)
     except Exception as e:
@@ -213,3 +220,39 @@ async def review_analysis(
 
     return ReviewResponse.model_validate(approval)
 
+
+@router.get(
+    "/rfqs/{rfq_id}/analysis",
+    response_model=AnalysisResponse,
+    summary="Get Latest Analysis for RFQ",
+    description="Fetches the most recent analysis (TCO, compliance, and AI recommendation) for an RFQ."
+)
+async def get_latest_analysis(
+    rfq_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> AnalysisResponse:
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+    from app.models.analysis import Analysis
+
+    result = await db.execute(
+        select(Analysis)
+        .where(Analysis.rfq_id == rfq_id)
+        .options(
+            selectinload(Analysis.tco_results),
+            selectinload(Analysis.compliance_checks),
+            selectinload(Analysis.recommendation),
+            selectinload(Analysis.evidence_items)
+        )
+        .order_by(Analysis.created_at.desc())
+        .limit(1)
+    )
+    analysis = result.scalar_one_or_none()
+    
+    if not analysis:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No analysis found for RFQ {rfq_id}"
+        )
+        
+    return AnalysisResponse.model_validate(analysis)

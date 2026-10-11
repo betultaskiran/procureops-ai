@@ -74,6 +74,7 @@ class QuoteResponse(BaseModel):
     id: uuid.UUID
     rfq_id: uuid.UUID
     supplier_id: uuid.UUID
+    supplier_name: str | None = None
     quote_document_id: uuid.UUID | None
     currency: str
     subtotal: float
@@ -129,11 +130,12 @@ def _detect_file_type(filename: str) -> str:
     response_model=UploadResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Upload a supplier quote document",
-    description=(
-        "Upload a PDF or Excel file from a supplier. "
-        "The system will extract structured quote data using AI. "
-        "Returns the extraction result synchronously (Phase 13 will move this to background)."
-    ),
+)
+@router.post(
+    "/quotes/rfqs/{rfq_id}/quote-documents",
+    response_model=UploadResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Upload a supplier quote document (Alias)",
 )
 async def upload_quote_document(
     rfq_id: uuid.UUID,
@@ -251,11 +253,22 @@ async def list_quotes(
     result = await db.execute(
         select(Quote)
         .where(Quote.rfq_id == rfq_id)
-        .options(selectinload(Quote.items))
+        .options(
+            selectinload(Quote.items),
+            selectinload(Quote.supplier)
+        )
         .order_by(Quote.created_at)
     )
     quotes = result.scalars().all()
-    return [QuoteResponse.model_validate(q) for q in quotes]
+    
+    response_list = []
+    for q in quotes:
+        dto = QuoteResponse.model_validate(q)
+        if q.supplier:
+            dto.supplier_name = q.supplier.name
+        response_list.append(dto)
+        
+    return response_list
 
 
 @router.get(

@@ -85,6 +85,12 @@ class RFQ(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     # Ne zamana kadar teslim edilmeli?
     required_date: Mapped[date | None] = mapped_column(Date, nullable=True)
 
+    # Hedef bütçe ve şartlar (Step 1 Requirement)
+    budget: Mapped[float | None] = mapped_column(Integer, nullable=True)
+    max_delivery_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    min_warranty_months: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    payment_terms: Mapped[str | None] = mapped_column(String(200), nullable=True)
+
     status: Mapped[str] = mapped_column(
         String(30),
         nullable=False,
@@ -94,6 +100,13 @@ class RFQ(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 
     # ── Relationships ──────────────────────────────────────────────────────────
     organization: Mapped["Organization"] = relationship(back_populates="rfqs")
+
+    # İstenen kalemler
+    items: Mapped[list["RFQItem"]] = relationship(
+        back_populates="rfq",
+        lazy="selectin",
+        cascade="all, delete-orphan",
+    )
 
     created_by: Mapped["User"] = relationship(
         back_populates="rfqs",
@@ -183,3 +196,26 @@ class QuoteDocument(Base, UUIDPrimaryKeyMixin, TimestampMixin):
             f"<QuoteDocument id={self.id} file={self.file_name!r} "
             f"status={self.parse_status!r}>"
         )
+
+class RFQItem(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """
+    RFQ içindeki talep edilen kalemler.
+    """
+    __tablename__ = "rfq_items"
+
+    rfq_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("rfqs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    line_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    description: Mapped[str] = mapped_column(String(1000), nullable=False)
+    quantity: Mapped[float] = mapped_column(Integer, nullable=False)
+    unit: Mapped[str | None] = mapped_column(String(50), nullable=True)
+
+    rfq: Mapped["RFQ"] = relationship(back_populates="items")
+
+    def __repr__(self) -> str:
+        return f"<RFQItem id={self.id} line={self.line_number} desc={self.description!r}>"

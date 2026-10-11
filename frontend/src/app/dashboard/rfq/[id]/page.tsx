@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { 
   ArrowLeft, 
@@ -12,14 +12,168 @@ import {
   Download,
   Mail,
   Check,
-  X
+  X,
+  Loader2,
+  ShieldAlert,
+  UploadCloud,
+  Plus
 } from "lucide-react";
+import { rfqsApi } from "@/lib/api/rfqs";
+import { RFQ, Quote, AnalysisResponse, TCOResultResponse, ComplianceCheckResponse, EvidenceItemResponse } from "@/lib/api/types";
 
 export default function RFQDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
   const resolvedParams = React.use(params);
   const rfqId = resolvedParams.id;
   
+  const [rfq, setRfq] = useState<RFQ | null>(null);
+  const [quotes, setQuotes] = useState<Quote[]>([]);
+  const [analysis, setAnalysis] = useState<AnalysisResponse | null>(null);
+  const [purchaseOrders, setPurchaseOrders] = useState<any[]>([]);
+  
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // Workflow states
+  const [isApproving, setIsApproving] = useState(false);
+  const [approvalError, setApprovalError] = useState<string | null>(null);
+
+  // Upload Quote Modal states
+  const [isUploadQuoteOpen, setIsUploadQuoteOpen] = useState(false);
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploadSupplierId, setUploadSupplierId] = useState("");
+  const [suppliers, setSuppliers] = useState<{id: string, name: string}[]>([]);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    rfqsApi.getSuppliers().then(setSuppliers).catch(console.error);
+  }, []);
+
+  const handleUploadSupplierQuote = async () => {
+    if (!uploadFile || !uploadSupplierId) {
+      setUploadError("Lütfen bir dosya ve tedarikçi seçin.");
+      return;
+    }
+    try {
+      setIsUploading(true);
+      setUploadError(null);
+      await rfqsApi.uploadQuoteDocument(rfqId, uploadSupplierId, uploadFile);
+      // Başarılı, sayfayı yenile
+      window.location.reload();
+    } catch (err: any) {
+      setUploadError(err.message || "Dosya yüklenirken bir hata oluştu.");
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+
+  useEffect(() => {
+    async function loadData() {
+      try {
+        setIsLoading(true);
+        const [rfqRes, quotesRes, analysisRes, poRes] = await Promise.allSettled([
+          rfqsApi.getRfq(rfqId),
+          rfqsApi.getRfqQuotes(rfqId),
+          rfqsApi.getAnalysis(rfqId),
+          rfqsApi.getPurchaseOrders(rfqId)
+        ]);
+
+        if (rfqRes.status === 'fulfilled') {
+          setRfq(rfqRes.value);
+        } else {
+          throw new Error("Failed to load core RFQ data.");
+        }
+
+        if (quotesRes.status === 'fulfilled') {
+          setQuotes(quotesRes.value);
+        }
+
+        if (analysisRes.status === 'fulfilled') {
+          setAnalysis(analysisRes.value);
+        }
+
+        if (poRes.status === 'fulfilled') {
+          setPurchaseOrders(poRes.value);
+        }
+
+      } catch (err: any) {
+        setError(err.message || "Failed to load RFQ details.");
+      } finally {
+        setIsLoading(false);
+      }
+    }
+    loadData();
+  }, [rfqId]);
+
+  const handleApprove = async () => {
+    if (!analysis) return;
+    try {
+      setIsApproving(true);
+      setApprovalError(null);
+      
+      await rfqsApi.reviewAnalysis(analysis.id, {
+        status: "approved",
+        comment: "Approved via UI",
+        selected_quote_id: displayQuote?.id,
+        acknowledged_policy_violation: warningsCount > 0
+      });
+      
+      // Refresh page data after approval
+      window.location.reload();
+      
+    } catch (err: any) {
+      setApprovalError(err.message || "Approval failed.");
+    } finally {
+      setIsApproving(false);
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <div className="flex flex-col items-center justify-center h-[60vh] text-text-muted gap-3">
+        <Loader2 size={32} className="animate-spin text-primary" />
+        <p className="text-sm">Loading RFQ details...</p>
+      </div>
+    );
+  }
+
+  if (error || !rfq) {
+    return (
+      <div className="flex flex-col items-center justify-center h-[60vh] text-red-500 gap-3">
+        <ShieldAlert size={48} />
+        <h2 className="text-xl font-semibold">Error Loading RFQ</h2>
+        <p className="text-sm font-medium">{error || "RFQ not found."}</p>
+        <Link href="/dashboard" className="text-sm text-primary hover:underline mt-4">Return to Dashboard</Link>
+      </div>
+    );
+  }
+
+  // Find recommended quote if available, otherwise just use the first quote (if exists) for display purposes
+  const recommendedQuoteId = analysis?.recommendation?.recommended_quote_id;
+  const displayQuote = quotes.find(q => q.id === recommendedQuoteId) || quotes[0];
+  
+  // Find TCO Result for this quote
+  const displayTCO = analysis?.tco_results?.find(t => t.quote_id === displayQuote?.id);
+
+  // Status Badge Helper
+  const getStatusBadge = (status: string) => {
+    switch(status.toLowerCase()) {
+      case 'approved': return { bg: 'bg-success/10', border: 'border-success/20', text: 'text-success', dot: 'bg-success' };
+      case 'rejected': return { bg: 'bg-red-500/10', border: 'border-red-500/20', text: 'text-red-500', dot: 'bg-red-500' };
+      case 'pending_approval': return { bg: 'bg-amber-500/10', border: 'border-amber-500/20', text: 'text-amber-500', dot: 'bg-amber-500' };
+      case 'analyzing': return { bg: 'bg-blue-500/10', border: 'border-blue-500/20', text: 'text-blue-500', dot: 'bg-blue-500' };
+      default: return { bg: 'bg-slate-500/10', border: 'border-slate-500/20', text: 'text-slate-400', dot: 'bg-slate-400' };
+    }
+  };
+  
+  const statusBadge = getStatusBadge(rfq.status);
+  const formattedStatus = rfq.status.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+
+  // Policy Warnings count
+  const warningsCount = analysis?.compliance_checks?.filter(c => c.result !== 'pass').length || 0;
+
   return (
     <div className="flex flex-col gap-6">
       
@@ -34,32 +188,88 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
           </Link>
           <div>
             <div className="flex items-center gap-3">
-              <h1 className="text-2xl font-semibold tracking-tight text-text-primary">{rfqId}</h1>
-              <span className="inline-flex items-center gap-1.5 bg-amber-500/10 text-amber-500 px-2.5 py-1 rounded-full text-[11px] font-medium border border-amber-500/20">
-                <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
-                Pending Review
+              <h1 className="text-2xl font-semibold tracking-tight text-text-primary">{rfq.title || rfq.id.split('-')[0]}</h1>
+              <span className={`inline-flex items-center gap-1.5 ${statusBadge.bg} ${statusBadge.text} px-2.5 py-1 rounded-full text-[11px] font-medium border ${statusBadge.border}`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${statusBadge.dot}`}></span>
+                {formattedStatus}
               </span>
             </div>
-            <p className="text-sm text-text-muted mt-1">Uploaded on Oct 24, 2026 • by John Doe</p>
+            <p className="text-sm text-text-muted mt-1">Uploaded on {new Date(rfq.created_at).toLocaleDateString()}</p>
           </div>
         </div>
         
         <div className="flex items-center gap-3">
-          <button className="flex items-center gap-2 bg-surface-elevated border border-border hover:bg-bg text-text-primary px-4 py-2 rounded text-sm font-medium transition-colors shadow-sm">
-            <Download size={16} />
-            Original Document
-          </button>
           <button 
-            onClick={() => setIsConfirmOpen(true)}
-            className="flex items-center gap-2 bg-success hover:bg-success/90 text-white px-6 py-2 rounded text-sm font-medium transition-colors shadow-sm"
+            onClick={() => setIsUploadQuoteOpen(true)}
+            className="flex items-center gap-2 bg-surface-elevated border border-border hover:bg-bg text-primary px-4 py-2 rounded text-sm font-medium transition-colors shadow-sm"
           >
-            <Check size={16} />
-            Approve & Create PO
+            <Plus size={16} />
+            Add Supplier Quote
           </button>
+          
+          {displayQuote?.quote_document_id && (
+            <button className="flex items-center gap-2 bg-surface-elevated border border-border hover:bg-bg text-text-primary px-4 py-2 rounded text-sm font-medium transition-colors shadow-sm">
+              <Download size={16} />
+              Original Document
+            </button>
+          )}
+          {rfq.status === 'pending_approval' && purchaseOrders.length === 0 && (
+            <button 
+              onClick={() => setIsConfirmOpen(true)}
+              className="flex items-center gap-2 bg-success hover:bg-success/90 text-white px-6 py-2 rounded text-sm font-medium transition-colors shadow-sm"
+            >
+              <Check size={16} />
+              Approve & Create PO
+            </button>
+          )}
         </div>
       </div>
 
+      
+      {/* Submitted Quotes Table */}
+      {quotes.length > 0 && (
+        <div className="bg-surface-elevated border border-border rounded-xl p-6 shadow-sm mb-6">
+          <h2 className="text-sm font-semibold text-text-primary uppercase tracking-wider mb-4 flex items-center gap-2">
+            <FileText size={16} className="text-primary" />
+            Submitted Quotes ({quotes.length})
+          </h2>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm text-left">
+              <thead className="text-xs text-text-muted uppercase bg-surface/50 border-b border-border">
+                <tr>
+                  <th className="px-4 py-3 font-medium">Supplier</th>
+                  <th className="px-4 py-3 font-medium">Total Price</th>
+                  <th className="px-4 py-3 font-medium">Delivery</th>
+                  <th className="px-4 py-3 font-medium">Warranty</th>
+                  <th className="px-4 py-3 font-medium">Status</th>
+                  <th className="px-4 py-3 font-medium text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {quotes.map(q => (
+                  <tr key={q.id} className={`hover:bg-surface/30 transition-colors ${q.id === displayQuote?.id ? 'bg-primary/5' : ''}`}>
+                    <td className="px-4 py-3 font-medium text-text-primary">{q.supplier_name || 'Unknown'}</td>
+                    <td className="px-4 py-3 text-text-secondary">{new Intl.NumberFormat('tr-TR', { style: 'currency', currency: q.currency || 'TRY' }).format(q.total_price)}</td>
+                    <td className="px-4 py-3 text-text-secondary">{q.delivery_days ? `${q.delivery_days} days` : '-'}</td>
+                    <td className="px-4 py-3 text-text-secondary">{q.warranty_months ? `${q.warranty_months} months` : '-'}</td>
+                    <td className="px-4 py-3">
+                      <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-success/10 text-success border border-success/20">
+                        Extracted
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <button className="text-primary hover:text-primary-hover text-xs font-medium">View Details</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
         
         {/* ── Left Column: Extraction & Calculation ────────────────────────── */}
         <div className="lg:col-span-2 flex flex-col gap-6">
@@ -67,85 +277,99 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
           <div className="bg-surface-elevated border border-border rounded-xl p-6 shadow-sm">
             <h2 className="text-sm font-semibold text-text-primary uppercase tracking-wider mb-4 flex items-center gap-2">
               <FileText size={16} className="text-primary" />
-              Extracted Quote Details
+              {displayQuote ? 'Extracted Quote Details' : 'No Quote Available'}
             </h2>
             
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mb-6">
-              <div>
-                <div className="text-xs text-text-muted mb-1">Supplier</div>
-                <div className="text-sm font-medium text-text-primary">TechCorp Solutions</div>
-              </div>
-              <div>
-                <div className="text-xs text-text-muted mb-1">Payment Terms</div>
-                <div className="text-sm font-medium text-text-primary">Net 30</div>
-              </div>
-              <div>
-                <div className="text-xs text-text-muted mb-1">Delivery Time</div>
-                <div className="text-sm font-medium text-text-primary">10 Days</div>
-              </div>
-              <div>
-                <div className="text-xs text-text-muted mb-1">Quote Validity</div>
-                <div className="text-sm font-medium text-text-primary">Nov 15, 2026</div>
-              </div>
-            </div>
+            {displayQuote ? (
+              <>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mb-6">
+                  <div>
+                    <div className="text-xs text-text-muted mb-1">Supplier</div>
+                    <div className="text-sm font-medium text-text-primary">{displayQuote.supplier_name || displayQuote.supplier_id}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-text-muted mb-1">Payment Terms</div>
+                    <div className="text-sm font-medium text-text-primary">{displayQuote.payment_terms || 'N/A'}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-text-muted mb-1">Delivery Time</div>
+                    <div className="text-sm font-medium text-text-primary">{displayQuote.delivery_days ? `${displayQuote.delivery_days} Days` : 'N/A'}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-text-muted mb-1">Warranty</div>
+                    <div className="text-sm font-medium text-text-primary">{displayQuote.warranty_months ? `${displayQuote.warranty_months} Months` : 'N/A'}</div>
+                  </div>
+                </div>
 
-            {/* Line Items Table */}
-            <div className="border border-border rounded-lg overflow-hidden">
-              <table className="w-full text-left text-sm">
-                <thead className="bg-bg text-text-muted text-xs uppercase border-b border-border">
-                  <tr>
-                    <th className="px-4 py-3 font-medium">Item Description</th>
-                    <th className="px-4 py-3 font-medium text-right">Qty</th>
-                    <th className="px-4 py-3 font-medium text-right">Unit Price</th>
-                    <th className="px-4 py-3 font-medium text-right">Total</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  <tr className="hover:bg-bg/50">
-                    <td className="px-4 py-3 text-text-primary">ThinkPad X1 Carbon Gen 11</td>
-                    <td className="px-4 py-3 text-right text-text-primary">12</td>
-                    <td className="px-4 py-3 text-right text-text-primary">₺ 32,000</td>
-                    <td className="px-4 py-3 text-right font-medium text-text-primary">₺ 384,000</td>
-                  </tr>
-                  <tr className="hover:bg-bg/50">
-                    <td className="px-4 py-3 text-text-primary">Dell UltraSharp 27" Monitor</td>
-                    <td className="px-4 py-3 text-right text-text-primary">12</td>
-                    <td className="px-4 py-3 text-right text-text-primary">₺ 8,500</td>
-                    <td className="px-4 py-3 text-right font-medium text-text-primary">₺ 102,000</td>
-                  </tr>
-                  <tr className="hover:bg-bg/50">
-                    <td className="px-4 py-3 text-text-primary">Logitech MX Master 3S</td>
-                    <td className="px-4 py-3 text-right text-text-primary">12</td>
-                    <td className="px-4 py-3 text-right text-text-primary">₺ 2,100</td>
-                    <td className="px-4 py-3 text-right font-medium text-text-primary">₺ 25,200</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
+                {/* Line Items Table */}
+                <div className="border border-border rounded-lg overflow-hidden">
+                  <table className="w-full text-left text-sm">
+                    <thead className="bg-bg text-text-muted text-xs uppercase border-b border-border">
+                      <tr>
+                        <th className="px-4 py-3 font-medium">Item Description</th>
+                        <th className="px-4 py-3 font-medium text-right">Qty</th>
+                        <th className="px-4 py-3 font-medium text-right">Unit Price</th>
+                        <th className="px-4 py-3 font-medium text-right">Total</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border">
+                      {displayQuote.items?.map((item, idx) => (
+                        <tr key={idx} className="hover:bg-bg/50">
+                          <td className="px-4 py-3 text-text-primary">{item.description}</td>
+                          <td className="px-4 py-3 text-right text-text-primary">{item.quantity} {item.unit || ''}</td>
+                          <td className="px-4 py-3 text-right text-text-primary">₺ {item.unit_price.toLocaleString('en-US')}</td>
+                          <td className="px-4 py-3 text-right font-medium text-text-primary">₺ {item.total_price.toLocaleString('en-US')}</td>
+                        </tr>
+                      ))}
+                      {(!displayQuote.items || displayQuote.items.length === 0) && (
+                        <tr>
+                          <td colSpan={4} className="px-4 py-6 text-center text-text-muted">No line items extracted.</td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
 
-            {/* Calculation Summary */}
-            <div className="mt-6 flex flex-col items-end gap-2 text-sm">
-              <div className="flex justify-between w-64 text-text-muted">
-                <span>Subtotal:</span>
-                <span>₺ 511,200</span>
-              </div>
-              <div className="flex justify-between w-64 text-text-muted">
-                <span>Volume Discount (5%):</span>
-                <span className="text-success">- ₺ 25,560</span>
-              </div>
-              <div className="flex justify-between w-64 text-text-muted border-b border-border pb-2">
-                <span>VAT (20%):</span>
-                <span>₺ 97,128</span>
-              </div>
-              <div className="flex justify-between w-64 font-semibold text-text-primary text-base pt-1">
-                <span>Total Calculated:</span>
-                <span>₺ 582,768</span>
-              </div>
-              <div className="flex items-center gap-1.5 text-xs text-primary mt-2 bg-primary/10 px-2 py-1 rounded">
-                <Calculator size={12} />
-                <span>Deterministic math verified. Match: 100%</span>
-              </div>
-            </div>
+                {/* Calculation Summary */}
+                <div className="mt-6 flex flex-col items-end gap-2 text-sm">
+                  <div className="flex justify-between w-64 text-text-muted">
+                    <span>Subtotal:</span>
+                    <span>₺ {displayQuote.subtotal?.toLocaleString('en-US') || 0}</span>
+                  </div>
+                  {(displayQuote.discount_amount || 0) > 0 && (
+                    <div className="flex justify-between w-64 text-text-muted">
+                      <span>Discount:</span>
+                      <span className="text-success">- ₺ {displayQuote.discount_amount.toLocaleString('en-US')}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between w-64 text-text-muted border-b border-border pb-2">
+                    <span>VAT ({(displayQuote.vat_rate || 0) * 100}%):</span>
+                    <span>₺ {displayQuote.vat_amount?.toLocaleString('en-US') || 0}</span>
+                  </div>
+                  <div className="flex justify-between w-64 font-semibold text-text-primary text-base pt-1">
+                    <span>Total Quote:</span>
+                    <span>₺ {displayQuote.total_price?.toLocaleString('en-US') || 0}</span>
+                  </div>
+                  
+                  {displayTCO && (
+                    <>
+                      <div className="flex justify-between w-64 font-semibold text-amber-500 text-base pt-2 border-t border-border mt-2">
+                        <span>Computed TCO:</span>
+                        <span>₺ {displayTCO.total_tco.toLocaleString('en-US')}</span>
+                      </div>
+                      <div className="flex items-center justify-end gap-1.5 text-xs text-primary mt-2 bg-primary/10 px-2 py-1 rounded w-64">
+                        <Calculator size={12} />
+                        <span>Deterministic math applied.</span>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </>
+            ) : (
+               <div className="py-8 text-center text-text-muted text-sm">
+                 <p>No quotes have been added to this RFQ yet.</p>
+               </div>
+            )}
           </div>
         </div>
 
@@ -158,66 +382,96 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
               AI Decision Engine
             </h2>
 
-            <div className="mb-6">
-              <div className="text-[10px] uppercase font-bold text-text-muted mb-2 tracking-wider">AI RECOMMENDATION</div>
-              <div className="flex items-center gap-2 text-lg font-semibold text-text-primary">
-                Recommended
-              </div>
-              <div className="text-xs text-text-muted mt-1">Review 1 warning before approval.</div>
-            </div>
+            {analysis ? (
+              <>
+                <div className="mb-6">
+                  <div className="text-[10px] uppercase font-bold text-text-muted mb-2 tracking-wider">AI RECOMMENDATION</div>
+                  <div className={`flex items-center gap-2 text-lg font-semibold ${analysis.recommendation?.verification_status === 'verified' ? 'text-success' : 'text-amber-500'}`}>
+                    {analysis.recommendation?.verification_status ? analysis.recommendation.verification_status.toUpperCase() : 'PENDING'}
+                  </div>
+                  {warningsCount > 0 && (
+                    <div className="text-xs text-amber-500 mt-1">Review {warningsCount} warning(s) before approval.</div>
+                  )}
+                </div>
 
-            <div className="mb-6">
-              <div className="text-[10px] uppercase font-bold text-text-muted mb-2 tracking-wider">Why?</div>
-              <div className="space-y-3">
-                <div className="flex gap-2 items-start">
-                  <CheckCircle size={14} className="text-success mt-0.5 shrink-0" />
-                  <div className="text-xs text-text-primary">Within approved <span className="font-medium">IT Hardware Budget</span> (₺1.2M remaining)</div>
+                <div className="mb-6">
+                  <div className="text-[10px] uppercase font-bold text-text-muted mb-2 tracking-wider">Reasoning & Checks</div>
+                  <p className="text-xs text-text-muted mb-4 leading-relaxed">
+                    {analysis.recommendation?.reasoning || 'No AI reasoning provided yet.'}
+                  </p>
+                  
+                  <div className="space-y-3">
+                    {analysis.compliance_checks?.map((check, idx) => (
+                      <div key={idx} className="flex gap-2 items-start">
+                        {check.result === 'pass' ? (
+                          <CheckCircle size={14} className="text-success mt-0.5 shrink-0" />
+                        ) : (
+                          <AlertTriangle size={14} className="text-amber-500 mt-0.5 shrink-0" />
+                        )}
+                        <div className="text-xs text-text-primary">
+                          <span className="font-medium">{check.rule_description}</span>: {check.notes} 
+                          <span className="text-text-muted block mt-0.5">Value: {check.actual_value} (Required: {check.required_value})</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-                <div className="flex gap-2 items-start">
-                  <CheckCircle size={14} className="text-success mt-0.5 shrink-0" />
-                  <div className="text-xs text-text-primary">TechCorp is an <span className="font-medium">Approved Vendor</span> (Active in SAP)</div>
-                </div>
-                <div className="flex gap-2 items-start">
-                  <CheckCircle size={14} className="text-success mt-0.5 shrink-0" />
-                  <div className="text-xs text-text-primary"><span className="font-medium">Payment Terms</span> match standard Net 30</div>
-                </div>
-                <div className="flex gap-2 items-start">
-                  <AlertTriangle size={14} className="text-amber-500 mt-0.5 shrink-0" />
-                  <div className="text-xs text-text-primary"><span className="font-medium">Delivery (10 Days)</span> exceeds preferred SLA (7 Days)</div>
-                </div>
-              </div>
-            </div>
 
-            <div>
-              <div className="text-[10px] uppercase font-bold text-text-muted mb-2 tracking-wider">Evidence Links</div>
-              <div className="flex flex-wrap gap-2">
-                <button className="text-[10px] bg-bg border border-border px-2 py-1.5 rounded hover:bg-surface transition-colors text-text-primary flex items-center gap-1 font-medium">
-                  <FileText size={10} className="text-primary" /> Original Quote
-                </button>
-                <button className="text-[10px] bg-bg border border-border px-2 py-1.5 rounded hover:bg-surface transition-colors text-text-primary flex items-center gap-1 font-medium">
-                  <ShieldCheck size={10} className="text-primary" /> Policy #SLA-04
-                </button>
-                <button className="text-[10px] bg-bg border border-border px-2 py-1.5 rounded hover:bg-surface transition-colors text-text-primary flex items-center gap-1 font-medium">
-                  <Calculator size={10} className="text-primary" /> SAP Budget
-                </button>
+                {analysis.evidence_items?.length > 0 && (
+                  <div>
+                    <div className="text-[10px] uppercase font-bold text-text-muted mb-2 tracking-wider">Evidence Links</div>
+                    <div className="flex flex-wrap gap-2">
+                      {analysis.evidence_items.map((evidence, idx) => (
+                        <button key={idx} className="text-[10px] bg-bg border border-border px-2 py-1.5 rounded hover:bg-surface transition-colors text-text-primary flex items-center gap-1 font-medium" title={evidence.claim}>
+                          <FileText size={10} className="text-primary" /> {evidence.source_reference}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="py-8 text-center text-text-muted text-sm border-2 border-dashed border-border rounded-lg">
+                <AlertTriangle size={24} className="mx-auto mb-2 opacity-50" />
+                <p>No analysis has been generated for this RFQ yet.</p>
               </div>
-            </div>
+            )}
           </div>
 
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-sm text-white">
-            <h2 className="text-sm font-semibold uppercase tracking-wider mb-2 flex items-center gap-2">
-              <Mail size={16} className="text-primary" />
-              Next Step: Dispatch
-            </h2>
-            <p className="text-xs text-slate-400 mb-4 leading-relaxed">
-              If approved, the system will automatically generate a PDF Purchase Order and send an email to 
-              <span className="text-slate-200 font-medium"> sales@techcorp.com</span>.
-            </p>
-            <div className="bg-slate-800 rounded p-3 text-xs font-mono text-slate-300 border border-slate-700">
-              Subject: Purchase Order PO-2026-9922<br/>
-              Attached: PO-2026-9922.pdf
+          {purchaseOrders.length > 0 ? (
+            <div className="bg-success border border-success/80 rounded-xl p-6 shadow-sm text-white">
+              <h2 className="text-sm font-semibold uppercase tracking-wider mb-2 flex items-center gap-2">
+                <CheckCircle size={16} className="text-white" />
+                Action Completed: Purchase Order Issued
+              </h2>
+              <p className="text-xs text-success-foreground/80 mb-4 leading-relaxed text-slate-100">
+                The RFQ was approved and the following Purchase Order was successfully generated.
+              </p>
+              {purchaseOrders.map(po => (
+                <div key={po.id} className="bg-white/10 rounded p-3 text-xs font-mono text-white border border-white/20 mb-2">
+                  PO Number: {po.po_number}<br/>
+                  Status: {po.status.toUpperCase()}<br/>
+                  Date: {new Date(po.created_at).toLocaleString()}<br/>
+                  Email Notification: {po.email_sent ? "Sent" : "Pending"}
+                </div>
+              ))}
             </div>
-          </div>
+          ) : (
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-sm text-white">
+              <h2 className="text-sm font-semibold uppercase tracking-wider mb-2 flex items-center gap-2">
+                <Mail size={16} className="text-primary" />
+                Next Step: Dispatch
+              </h2>
+              <p className="text-xs text-slate-400 mb-4 leading-relaxed">
+                If approved, the system will automatically generate a PDF Purchase Order and send an email to 
+                <span className="text-slate-200 font-medium"> the selected supplier</span>.
+              </p>
+              <div className="bg-slate-800 rounded p-3 text-xs font-mono text-slate-300 border border-slate-700">
+                Subject: Purchase Order PO-{rfq.id.split('-')[0]}<br/>
+                Attached: PO-{rfq.id.split('-')[0]}.pdf
+              </div>
+            </div>
+          )}
 
         </div>
       </div>
@@ -237,19 +491,19 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
               <div className="bg-bg border border-border rounded-lg p-4 text-sm">
                 <div className="flex justify-between mb-2">
                   <span className="text-text-muted">Supplier:</span>
-                  <span className="font-medium text-text-primary">TechCorp Solutions</span>
+                  <span className="font-medium text-text-primary">{displayQuote?.supplier_name || 'Unknown'}</span>
                 </div>
                 <div className="flex justify-between mb-2">
                   <span className="text-text-muted">Total Value (TCO):</span>
-                  <span className="font-medium text-text-primary">₺ 582,768</span>
+                  <span className="font-medium text-text-primary">₺ {displayTCO?.total_tco.toLocaleString('en-US') || displayQuote?.total_price.toLocaleString('en-US')}</span>
                 </div>
                 <div className="flex justify-between mb-2">
                   <span className="text-text-muted">AI Recommendation:</span>
-                  <span className="font-medium text-text-primary">Recommended</span>
+                  <span className="font-medium text-text-primary">{analysis?.recommendation?.verification_status || 'N/A'}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-text-muted">Warnings:</span>
-                  <span className="font-medium text-amber-500">1 (Delivery Timeline)</span>
+                  <span className={`font-medium ${warningsCount > 0 ? 'text-amber-500' : 'text-success'}`}>{warningsCount} ({warningsCount > 0 ? 'Review Required' : 'All Clear'})</span>
                 </div>
               </div>
 
@@ -261,17 +515,114 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                   <li className="flex items-center gap-2"><Check size={14} className="text-success" /> record your approval in the audit log</li>
                 </ul>
               </div>
+
+              {approvalError && (
+                <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-500 text-xs rounded-md font-medium">
+                  {approvalError}
+                </div>
+              )}
             </div>
 
             <div className="px-6 py-4 border-t border-border bg-surface/50 flex justify-end gap-3">
               <button 
                 onClick={() => setIsConfirmOpen(false)}
-                className="px-4 py-2 text-sm font-medium text-text-muted hover:text-text-primary transition-colors"
+                disabled={isApproving}
+                className="px-4 py-2 text-sm font-medium text-text-muted hover:text-text-primary transition-colors disabled:opacity-50"
               >
                 Cancel
               </button>
-              <button className="bg-success hover:bg-success/90 text-white px-4 py-2 rounded text-sm font-medium transition-colors shadow-sm">
-                Approve & Create PO
+              <button 
+                onClick={handleApprove}
+                disabled={isApproving}
+                className="flex items-center gap-2 bg-success hover:bg-success/90 text-white px-4 py-2 rounded text-sm font-medium transition-colors shadow-sm disabled:opacity-70"
+              >
+                {isApproving && <Loader2 size={14} className="animate-spin" />}
+                {isApproving ? "Processing..." : "Approve & Create PO"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Upload Quote Modal */}
+      {isUploadQuoteOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <div className="bg-surface-hover border border-border rounded-lg shadow-xl w-full max-w-md overflow-hidden flex flex-col">
+            <div className="p-6 border-b border-border flex justify-between items-center bg-surface">
+              <h3 className="text-lg font-semibold text-text-primary">Add Supplier Quote</h3>
+              <button 
+                onClick={() => setIsUploadQuoteOpen(false)}
+                className="text-text-muted hover:text-text-primary transition-colors"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            
+            <div className="p-6 flex flex-col gap-4">
+              {uploadError && (
+                <div className="p-3 rounded bg-danger/10 border border-danger/20 text-danger text-sm">
+                  {uploadError}
+                </div>
+              )}
+
+              <div className="flex flex-col gap-2">
+                <label className="text-sm font-medium text-text-secondary">Supplier *</label>
+                <select 
+                  value={uploadSupplierId}
+                  onChange={(e) => setUploadSupplierId(e.target.value)}
+                  className="w-full bg-background border border-border rounded px-3 py-2 text-text-primary focus:outline-none focus:border-primary transition-colors"
+                >
+                  <option value="">Select a supplier...</option>
+                  {suppliers.map(s => (
+                    <option key={s.id} value={s.id}>{s.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <label className="text-sm font-medium text-text-secondary">Quote Document (PDF) *</label>
+                <div className="border-2 border-dashed border-border rounded-lg p-6 flex flex-col items-center justify-center text-center group hover:border-primary/50 transition-colors relative">
+                  <input 
+                    type="file" 
+                    accept=".pdf,.xlsx,.xls"
+                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                    onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
+                  />
+                  <div className={`w-12 h-12 rounded-full flex items-center justify-center mb-4 transition-transform
+                    ${uploadFile ? 'bg-success/20 text-success' : 'bg-surface text-text-muted group-hover:scale-110 group-hover:text-primary'}`}>
+                    <UploadCloud size={24} />
+                  </div>
+                  
+                  {uploadFile ? (
+                    <div className="flex flex-col items-center">
+                      <p className="text-sm font-medium text-text-primary">{uploadFile.name}</p>
+                      <p className="text-xs text-text-muted mt-1">Ready to upload</p>
+                    </div>
+                  ) : (
+                    <>
+                      <p className="text-sm font-medium text-text-primary">Click to upload or drag and drop</p>
+                      <p className="text-xs text-text-muted mt-1">PDF, Excel up to 10MB</p>
+                    </>
+                  )}
+                </div>
+              </div>
+
+            </div>
+            
+            <div className="p-4 border-t border-border bg-surface flex justify-end gap-3">
+              <button 
+                onClick={() => setIsUploadQuoteOpen(false)}
+                className="px-4 py-2 text-sm font-medium text-text-muted hover:text-text-primary transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={handleUploadSupplierQuote}
+                disabled={isUploading || !uploadFile || !uploadSupplierId}
+                className="flex items-center gap-2 bg-primary hover:bg-primary/90 text-white px-4 py-2 rounded text-sm font-medium transition-colors shadow-sm disabled:opacity-50"
+              >
+                {isUploading && <Loader2 size={14} className="animate-spin" />}
+                {isUploading ? "Uploading..." : "Upload Quote"}
               </button>
             </div>
           </div>

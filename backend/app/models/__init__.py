@@ -20,7 +20,7 @@ from app.models.organization import Organization
 from app.models.user import User, UserRole
 from app.models.supplier import Supplier, SupplierHistory
 from app.models.policy_document import PolicyDocument, DocumentType
-from app.models.rfq import RFQ, QuoteDocument, RFQStatus, ParseStatus, FileType
+from app.models.rfq import RFQ, RFQItem, QuoteDocument, RFQStatus, ParseStatus, FileType
 from app.models.quote import Quote, QuoteItem
 from app.models.analysis import (
     Analysis,
@@ -55,6 +55,7 @@ __all__ = [
     "DocumentType",
     # RFQ
     "RFQ",
+    "RFQItem",
     "QuoteDocument",
     "RFQStatus",
     "ParseStatus",
