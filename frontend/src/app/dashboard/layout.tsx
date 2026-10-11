@@ -1,4 +1,7 @@
+"use client";
+
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { 
   LayoutDashboard, 
   FileText, 
@@ -14,6 +17,7 @@ export default function DashboardLayout({
 }: {
   children: React.ReactNode;
 }) {
+  const pathname = usePathname();
   return (
     <div className="min-h-screen bg-bg flex font-sans">
       
@@ -36,7 +40,14 @@ export default function DashboardLayout({
             Menu
           </div>
           
-          <Link href="/dashboard" className="flex items-center gap-3 px-3 py-2 rounded-md bg-primary/10 text-primary font-medium text-sm transition-colors">
+          <Link 
+            href="/dashboard" 
+            className={`flex items-center gap-3 px-3 py-2 rounded-md font-medium text-sm transition-colors ${
+              pathname === "/dashboard" 
+                ? "bg-primary/10 text-primary" 
+                : "text-text-muted hover:bg-surface-elevated hover:text-text-primary"
+            }`}
+          >
             <LayoutDashboard size={18} />
             Dashboard
           </Link>
@@ -46,7 +57,14 @@ export default function DashboardLayout({
             Quotes & RFQs
           </Link>
           
-          <Link href="/dashboard/policies" className="flex items-center gap-3 px-3 py-2 rounded-md text-text-muted hover:bg-surface-elevated hover:text-text-primary font-medium text-sm transition-colors">
+          <Link 
+            href="/dashboard/policies" 
+            className={`flex items-center gap-3 px-3 py-2 rounded-md font-medium text-sm transition-colors ${
+              pathname.startsWith("/dashboard/policies")
+                ? "bg-primary/10 text-primary" 
+                : "text-text-muted hover:bg-surface-elevated hover:text-text-primary"
+            }`}
+          >
             <ShieldCheck size={18} />
             Policies
           </Link>

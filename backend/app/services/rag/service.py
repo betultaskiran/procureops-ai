@@ -60,6 +60,27 @@ class RAGService:
             metadata=metadata
         )
 
+    async def delete_document(self, organization_id: str, doc_id: str):
+        """
+        Belirtilen belgenin vektör veritabanındaki tüm kayıtlarını siler.
+        """
+        await self.vector_store.delete_by_doc_id(doc_id=doc_id, organization_id=organization_id)
+
+    async def search_documents(
+        self, 
+        organization_id: str, 
+        query: str, 
+        limit: int = 5
+    ) -> List[Dict[str, Any]]:
+        """
+        Sorulan soruya en alakalı metin parçalarını payload listesi olarak döner.
+        """
+        return await self.vector_store.search(
+            organization_id=organization_id,
+            query=query,
+            limit=limit
+        )
+
     async def retrieve_context(
         self, 
         organization_id: str, 
@@ -82,7 +103,7 @@ class RAGService:
         # Bulunan metinleri alt alta ekle
         context_parts = []
         for i, payload in enumerate(results, 1):
-            source_doc = payload.get("source") or payload.get("source_name") or "Bilinmeyen Belge"
+            source_doc = payload.get("title") or payload.get("source") or payload.get("source_name") or "Bilinmeyen Belge"
             text = payload.get("text", "")
             context_parts.append(f"[Kaynak {i}: {source_doc}]\n{text}\n")
 

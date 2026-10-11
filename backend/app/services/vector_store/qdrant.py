@@ -56,12 +56,49 @@ class QdrantService:
                 }
             )
 
-            # Metadata bazlı filtreleme için indeks
-            await self.client.create_payload_index(
-                collection_name=self.COLLECTION_NAME,
-                field_name="organization_id",
-                field_schema=models.PayloadSchemaType.KEYWORD,
+            # Metadata bazlı filtreleme için indeksler
+            try:
+                await self.client.create_payload_index(
+                    collection_name=self.COLLECTION_NAME,
+                    field_name="organization_id",
+                    field_schema=models.PayloadSchemaType.KEYWORD,
+                )
+            except Exception:
+                pass
+
+            try:
+                await self.client.create_payload_index(
+                    collection_name=self.COLLECTION_NAME,
+                    field_name="doc_id",
+                    field_schema=models.PayloadSchemaType.KEYWORD,
+                )
+            except Exception:
+                pass
+
+    async def delete_by_doc_id(self, doc_id: str, organization_id: str | None = None):
+        """
+        Belgeye ait tüm chunk ve vektörleri Qdrant'tan siler.
+        """
+        conditions = [
+            models.FieldCondition(
+                key="doc_id",
+                match=models.MatchValue(value=str(doc_id))
             )
+        ]
+        if organization_id:
+            conditions.append(
+                models.FieldCondition(
+                    key="organization_id",
+                    match=models.MatchValue(value=str(organization_id))
+                )
+            )
+
+        await self.client.delete(
+            collection_name=self.COLLECTION_NAME,
+            points_selector=models.FilterSelector(
+                filter=models.Filter(must=conditions)
+            )
+        )
 
     async def ingest_documents(
         self, 

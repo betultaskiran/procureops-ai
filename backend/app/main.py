@@ -22,6 +22,7 @@ from app.api.v1.suppliers import router as suppliers_router
 from app.api.v1.dashboard import router as dashboard_router
 from app.api.v1.analyses import router as analyses_router
 from app.api.v1.knowledge import router as knowledge_router
+from app.api.v1.policies import router as policies_router
 from app.services.vector_store.qdrant import QdrantService
 
 # ── Create the FastAPI application ────────────────────────────────────────────
@@ -74,6 +75,7 @@ app.include_router(dashboard_router)
 app.include_router(quotes_router)
 app.include_router(analyses_router)
 app.include_router(knowledge_router)
+app.include_router(policies_router)
 
 
 # ── Root endpoint ─────────────────────────────────────────────────────────────

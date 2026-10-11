@@ -65,5 +65,17 @@ export const apiClient = {
       body,
     });
     return handleResponse<T>(res);
+  },
+
+  async delete<T>(path: string, options?: RequestInit): Promise<T> {
+    const res = await fetch(`${BASE_URL}${path}`, {
+      ...options,
+      method: "DELETE",
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+      },
+    });
+    return handleResponse<T>(res);
   }
 };
