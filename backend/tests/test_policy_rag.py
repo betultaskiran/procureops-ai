@@ -471,3 +471,135 @@ async def test_six_critical_queries_and_negative_retrieval():
         assert "bulunamadı" in d6["context"].lower()
         assert "varsayımda bulunmadan" in d6["context"].lower()
 
+
+@pytest.mark.asyncio
+async def test_topical_grounding_alternative_and_negative_queries():
+    """
+    Kullanıcının talep ettiği 5 alternatif pozitif ifade ile 5 zor/alan-dışı negatif sorguyu test eder:
+    - Alternatif pozitiflerde eş anlamlılar (laptop, 250 bin, servis, takvim günü vb.) üzerinden doğru maddeler çekilmeli.
+    - Negatif sorgularda konusal uyum filtresi devreye girerek ilgisiz politika maddeleri elenmeli (0 hit ve negatif context).
+    """
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        async with AsyncSessionLocal() as db:
+            res = await db.execute(select(Organization).limit(1))
+            org = res.scalars().first()
+            assert org is not None
+            org_id = str(org.id)
+
+        # 1. ALT-1: Laptoplarda garanti kaç yıl?
+        r1 = await client.post("/api/v1/policies/search", json={
+            "query": "Laptoplarda garanti kaç yıl?",
+            "top_k": 3,
+            "organization_id": org_id
+        })
+        assert r1.status_code == 200
+        d1 = r1.json()
+        assert len(d1["hits"]) >= 1, "ALT-1 eşleşme bulamadı"
+        assert "GARANTİ" in (d1["hits"][0]["section_title"] or "").upper()
+        assert any(term in d1["hits"][0]["text"] for term in ["24 ay", "2 yıl"])
+
+        # 2. ALT-2: Kritik sunucu arızasında servis ne kadar sürede müdahale etmeli?
+        r2 = await client.post("/api/v1/policies/search", json={
+            "query": "Kritik sunucu arızasında servis ne kadar sürede müdahale etmeli?",
+            "top_k": 3,
+            "organization_id": org_id
+        })
+        assert r2.status_code == 200
+        d2 = r2.json()
+        assert len(d2["hits"]) >= 1, "ALT-2 eşleşme bulamadı"
+        assert "ARIZA" in (d2["hits"][0]["section_title"] or "").upper()
+        assert "4 saat" in d2["hits"][0]["text"]
+
+        # 3. ALT-3: Teslimat en fazla kaç takvim günü sürebilir?
+        r3 = await client.post("/api/v1/policies/search", json={
+            "query": "Teslimat en fazla kaç takvim günü sürebilir?",
+            "top_k": 3,
+            "organization_id": org_id
+        })
+        assert r3.status_code == 200
+        d3 = r3.json()
+        assert len(d3["hits"]) >= 1, "ALT-3 eşleşme bulamadı"
+        assert "TESLİMAT" in (d3["hits"][0]["section_title"] or "").upper()
+        assert "14" in d3["hits"][0]["text"]
+
+        # 4. ALT-4: 250 bin TL üzerindeki alımlarda ek onay kimlerden alınır?
+        r4 = await client.post("/api/v1/policies/search", json={
+            "query": "250 bin TL üzerindeki alımlarda ek onay kimlerden alınır?",
+            "top_k": 3,
+            "organization_id": org_id
+        })
+        assert r4.status_code == 200
+        d4 = r4.json()
+        assert len(d4["hits"]) >= 1, "ALT-4 eşleşme bulamadı"
+        assert "ONAY" in (d4["hits"][0]["section_title"] or "").upper()
+        assert "CFO" in d4["hits"][0]["text"]
+
+        # 5. ALT-5: Kalite sertifikası olmayan BT tedarikçisi değerlendirmeye alınır mı?
+        r5 = await client.post("/api/v1/policies/search", json={
+            "query": "Kalite sertifikası olmayan BT tedarikçisi değerlendirmeye alınır mı?",
+            "top_k": 3,
+            "organization_id": org_id
+        })
+        assert r5.status_code == 200
+        d5 = r5.json()
+        assert len(d5["hits"]) >= 1, "ALT-5 eşleşme bulamadı"
+        assert "KALİTE" in (d5["hits"][0]["section_title"] or "").upper()
+        assert "ISO 9001" in d5["hits"][0]["text"]
+
+        # 6. NEG-1: Avans teminat mektubu ve ödeme vadesi
+        r_neg1 = await client.post("/api/v1/policies/search", json={
+            "query": "Tedarikçilere avans ödemesi yapılırken banka teminat mektubu oranı yüzde kaçtır ve ödeme vadesi kaç gündür?",
+            "top_k": 3,
+            "organization_id": org_id
+        })
+        assert r_neg1.status_code == 200
+        d_neg1 = r_neg1.json()
+        assert len(d_neg1["hits"]) == 0, f"NEG-1 için ilgisiz hit sızdı: {d_neg1['hits']}"
+        assert "bulunamadı" in d_neg1["context"].lower()
+
+        # 7. NEG-2: Yurt dışı seyahat otel ve yemek harcırah limiti
+        r_neg2 = await client.post("/api/v1/policies/search", json={
+            "query": "Şirket çalışanlarının yurt dışı seyahatlerinde günlük otel ve yemek harcırah limiti kaç Euro'dur?",
+            "top_k": 3,
+            "organization_id": org_id
+        })
+        assert r_neg2.status_code == 200
+        d_neg2 = r_neg2.json()
+        assert len(d_neg2["hits"]) == 0, f"NEG-2 için ilgisiz hit sızdı: {d_neg2['hits']}"
+        assert "bulunamadı" in d_neg2["context"].lower()
+
+        # 8. NEG-3: Ofis içi kahve ve ikram bütçesi
+        r_neg3 = await client.post("/api/v1/policies/search", json={
+            "query": "Ofis içi kahve ve ikram harcamaları için aylık bütçe limiti nedir?",
+            "top_k": 3,
+            "organization_id": org_id
+        })
+        assert r_neg3.status_code == 200
+        d_neg3 = r_neg3.json()
+        assert len(d_neg3["hits"]) == 0, f"NEG-3 için ilgisiz hit sızdı: {d_neg3['hits']}"
+        assert "bulunamadı" in d_neg3["context"].lower()
+
+        # 9. NEG-4: Sözleşmelerde cayma bedeli ve cezai şart
+        r_neg4 = await client.post("/api/v1/policies/search", json={
+            "query": "Satın alma sözleşmelerinde cayma bedeli ve cezai şart oranı nedir?",
+            "top_k": 3,
+            "organization_id": org_id
+        })
+        assert r_neg4.status_code == 200
+        d_neg4 = r_neg4.json()
+        assert len(d_neg4["hits"]) == 0, f"NEG-4 için ilgisiz hit sızdı: {d_neg4['hits']}"
+        assert "bulunamadı" in d_neg4["context"].lower()
+
+        # 10. NEG-5: Konu dışı sohbet
+        r_neg5 = await client.post("/api/v1/policies/search", json={
+            "query": "nasılsın",
+            "top_k": 3,
+            "organization_id": org_id
+        })
+        assert r_neg5.status_code == 200
+        d_neg5 = r_neg5.json()
+        assert len(d_neg5["hits"]) == 0, f"NEG-5 için ilgisiz hit sızdı: {d_neg5['hits']}"
+        assert "bulunamadı" in d_neg5["context"].lower()
+
+

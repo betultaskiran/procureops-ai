@@ -83,20 +83,20 @@ class GeminiProvider(LLMProvider):
           Extraction için thinking'i devre dışı bırakır.
           Bu ~2-5 saniyelik latency kazancı ve önemli token tasarrufu sağlar.
         """
-        return types.GenerateContentConfig(
-            response_mime_type="application/json",
-            response_schema=schema,
-            system_instruction=system_prompt,
-            temperature=config.temperature,
-            thinking_config=types.ThinkingConfig(
+        kwargs = {
+            "response_mime_type": "application/json",
+            "response_schema": schema,
+            "system_instruction": system_prompt,
+            "temperature": config.temperature,
+        }
+        if "lite" not in self._model.lower() and config.thinking_budget is not None:
+            kwargs["thinking_config"] = types.ThinkingConfig(
                 thinking_budget=config.thinking_budget,
-            ),
-            **(
-                {"max_output_tokens": config.max_output_tokens}
-                if config.max_output_tokens
-                else {}
-            ),
-        )
+            )
+        if config.max_output_tokens:
+            kwargs["max_output_tokens"] = config.max_output_tokens
+
+        return types.GenerateContentConfig(**kwargs)
 
     async def extract_structured(
         self,
@@ -158,13 +158,15 @@ class GeminiProvider(LLMProvider):
         Structured output yok — sadece metin döner.
         """
         cfg = config or EXTRACTION_CONFIG
-        gen_config = types.GenerateContentConfig(
-            system_instruction=system_prompt,
-            temperature=cfg.temperature,
-            thinking_config=types.ThinkingConfig(
+        kwargs = {
+            "system_instruction": system_prompt,
+            "temperature": cfg.temperature,
+        }
+        if "lite" not in self._model.lower() and cfg.thinking_budget is not None:
+            kwargs["thinking_config"] = types.ThinkingConfig(
                 thinking_budget=cfg.thinking_budget,
-            ),
-        )
+            )
+        gen_config = types.GenerateContentConfig(**kwargs)
 
         try:
             response = await self._client.aio.models.generate_content(

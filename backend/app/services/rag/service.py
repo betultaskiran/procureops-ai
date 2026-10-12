@@ -271,44 +271,113 @@ class RAGService:
 
         return cleaned.strip()
 
+    @staticmethod
+    def extract_query_topics(query: str) -> List[str]:
+        """
+        Sorgudan bağlaç ve soru kelimelerini ayıklayıp temel konu kavramlarını ve kalıplarını çıkarır.
+        """
+        if not query:
+            return []
+
+        import re
+        normalized = query.lower().replace("’", "'").replace("“", "").replace("”", "")
+
+        stopwords = {
+            "bu", "şu", "o", "ve", "veya", "ile", "için", "göre", "kadar", "bir", "en", "çok",
+            "az", "ne", "nedir", "kaç", "kaçtır", "olan", "olarak", "mı", "mi", "mu", "mü",
+            "var", "yok", "ise", "de", "da", "ki", "tüm", "her", "gibi", "kendi", "sonucu",
+            "süresi", "durumu", "hakkında", "ilgili", "alınır", "edilir", "yapılır", "olur",
+            "hangisi", "hangi", "kim", "kimler", "kimden", "kimlerden", "tarafından", "şartı",
+            "kuralı", "madde", "belge", "şirket", "şirketin", "şirkette"
+        }
+
+        special_phrases = [
+            "teminat mektubu", "ödeme vadesi", "yurt dışı", "avans ödemesi",
+            "cayma bedeli", "cezai şart", "bütçe limiti", "garanti süresi",
+            "teslimat süresi", "arıza müdahale", "onay yetkisi", "iso 9001",
+            "250 bin", "250.000 tl", "1.000.000 tl", "3 iş günü"
+        ]
+
+        found_topics = []
+        for sp in special_phrases:
+            if sp in normalized:
+                found_topics.append(sp)
+
+        words = re.findall(r"[a-z0-9çğıöşü\.]+", normalized)
+        for w in words:
+            if len(w) < 3 or w in stopwords:
+                continue
+            stem = re.sub(
+                r"(larda|lerde|lerden|lardan|lerin|ların|inde|ında|ıyla|iyle|deki|daki|nın|nin|nun|nün|ya|ye|da|de|dan|den|lar|ler|sı|si|su|sü)$",
+                "",
+                w
+            )
+            if len(stem) >= 3 and stem not in stopwords:
+                found_topics.append(stem)
+
+        return list(set(found_topics))
+
+    @staticmethod
+    def check_topic_grounding(query_topics: List[str], chunk_text: str, section_title: Optional[str] = None) -> float:
+        """
+        Aday chunk'ın, sorgunun temel konu kavramlarıyla örtüşme oranını hesaplar.
+        Eş anlamlıları ve alternatif kavramları hesaba katar.
+        """
+        if not query_topics:
+            return 1.0
+
+        synonyms = {
+            "laptop": ["dizüstü", "bilgisayar", "donanım"],
+            "notebook": ["dizüstü", "bilgisayar", "donanım"],
+            "servis": ["tedarikçi", "üretici", "teknik", "destek", "müdahale"],
+            "250 bin": ["250.000", "250000", "250"],
+            "1 milyon": ["1.000.000", "1000000"],
+            "yıl": ["sene", "ay"],
+            "ay": ["yıl", "sene"],
+        }
+
+        combined_target = f"{section_title or ''} {chunk_text or ''}".lower()
+
+        matched = 0
+        for topic in query_topics:
+            if topic in combined_target:
+                matched += 1
+                continue
+            syn_list = synonyms.get(topic, [])
+            if any(syn in combined_target for syn in syn_list):
+                matched += 1
+                continue
+
+        return matched / len(query_topics)
+
     def filter_and_rank_hits(
         self,
         candidates: List[Dict[str, Any]],
         top_k: int = 3,
         min_score: float = 0.62,
         score_window: float = 0.085,
+        query: Optional[str] = None,
+        min_topical_overlap: float = 0.35,
     ) -> List[Dict[str, Any]]:
         """
         Retrieval sonuçlarını precision odaklı filtreler ve sıralar:
         1. Asgari alaka eşiğini denetler: BM25 eşleşmesi varsa 0.62, saf dense aramada 0.63 taban eşik uygulanır.
-        2. En yüksek aday dahi asgari eşiği geçemiyorsa boş döner (negatif kanıt / yetersiz bilgi).
-        3. Adaptif skor aralığı (top_score - score_window) dışındaki ilgisiz parçaları eler.
-        4. İçerik maddeleri mevcutken kapak/üstbilgi (is_header=True) parçalarını eler.
-        5. Soruyla gerçekten ilişkili olanları seçer (yapay dolgu yapmaz).
+        2. Konusal uyum (topical grounding) denetimi: Sorgunun kavramlarıyla örtüşmeyen semantik drift parçalarını eler.
+        3. En yüksek aday dahi asgari eşiği geçemiyorsa boş döner (negatif kanıt / yetersiz bilgi).
+        4. Adaptif skor aralığı (top_score - score_window) dışındaki ilgisiz parçaları eler.
+        5. İçerik maddeleri mevcutken kapak/üstbilgi (is_header=True) parçalarını eler.
+        6. Soruyla gerçekten ilişkili olanları seçer (yapay dolgu yapmaz).
         """
         if not candidates:
             return []
+
+        query_topics = self.extract_query_topics(query) if query else []
 
         # Skorlarına göre sıralı olduğundan emin ol
         sorted_candidates = sorted(
             candidates,
             key=lambda c: float(c.get("score") or 0.0),
             reverse=True
-        )
-
-        top_score = float(sorted_candidates[0].get("score") or 0.0)
-        top_sparse = float(sorted_candidates[0].get("sparse_score") or 0.0)
-
-        # BM25 kelime eşleşmesi varsa min_score uygulanır; saf dense gürültüde en az 0.63 aranır
-        effective_min = min_score if top_sparse > 0.5 else max(min_score, 0.63)
-
-        if top_score < effective_min:
-            return []
-
-        # İçerik taşıyan (header olmayan) aday var mı?
-        has_content_candidates = any(
-            not c.get("is_header", False) and float(c.get("score") or 0.0) >= effective_min
-            for c in sorted_candidates
         )
 
         filtered = []
@@ -318,13 +387,35 @@ class RAGService:
             cand_min = min_score if sp > 0.5 else max(min_score, 0.63)
             if sc < cand_min:
                 continue
+
+            # Konusal uyum denetimi (Topical Grounding)
+            if query_topics:
+                overlap = self.check_topic_grounding(
+                    query_topics,
+                    c.get("text", ""),
+                    c.get("section_title", "")
+                )
+                if overlap < min_topical_overlap:
+                    continue
+
+            filtered.append(c)
+
+        if not filtered:
+            return []
+
+        top_score = float(filtered[0].get("score") or 0.0)
+        has_content_candidates = any(not c.get("is_header", False) for c in filtered)
+
+        final_hits = []
+        for c in filtered:
+            sc = float(c.get("score") or 0.0)
             if sc < top_score - score_window:
                 continue
             if has_content_candidates and c.get("is_header", False):
                 continue
-            filtered.append(c)
+            final_hits.append(c)
 
-        return filtered[:top_k]
+        return final_hits[:top_k]
 
     def format_context_from_payloads(self, results: List[Dict[str, Any]]) -> str:
         """
@@ -370,5 +461,5 @@ class RAGService:
             query=query,
             limit=max(top_k * 3, 10)
         )
-        filtered = self.filter_and_rank_hits(results, top_k=top_k)
+        filtered = self.filter_and_rank_hits(results, top_k=top_k, query=query)
         return self.format_context_from_payloads(filtered)

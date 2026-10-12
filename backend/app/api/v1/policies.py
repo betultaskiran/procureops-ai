@@ -488,7 +488,8 @@ async def test_search_policies(
         valid_hits,
         top_k=request.top_k,
         min_score=0.62,
-        score_window=0.085
+        score_window=0.085,
+        query=request.query,
     )
 
     # 5. LLM bağlamını seçilen filtrelenmiş sonuçlardan üret
