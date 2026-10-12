@@ -31,9 +31,29 @@ const DOC_TYPE_CONFIG: Record<string, { label: string; color: string }> = {
   other: { label: "Diğer Belge", color: "bg-gray-500/10 text-text-muted border-gray-500/20" },
 };
 
-function formatPolicyText(rawText: string) {
-  const lines = rawText.split("\n");
-  return lines.map((line, idx) => {
+function formatPolicyText(rawText: string, sectionTitle?: string | null) {
+  // Decode common HTML entities and clean escaped markdown tokens
+  let text = (rawText || "")
+    .replace(/&#x20;/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&#x42;/g, "B")
+    .replace(/\\(\*|_|#|`|\[|\]|<|>)/g, "$1");
+
+  const lines = text.split("\n");
+
+  // Eğer ilk satır kartın section_title başlığıyla aynıysa mükerrer gösterimi engelle
+  let startIndex = 0;
+  if (sectionTitle && lines.length > 0) {
+    const normTitle = sectionTitle.replace(/[#*_\s:]+/g, "").toLowerCase();
+    const firstLineNorm = lines[0].replace(/[#*_\s:]+/g, "").toLowerCase();
+    if (normTitle && (firstLineNorm.includes(normTitle) || (normTitle.length > 5 && normTitle.includes(firstLineNorm)))) {
+      startIndex = 1;
+    }
+  }
+
+  const contentLines = lines.slice(startIndex);
+
+  return contentLines.map((line, idx) => {
     const trimmed = line.trim();
     if (!trimmed) return <div key={idx} className="h-1.5" />;
 
@@ -62,7 +82,7 @@ function formatPolicyText(rawText: string) {
               </strong>
             );
           }
-          const cleanPart = part.replace(/^#{1,3}\s+/, "").replace(/&#x20;/g, " ");
+          const cleanPart = part.replace(/^#{1,3}\s+/, "");
           return <span key={pIdx}>{cleanPart}</span>;
         })}
       </div>
@@ -378,7 +398,7 @@ export default function PoliciesPage() {
 
         {searchResult && (
           <div className="mt-6 flex flex-col gap-6">
-            {/* Çoklu Belge Kapsamı Bildirimi */}
+            {/* Çoklu Belge Kullanımı Bildirimi (Nötr ve Profesyonel) */}
             {(() => {
               const uniqueTitles = Array.from(new Set(searchResult.hits.map(h => h.title || h.source)));
               if (uniqueTitles.length > 1) {
@@ -387,10 +407,10 @@ export default function PoliciesPage() {
                     <Sparkles className="text-blue-500 h-5 w-5 shrink-0 mt-0.5" />
                     <div className="text-xs">
                       <strong className="text-text-primary block font-semibold mb-0.5">
-                        Çoklu Belge Kapsamı ({uniqueTitles.length} Farklı Kaynak Belge)
+                        Birden Fazla Kaynak Belge Kullanıldı ({uniqueTitles.length} Belge)
                       </strong>
                       <span className="text-text-secondary leading-relaxed">
-                        Bu sorgu için hem <strong>{uniqueTitles.join("</strong> hem de <strong>")}</strong> belgelerinden ilgili hükümler getirildi. Olası çelişkiler veya tamamlayıcı maddeler aşağıda kaynak kartlarında bağımsız olarak gösterilmektedir.
+                        Bu sorgu için <strong>{uniqueTitles.join("</strong> ve <strong>")}</strong> belgelerinden ilgili hükümler getirilmiştir. İlgili maddeler aşağıda kaynak kartlarında sunulmaktadır.
                       </span>
                     </div>
                   </div>
@@ -471,7 +491,7 @@ export default function PoliciesPage() {
 
                           {/* Okunabilir Formatlanmış Metin */}
                           <div className="mt-2 text-xs">
-                            {formatPolicyText(hit.text)}
+                            {formatPolicyText(hit.text, hit.section_title)}
                           </div>
                         </div>
 
@@ -481,8 +501,11 @@ export default function PoliciesPage() {
                             📄 {hit.file_name || "Belge"}
                           </span>
                           {hit.score !== undefined && hit.score !== null && (
-                            <span className="text-[10px] font-mono bg-bg px-1.5 py-0.5 rounded text-text-secondary border border-border">
-                              Skor: {hit.score.toFixed(3)}
+                            <span 
+                              className="text-[10px] font-mono bg-bg px-1.5 py-0.5 rounded text-text-secondary border border-border"
+                              title="Anlamsal alaka ve kelime uyumu skoru"
+                            >
+                              Alaka Skoru: {hit.score.toFixed(3)}
                             </span>
                           )}
                         </div>

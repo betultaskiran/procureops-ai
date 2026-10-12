@@ -190,34 +190,58 @@ class QdrantService:
             ]
         )
 
-        # 4. Hybrid Search (RRF)
-        response = await self.client.query_points(
+        # 4. Dense ve Sparse aramayı birlikte yürüt
+        candidate_map = {}
+
+        # 4a. Dense Arama (Anlamsal Benzerlik - Cosine Score)
+        dense_response = await self.client.query_points(
             collection_name=self.COLLECTION_NAME,
-            prefetch=[
-                models.Prefetch(
-                    query=query_dense,
-                    using="text-dense",
-                    limit=limit * 2,
-                    filter=filter
-                ),
-                models.Prefetch(
-                    query=models.SparseVector(
-                        indices=query_sparse["indices"],
-                        values=query_sparse["values"]
-                    ),
-                    using="text-sparse",
-                    limit=limit * 2,
-                    filter=filter
-                )
-            ],
-            query=models.FusionQuery(fusion=models.Fusion.RRF),
-            limit=limit
+            query=query_dense,
+            using="text-dense",
+            limit=max(limit * 3, 10),
+            query_filter=filter,
         )
 
-        # Payload ve RRF skoru döndür
-        results = []
-        for hit in response.points:
+        for hit in dense_response.points:
             p = dict(hit.payload or {})
-            p["score"] = hit.score
-            results.append(p)
-        return results
+            dense_score = float(hit.score)
+            p["dense_score"] = dense_score
+            p["sparse_score"] = 0.0
+            p["score"] = dense_score
+            candidate_map[hit.id] = p
+
+        # 4b. Sparse Arama (BM25 Tam Kelime Eşleşmesi)
+        sparse_response = await self.client.query_points(
+            collection_name=self.COLLECTION_NAME,
+            query=models.SparseVector(
+                indices=query_sparse["indices"],
+                values=query_sparse["values"]
+            ),
+            using="text-sparse",
+            limit=max(limit * 3, 10),
+            query_filter=filter,
+        )
+
+        for hit in sparse_response.points:
+            sparse_score = float(hit.score)
+            if hit.id in candidate_map:
+                candidate_map[hit.id]["sparse_score"] = sparse_score
+                # Kelime eşleşmesi takviyesi (BM25 > 1 ise en fazla +0.06 puan ekle)
+                if sparse_score > 0.5:
+                    candidate_map[hit.id]["score"] += min(0.06, max(0.0, sparse_score * 0.003))
+            else:
+                p = dict(hit.payload or {})
+                p["dense_score"] = 0.0
+                p["sparse_score"] = sparse_score
+                # Sadece sparse ile bulunanlar için normalize taban puan
+                p["score"] = 0.50 + min(0.15, max(0.0, sparse_score * 0.005))
+                candidate_map[hit.id] = p
+
+        # 5. Skorlara göre sırala
+        sorted_results = sorted(
+            candidate_map.values(),
+            key=lambda x: x.get("score", 0.0),
+            reverse=True
+        )
+
+        return sorted_results[:max(limit * 2, 10)]

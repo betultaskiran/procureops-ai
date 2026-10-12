@@ -355,3 +355,119 @@ async def test_policy_file_streaming_endpoint():
         err_res = await client.get(f"/api/v1/policies/{fake_id}/file")
         assert err_res.status_code == 404
         assert "bulunamadı" in err_res.json()["detail"].lower()
+
+        # 3. Yanlış organizasyon ID ile yetki reddi (HTTP 403)
+        fake_org = uuid.uuid4()
+        forbidden_res = await client.get(f"/api/v1/policies/{valid_id}/file?organization_id={fake_org}")
+        assert forbidden_res.status_code == 403
+        assert "yetkiniz" in forbidden_res.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_six_critical_queries_and_negative_retrieval():
+    """
+    Kullanıcının talep ettiği 6 kritik sorguyu ve negatif kanıt yönetimini doğrular:
+    1. Standart dizüstü bilgisayar için minimum garanti süresi nedir? (24 ay / 2 yıl, SLA)
+    2. Kritik sunucu arızasında müdahale ve çözüm süreleri nedir? (4 saat / 24 saat, SLA)
+    3. Standart donanımın azami teslimat süresi nedir? (14 gün, SLA)
+    4. 300.000 TL tutarındaki bir satın alma için hangi onaylar gerekir? (Satın Alma Direktörü ve CFO, Yönetmelik)
+    5. ISO 9001 sertifikası olmayan bir BT donanım tedarikçisine ne olur? (Elenir, Yönetmelik)
+    6. Belgelerde bulunmayan bir ödeme/teminat kuralı sorulduğunda sistem ne yapar? (Yeterli kanıt bulunamadı, 0 hit, halüsinasyonsuz)
+    """
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        async with AsyncSessionLocal() as db:
+            res = await db.execute(select(Organization).limit(1))
+            org = res.scalars().first()
+            assert org is not None
+            org_id = str(org.id)
+
+        # 1. Standart dizüstü bilgisayar garanti süresi
+        r1 = await client.post("/api/v1/policies/search", json={
+            "query": "Standart dizüstü bilgisayar için minimum garanti süresi nedir?",
+            "top_k": 3,
+            "organization_id": org_id
+        })
+        assert r1.status_code == 200
+        d1 = r1.json()
+        assert len(d1["hits"]) >= 1
+        top_h1 = d1["hits"][0]
+        assert "GARANTİ" in (top_h1["section_title"] or "").upper()
+        assert "24 ay" in top_h1["text"] or "2 yıl" in top_h1["text"]
+        assert top_h1["score"] >= 0.70
+        # Mükerrer başlık olmadığını doğrula (gövde metni başlıkla başlamamalı)
+        assert not top_h1["text"].strip().startswith("###")
+
+        # 2. Kritik sunucu arıza müdahale ve çözüm
+        r2 = await client.post("/api/v1/policies/search", json={
+            "query": "Kritik sunucu arızasında müdahale ve çözüm süreleri nedir?",
+            "top_k": 3,
+            "organization_id": org_id
+        })
+        assert r2.status_code == 200
+        d2 = r2.json()
+        assert len(d2["hits"]) >= 1
+        top_h2 = d2["hits"][0]
+        assert "ARIZA" in (top_h2["section_title"] or "").upper()
+        assert "4 saat" in top_h2["text"]
+        assert "24 saat" in top_h2["text"]
+        assert top_h2["score"] >= 0.75
+
+        # 3. Standart donanımın azami teslimat süresi
+        r3 = await client.post("/api/v1/policies/search", json={
+            "query": "Standart donanımın azami teslimat süresi nedir?",
+            "top_k": 3,
+            "organization_id": org_id
+        })
+        assert r3.status_code == 200
+        d3 = r3.json()
+        assert len(d3["hits"]) >= 1
+        top_h3 = d3["hits"][0]
+        assert "TESLİMAT" in (top_h3["section_title"] or "").upper()
+        assert "14" in top_h3["text"]
+        assert top_h3["score"] >= 0.70
+
+        # 4. 300.000 TL satın alma onay yetkisi
+        r4 = await client.post("/api/v1/policies/search", json={
+            "query": "300.000 TL tutarındaki bir satın alma için hangi onaylar gerekir?",
+            "top_k": 3,
+            "organization_id": org_id
+        })
+        assert r4.status_code == 200
+        d4 = r4.json()
+        assert len(d4["hits"]) >= 1
+        top_h4 = d4["hits"][0]
+        assert "ONAY" in (top_h4["section_title"] or "").upper()
+        assert "CFO" in top_h4["text"]
+        assert "Satın Alma Direktörü" in top_h4["text"]
+        # İlgisiz SLA belgesinin çekilmediğini doğrula
+        assert all(h["document_type"] == "procurement_policy" for h in d4["hits"])
+
+        # 5. ISO 9001 sertifikası olmayan tedarikçi
+        r5 = await client.post("/api/v1/policies/search", json={
+            "query": "ISO 9001 sertifikası olmayan bir BT donanım tedarikçisine ne olur?",
+            "top_k": 3,
+            "organization_id": org_id
+        })
+        assert r5.status_code == 200
+        d5 = r5.json()
+        assert len(d5["hits"]) >= 1
+        top_h5 = d5["hits"][0]
+        assert "KALİTE" in (top_h5["section_title"] or "").upper()
+        assert "ISO 9001" in top_h5["text"]
+        assert "elenir" in top_h5["text"].lower() or "teknik" in top_h5["text"].lower()
+
+        # 6. NEGATİF SORGU: Belgelerde bulunmayan bir ödeme/teminat kuralı
+        r6 = await client.post("/api/v1/policies/search", json={
+            "query": "Belgelerde bulunmayan bir ödeme/teminat kuralı sorulduğunda sistem ne yapar?",
+            "top_k": 3,
+            "organization_id": org_id
+        })
+        assert r6.status_code == 200
+        d6 = r6.json()
+        # İlgisiz maddeler yapay olarak döndürülmemelidir
+        assert len(d6["hits"]) == 0
+        # Modelin uydurma yapmaması için context açıkça negatif uyarı içermelidir
+        assert "bulunamadı" in d6["context"].lower()
+        assert "varsayımda bulunmadan" in d6["context"].lower()
+

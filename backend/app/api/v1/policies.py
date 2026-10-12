@@ -393,17 +393,25 @@ async def reindex_policy(
 @router.get("/{policy_id}/file", summary="Stream or view the original policy document file")
 async def get_policy_file(
     policy_id: uuid.UUID,
+    organization_id: Optional[uuid.UUID] = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
     """
     Orijinal politika belgesini görüntüler veya indirir.
     PDF dosyaları tarayıcıda doğrudan (inline) açılacak şekilde sunulur.
+    Organizasyon yetkilendirmesi kontrol edilir.
     """
     policy = await db.get(PolicyDocument, policy_id)
     if not policy:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Politika belgesi bulunamadı veya silinmiş."
+        )
+
+    if organization_id and policy.organization_id != organization_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Bu belgeye erişim yetkiniz bulunmamaktadır."
         )
 
     file_path = Path(policy.file_path)
@@ -475,33 +483,34 @@ async def test_search_policies(
             h_copy["file_name"] = doc.file_name
             valid_hits.append(h_copy)
 
-    # 4. Akıllı sıralama:
-    # Qdrant Hybrid RRF skoru ile sırala. Genel kapak sayfası/üstbilgi parçalarına (is_header=True)
-    # hafif bir ceza uygulayarak doğrudan kural maddelerini öne çıkar.
-    valid_hits.sort(
-        key=lambda h: (float(h.get("score") or 0.0) - (0.015 if h.get("is_header", False) else 0.0)),
-        reverse=True
+    # 4. Precision odaklı filtreleme ve adaptif sıralama
+    ranked_hits = rag_service.filter_and_rank_hits(
+        valid_hits,
+        top_k=request.top_k,
+        min_score=0.62,
+        score_window=0.085
     )
-    ranked_hits = valid_hits[:request.top_k]
 
     # 5. LLM bağlamını seçilen filtrelenmiş sonuçlardan üret
     context = rag_service.format_context_from_payloads(ranked_hits)
 
-    # 6. Sonuç kartları listesini oluştur
+    # 6. Sonuç kartları listesini oluştur (Metin normalizasyonu ile mükerrer başlıkları arındır)
     hits = []
     for h in ranked_hits:
+        sec_title = h.get("section_title")
+        clean_text = rag_service.normalize_retrieved_text(h.get("text", ""), sec_title)
         hits.append(PolicySearchHit(
             source=h.get("title") or h.get("source") or "Bilinmeyen Belge",
             title=h.get("title"),
             doc_id=h.get("doc_id", ""),
             chunk_index=h.get("chunk_index", 0),
-            text=h.get("text", ""),
+            text=clean_text,
             document_type=h.get("document_type"),
-            section_title=h.get("section_title"),
+            section_title=sec_title,
             page_number=h.get("page_number", 1),
             file_name=h.get("file_name"),
-            file_url=f"/api/v1/policies/{h.get('doc_id')}/file",
-            score=h.get("score"),
+            file_url=f"/api/v1/policies/{h.get('doc_id')}/file?organization_id={org_id}",
+            score=round(float(h.get("score") or 0.0), 4),
             is_header=h.get("is_header", False),
         ))
 

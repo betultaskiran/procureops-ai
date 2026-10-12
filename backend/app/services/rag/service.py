@@ -7,7 +7,7 @@ RAG (Retrieval-Augmented Generation) operasyonları:
 3. Soruya göre en alakalı parçaları bulma (Retrieval)
 """
 
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from app.services.vector_store.qdrant import QdrantService
 
 
@@ -221,12 +221,118 @@ class RAGService:
             limit=limit
         )
 
+    def normalize_retrieved_text(self, text: str, section_title: Optional[str] = None) -> str:
+        """
+        Retrieved metindeki HTML entity'lerini, bozuk markdown kaçış karakterlerini
+        ve mükerrer madde başlıklarını temizler.
+        """
+        if not text:
+            return ""
+
+        import html
+        import re
+
+        # 1. HTML entity çözümü (&#x20;, &#x42;, &amp; vb.)
+        cleaned = html.unescape(text)
+        cleaned = cleaned.replace("&#x20;", " ").replace("&nbsp;", " ")
+
+        # 2. Kaçırılmış markdown imlerini temizle (\**, \###, \<strong> vb.)
+        cleaned = re.sub(r"\\(\*|_|#|`|\[|\]|<|>)", r"\1", cleaned)
+
+        # 3. Eğer section_title zaten biliniyorsa, metin başındaki mükerrer başlık satırını kaldır
+        if section_title:
+            norm_title = re.sub(r"[#*_\s:]+", "", section_title).lower()
+            lines = cleaned.splitlines()
+            if lines:
+                first_line_norm = re.sub(r"[#*_\s:]+", "", lines[0]).lower()
+                if norm_title in first_line_norm or (len(first_line_norm) > 5 and first_line_norm in norm_title):
+                    cleaned = "\n".join(lines[1:]).strip()
+
+        # 4. PDF soft line-break (kelime/cümle ortası satır kayması) temizliği:
+        # Madde numarası (1.1, 2. vb.), tire (-), liste (* ) veya başlık (#) ile başlamayan satırları
+        # önceki satırla bir boşlukla birleştirerek akıcı metin oluştur.
+        paragraphs = cleaned.split("\n\n")
+        rebuilt_paragraphs = []
+        for p in paragraphs:
+            p_lines = p.splitlines()
+            if not p_lines:
+                continue
+            rebuilt_lines = []
+            for line in p_lines:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                if rebuilt_lines and not re.match(r"^(\d+[\.\)]|[-*#•]|MADDE\s*\d+)", stripped, re.IGNORECASE):
+                    rebuilt_lines[-1] = f"{rebuilt_lines[-1]} {stripped}"
+                else:
+                    rebuilt_lines.append(stripped)
+            rebuilt_paragraphs.append("\n".join(rebuilt_lines))
+        cleaned = "\n\n".join(rebuilt_paragraphs)
+
+        return cleaned.strip()
+
+    def filter_and_rank_hits(
+        self,
+        candidates: List[Dict[str, Any]],
+        top_k: int = 3,
+        min_score: float = 0.62,
+        score_window: float = 0.085,
+    ) -> List[Dict[str, Any]]:
+        """
+        Retrieval sonuçlarını precision odaklı filtreler ve sıralar:
+        1. Asgari alaka eşiğini denetler: BM25 eşleşmesi varsa 0.62, saf dense aramada 0.63 taban eşik uygulanır.
+        2. En yüksek aday dahi asgari eşiği geçemiyorsa boş döner (negatif kanıt / yetersiz bilgi).
+        3. Adaptif skor aralığı (top_score - score_window) dışındaki ilgisiz parçaları eler.
+        4. İçerik maddeleri mevcutken kapak/üstbilgi (is_header=True) parçalarını eler.
+        5. Soruyla gerçekten ilişkili olanları seçer (yapay dolgu yapmaz).
+        """
+        if not candidates:
+            return []
+
+        # Skorlarına göre sıralı olduğundan emin ol
+        sorted_candidates = sorted(
+            candidates,
+            key=lambda c: float(c.get("score") or 0.0),
+            reverse=True
+        )
+
+        top_score = float(sorted_candidates[0].get("score") or 0.0)
+        top_sparse = float(sorted_candidates[0].get("sparse_score") or 0.0)
+
+        # BM25 kelime eşleşmesi varsa min_score uygulanır; saf dense gürültüde en az 0.63 aranır
+        effective_min = min_score if top_sparse > 0.5 else max(min_score, 0.63)
+
+        if top_score < effective_min:
+            return []
+
+        # İçerik taşıyan (header olmayan) aday var mı?
+        has_content_candidates = any(
+            not c.get("is_header", False) and float(c.get("score") or 0.0) >= effective_min
+            for c in sorted_candidates
+        )
+
+        filtered = []
+        for c in sorted_candidates:
+            sc = float(c.get("score") or 0.0)
+            sp = float(c.get("sparse_score") or 0.0)
+            cand_min = min_score if sp > 0.5 else max(min_score, 0.63)
+            if sc < cand_min:
+                continue
+            if sc < top_score - score_window:
+                continue
+            if has_content_candidates and c.get("is_header", False):
+                continue
+            filtered.append(c)
+
+        return filtered[:top_k]
+
     def format_context_from_payloads(self, results: List[Dict[str, Any]]) -> str:
         """
         Verilen arama sonuçları listesinden zengin ve okunabilir LLM bağlamı üretir.
+        Sonuç yoksa modelin halüsinasyon görmesini engelleyecek açık negatif ifade döner.
         """
         if not results:
-            return "İlgili kurumsal bilgi bulunamadı."
+            return "İlgili kurumsal politika belgelerinde bu konuyla ilgili herhangi bir hüküm veya kural bulunamadı. Lütfen varsayımda bulunmadan bu kuralın politikalarda yer almadığını açıkça belirtiniz."
 
         context_parts = []
         for i, payload in enumerate(results, 1):
@@ -244,8 +350,8 @@ class RAGService:
                 header_parts.append(f"Sayfa: {page_num}")
 
             header_str = " | ".join(header_parts)
-            text = payload.get("text", "")
-            context_parts.append(f"[{header_str}]\n{text}\n")
+            clean_text = self.normalize_retrieved_text(payload.get("text", ""), sec_title)
+            context_parts.append(f"[{header_str}]\n{clean_text}\n")
 
         return "\n".join(context_parts)
 
@@ -256,13 +362,13 @@ class RAGService:
         top_k: int = 3
     ) -> str:
         """
-        Sorulan soruya en yakın 'top_k' adet metin parçasını bulup
+        Sorulan soruya en yakın adayları bulup adaptif filtreleme uygulayarak
         LLM'in okuyabileceği tek bir metin (context) olarak birleştirir.
         """
         results = await self.vector_store.search(
             organization_id=organization_id,
             query=query,
-            limit=top_k
+            limit=max(top_k * 3, 10)
         )
-
-        return self.format_context_from_payloads(results)
+        filtered = self.filter_and_rank_hits(results, top_k=top_k)
+        return self.format_context_from_payloads(filtered)
