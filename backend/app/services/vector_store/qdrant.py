@@ -104,33 +104,40 @@ class QdrantService:
         self, 
         organization_id: str, 
         doc_id: str, 
-        chunks: List[str],
+        chunks: List[Any],
         metadata: Dict[str, Any] = None
     ):
         """
-        Metin parçalarını (chunks) alır, vektöre çevirir (Dense + Sparse) ve Qdrant'a yazar.
+        Metin parçalarını (chunks - str veya dict) alır, vektöre çevirir (Dense + Sparse) ve Qdrant'a yazar.
         """
         if not chunks:
             return
 
-        # 1. Dense Vektörleri (Anlam) oluştur
-        dense_embeddings = await self.embedding_provider.embed_batch(chunks)
+        # 1. Metin listesini ayıkla (str veya dict uyumlu)
+        texts = [c["text"] if isinstance(c, dict) else str(c) for c in chunks]
+
+        # 2. Dense Vektörleri (Anlam) oluştur
+        dense_embeddings = await self.embedding_provider.embed_batch(texts)
         
-        # 2. Sparse Vektörleri (BM25 Kelime) oluştur
+        # 3. Sparse Vektörleri (BM25 Kelime) oluştur
         from app.services.embeddings.sparse import SparseEmbeddingService
         sparse_service = SparseEmbeddingService()
-        sparse_embeddings = sparse_service.embed_texts(chunks)
+        sparse_embeddings = sparse_service.embed_texts(texts)
 
         points = []
-        for i, (chunk, d_emb, s_emb) in enumerate(zip(chunks, dense_embeddings, sparse_embeddings)):
+        for i, (item, text, d_emb, s_emb) in enumerate(zip(chunks, texts, dense_embeddings, sparse_embeddings)):
             payload = {
                 "organization_id": str(organization_id),
                 "doc_id": str(doc_id),
                 "chunk_index": i,
-                "text": chunk,
+                "text": text,
             }
             if metadata:
                 payload.update(metadata)
+            if isinstance(item, dict):
+                for k in ("section_title", "page_number", "is_header"):
+                    if k in item and item[k] is not None:
+                        payload[k] = item[k]
 
             points.append(
                 models.PointStruct(
@@ -207,5 +214,10 @@ class QdrantService:
             limit=limit
         )
 
-        # Sadece payload'u döndür
-        return [hit.payload for hit in response.points]
+        # Payload ve RRF skoru döndür
+        results = []
+        for hit in response.points:
+            p = dict(hit.payload or {})
+            p["score"] = hit.score
+            results.append(p)
+        return results

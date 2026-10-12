@@ -57,6 +57,14 @@ class PolicySearchHit(BaseModel):
     doc_id: str
     chunk_index: int
     text: str
+    title: Optional[str] = None
+    document_type: Optional[str] = None
+    section_title: Optional[str] = None
+    page_number: Optional[int] = None
+    file_name: Optional[str] = None
+    file_url: Optional[str] = None
+    score: Optional[float] = None
+    is_header: Optional[bool] = False
 
 
 class PolicySearchResponse(BaseModel):
@@ -220,7 +228,7 @@ async def upload_policy(
             raise ValueError("Belgeden metin çıkarılamadı veya belge boş.")
 
         # Chunking ve Qdrant ingestion
-        chunks = rag_service._chunk_text(extracted_text)
+        chunks = rag_service.chunk_document(extracted_text)
         if not chunks:
             raise ValueError("Belge parçalara (chunks) ayrılamadı.")
 
@@ -343,7 +351,7 @@ async def reindex_policy(
         if not extracted_text.strip():
             raise ValueError("Belgeden metin çıkarılamadı veya belge boş.")
 
-        chunks = rag_service._chunk_text(extracted_text)
+        chunks = rag_service.chunk_document(extracted_text)
         if not chunks:
             raise ValueError("Belge parçalara (chunks) ayrılamadı.")
 
@@ -382,6 +390,46 @@ async def reindex_policy(
     return _to_response(policy)
 
 
+@router.get("/{policy_id}/file", summary="Stream or view the original policy document file")
+async def get_policy_file(
+    policy_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Orijinal politika belgesini görüntüler veya indirir.
+    PDF dosyaları tarayıcıda doğrudan (inline) açılacak şekilde sunulur.
+    """
+    policy = await db.get(PolicyDocument, policy_id)
+    if not policy:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Politika belgesi bulunamadı veya silinmiş."
+        )
+
+    file_path = Path(policy.file_path)
+    if not file_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Belge dosyası diskte bulunamadı: {policy.file_name}"
+        )
+
+    suffix = file_path.suffix.lower()
+    media_types = {
+        ".pdf": "application/pdf",
+        ".txt": "text/plain; charset=utf-8",
+        ".md": "text/markdown; charset=utf-8",
+    }
+    media_type = media_types.get(suffix, "application/octet-stream")
+
+    from fastapi.responses import FileResponse
+    return FileResponse(
+        path=file_path,
+        media_type=media_type,
+        filename=policy.file_name,
+        content_disposition_type="inline",
+    )
+
+
 @router.post("/search", response_model=PolicySearchResponse, summary="Search active policies (RAG Test)")
 async def test_search_policies(
     request: PolicySearchRequest,
@@ -389,31 +437,72 @@ async def test_search_policies(
 ):
     """
     RAG entegrasyonunu ve anlamsal aramayı test etmek için endpoint.
+    - Sadece ilgili organizasyonun aktif belgelerinden sonuç getirir.
+    - Silinmiş belgeleri dışlar.
+    - Doğrudan maddeleri (article chunks) önceliklendirir.
     """
     org_id = request.organization_id
     if not org_id:
         org_id = await _get_default_org_id(db)
 
-    rag_service = RAGService()
-    context = await rag_service.retrieve_context(
-        organization_id=str(org_id),
-        query=request.query,
-        top_k=request.top_k,
+    # 1. DB'den ilgili organizasyonun aktif belgelerini al (Silinmiş/inaktif belgeleri engelle)
+    active_docs_res = await db.execute(
+        select(PolicyDocument).where(
+            PolicyDocument.organization_id == org_id,
+            PolicyDocument.is_active == True,
+        )
     )
+    active_docs_map = {str(p.id): p for p in active_docs_res.scalars().all()}
 
+    rag_service = RAGService()
+
+    # 2. Qdrant'tan aday sonuçları çek (Yeterli çeşitlilik için top_k * 3)
     raw_hits = await rag_service.search_documents(
         organization_id=str(org_id),
         query=request.query,
-        limit=request.top_k,
+        limit=max(request.top_k * 3, 10),
     )
 
-    hits = []
+    # 3. Yalnızca DB'de halen aktif olan belgelerin parçalarını filtrele
+    valid_hits = []
     for h in raw_hits:
+        doc_id = str(h.get("doc_id", ""))
+        if doc_id in active_docs_map:
+            doc = active_docs_map[doc_id]
+            h_copy = dict(h)
+            h_copy["title"] = doc.title
+            h_copy["document_type"] = doc.document_type
+            h_copy["file_name"] = doc.file_name
+            valid_hits.append(h_copy)
+
+    # 4. Akıllı sıralama:
+    # Qdrant Hybrid RRF skoru ile sırala. Genel kapak sayfası/üstbilgi parçalarına (is_header=True)
+    # hafif bir ceza uygulayarak doğrudan kural maddelerini öne çıkar.
+    valid_hits.sort(
+        key=lambda h: (float(h.get("score") or 0.0) - (0.015 if h.get("is_header", False) else 0.0)),
+        reverse=True
+    )
+    ranked_hits = valid_hits[:request.top_k]
+
+    # 5. LLM bağlamını seçilen filtrelenmiş sonuçlardan üret
+    context = rag_service.format_context_from_payloads(ranked_hits)
+
+    # 6. Sonuç kartları listesini oluştur
+    hits = []
+    for h in ranked_hits:
         hits.append(PolicySearchHit(
             source=h.get("title") or h.get("source") or "Bilinmeyen Belge",
+            title=h.get("title"),
             doc_id=h.get("doc_id", ""),
             chunk_index=h.get("chunk_index", 0),
-            text=h.get("text", "")
+            text=h.get("text", ""),
+            document_type=h.get("document_type"),
+            section_title=h.get("section_title"),
+            page_number=h.get("page_number", 1),
+            file_name=h.get("file_name"),
+            file_url=f"/api/v1/policies/{h.get('doc_id')}/file",
+            score=h.get("score"),
+            is_header=h.get("is_header", False),
         ))
 
     return PolicySearchResponse(

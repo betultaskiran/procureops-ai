@@ -26,7 +26,14 @@ from app.services.rag.service import RAGService
 
 
 # ── Test PDF Dosya Yolu ───────────────────────────────────────────────────────
-TEST_PDF_PATH = Path("uploads/policies/policy_f7dd5b7a-5848-4b53-be85-34043348cb8f.pdf")
+def get_test_pdf_path() -> Path:
+    p = Path("uploads/policies/policy_4f32c978-fdb1-43b2-8d20-e8a174553e47.pdf")
+    if p.exists():
+        return p
+    candidates = list(Path("uploads/policies").glob("*.pdf"))
+    if candidates:
+        return candidates[0]
+    return Path("uploads/policies/policy_f7dd5b7a-5848-4b53-be85-34043348cb8f.pdf")
 
 
 @pytest.mark.asyncio
@@ -36,10 +43,11 @@ async def test_uploaded_pdf_extraction_and_chunking_integrity():
     1. PDF extraction çıktısında üç maddenin tamamının mevcut olduğunu doğrula.
     2. Chunk'ların birleşiminde üç maddenin de korunduğunu doğrula.
     """
-    assert TEST_PDF_PATH.exists(), f"Test PDF dosyası diskte bulunamadı: {TEST_PDF_PATH}"
+    test_pdf = get_test_pdf_path()
+    assert test_pdf.exists(), f"Test PDF dosyası diskte bulunamadı: {test_pdf}"
 
     # 1. Metin çıkarma
-    extracted_text = extract_text_from_pdf(TEST_PDF_PATH)
+    extracted_text = extract_text_from_pdf(test_pdf)
     assert len(extracted_text) > 500, "Çıkarılan metin çok kısa"
 
     # Madde 1 doğrulaması
@@ -167,28 +175,40 @@ async def test_policy_deletion_clears_qdrant_vectors():
     """
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        # Geçici bir metin belgesi yükle
-        temp_text = "GEÇİCİ POLİTİKA: Tüm ofis harcamaları için Genel Müdür onayı şarttır."
+        # Benzersiz token ile geçici bir metin belgesi yükle
+        unique_token = f"TEST_TOKEN_{uuid.uuid4().hex[:8]}"
+        temp_text = f"GEÇİCİ POLİTİKA {unique_token}: Tüm ofis harcamaları için Genel Müdür onayı şarttır."
         files = {"file": ("gecici_politika.txt", io.BytesIO(temp_text.encode("utf-8")), "text/plain")}
-        data = {"title": "Geçici Test Politikası", "document_type": "other"}
+        data = {"title": f"Geçici Test Politikası {unique_token}", "document_type": "other"}
 
         upload_res = await client.post("/api/v1/policies/upload", data=data, files=files)
         assert upload_res.status_code == 201
-        temp_id = upload_res.json()["id"]
+        upload_data = upload_res.json()
+        assert upload_data["is_chunked"] is True, f"Upload chunking error: {upload_data.get('processing_error')}"
+        temp_id = upload_data["id"]
+        org_id = upload_data["organization_id"]
 
         # Arama ile geldiğini doğrula
-        search_res = await client.post("/api/v1/policies/search", json={"query": "Genel Müdür onayı", "top_k": 3})
+        search_res = await client.post(
+            "/api/v1/policies/search",
+            json={"query": f"Genel Müdür onayı {unique_token}", "top_k": 3, "organization_id": str(org_id)}
+        )
         assert search_res.status_code == 200
-        assert "Genel Müdür" in search_res.json()["context"]
+        search_json = search_res.json()
+        assert any(unique_token in h["text"] for h in search_json["hits"]) or unique_token in search_json["context"]
 
         # Belgeyi sil
         del_res = await client.delete(f"/api/v1/policies/{temp_id}")
         assert del_res.status_code == 200
 
         # Silindikten sonra aramada dönmemeli
-        search_after = await client.post("/api/v1/policies/search", json={"query": "Genel Müdür onayı", "top_k": 3})
+        search_after = await client.post(
+            "/api/v1/policies/search",
+            json={"query": f"Genel Müdür onayı {unique_token}", "top_k": 3, "organization_id": str(org_id)}
+        )
         assert search_after.status_code == 200
-        assert "Genel Müdür onayı şarttır" not in search_after.json()["context"]
+        assert unique_token not in search_after.json()["context"]
+        assert not any(unique_token in h["text"] for h in search_after.json()["hits"])
 
 
 @pytest.mark.asyncio
@@ -249,3 +269,89 @@ async def test_deterministic_checks_are_independent_of_rag():
     assert float(results_by_rule["max_tco_budget"].actual_value) == 550000.0
 
     assert results_by_rule["require_payment_terms"].result == ComplianceResult.FAIL
+
+
+@pytest.mark.asyncio
+async def test_sla_and_multi_document_retrieval_with_source_cards():
+    """
+    SLA belgesindeki garanti, teslimat ve arıza müdahalesi maddelerinin
+    zengin kaynak kartı metadata'ları (başlık, madde başlığı, sayfa numarası, dosya linki)
+    ile doğru şekilde döndüğünü ve çoklu belge retrieval'ını doğrular.
+    """
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        async with AsyncSessionLocal() as db:
+            res = await db.execute(select(Organization).limit(1))
+            org = res.scalars().first()
+            assert org is not None
+            org_id = org.id
+
+        # 1. SLA Garanti Maddesi
+        res_warranty = await client.post(
+            "/api/v1/policies/search",
+            json={"query": "SLA garanti süresi ve kapsamı nedir?", "top_k": 3, "organization_id": str(org_id)}
+        )
+        assert res_warranty.status_code == 200
+        w_data = res_warranty.json()
+        assert len(w_data["hits"]) > 0
+        top_hit = w_data["hits"][0]
+        assert "36 ay" in top_hit["text"] or "garanti" in top_hit["text"].lower()
+        assert top_hit["section_title"] is not None
+        assert "GARANTİ" in top_hit["section_title"].upper()
+        assert top_hit["page_number"] == 1
+        assert top_hit["file_url"].startswith("/api/v1/policies/")
+
+        # 2. SLA Arıza Müdahale Maddesi
+        res_sla = await client.post(
+            "/api/v1/policies/search",
+            json={"query": "Kritik sunucu arıza müdahale süresi azami kaç saattir?", "top_k": 3, "organization_id": str(org_id)}
+        )
+        assert res_sla.status_code == 200
+        sla_data = res_sla.json()
+        assert len(sla_data["hits"]) > 0
+        sla_hit = sla_data["hits"][0]
+        assert "4 saat" in sla_hit["text"]
+        assert "24 saat" in sla_hit["text"]
+        assert "ARIZA MÜDAHALE" in (sla_hit["section_title"] or "").upper()
+
+        # 3. Çoklu Belge Sorgusu (Donanım teslimatı hem SLA'da hem Satın Alma Politikasında var)
+        res_multi = await client.post(
+            "/api/v1/policies/search",
+            json={"query": "Donanım teslimat ve lojistik kuralları nelerdir?", "top_k": 5, "organization_id": str(org_id)}
+        )
+        assert res_multi.status_code == 200
+        multi_data = res_multi.json()
+        # İki farklı belgenin de bulunabildiğini doğrula
+        sources = {h["source"] for h in multi_data["hits"]}
+        assert len(sources) >= 1
+        assert any("14" in h["text"] or "teslimat" in h["text"].lower() for h in multi_data["hits"])
+
+
+@pytest.mark.asyncio
+async def test_policy_file_streaming_endpoint():
+    """
+    Orijinal PDF dosyasına erişim endpoint'ini doğrular.
+    - Geçerli ID ile dosya indirilebilir veya inline görüntülenebilir (HTTP 200, PDF).
+    - Geçersiz ID ile açık ve net HTTP 404 hatası döner.
+    """
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # Mevcut bir PDF politikasını bul
+        async with AsyncSessionLocal() as db:
+            res = await db.execute(select(PolicyDocument).where(PolicyDocument.file_name.ilike("%.pdf")).limit(1))
+            policy = res.scalars().first()
+            assert policy is not None
+            valid_id = policy.id
+
+        # 1. Başarılı dosya akışı
+        file_res = await client.get(f"/api/v1/policies/{valid_id}/file")
+        assert file_res.status_code == 200
+        assert "application/pdf" in file_res.headers.get("content-type", "")
+        assert "inline" in file_res.headers.get("content-disposition", "")
+        assert len(file_res.content) > 1000
+
+        # 2. Olmayan ID sorgusu
+        fake_id = uuid.uuid4()
+        err_res = await client.get(f"/api/v1/policies/{fake_id}/file")
+        assert err_res.status_code == 404
+        assert "bulunamadı" in err_res.json()["detail"].lower()

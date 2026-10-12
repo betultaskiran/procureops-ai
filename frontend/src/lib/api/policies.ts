@@ -21,6 +21,14 @@ export interface PolicySearchHit {
   doc_id: string;
   chunk_index: number;
   text: string;
+  title?: string;
+  document_type?: string;
+  section_title?: string;
+  page_number?: number;
+  file_name?: string;
+  file_url?: string;
+  score?: number;
+  is_header?: boolean;
 }
 
 export interface PolicySearchResponse {
@@ -50,5 +58,11 @@ export const policiesApi = {
       query,
       top_k: topK
     });
+  },
+
+  getFileUrl(docId: string, pageNumber?: number): string {
+    const base = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+    const pageHash = pageNumber ? `#page=${pageNumber}` : "";
+    return `${base}/api/v1/policies/${docId}/file${pageHash}`;
   }
 };

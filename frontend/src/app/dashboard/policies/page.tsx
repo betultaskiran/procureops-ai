@@ -13,9 +13,62 @@ import {
   RefreshCw,
   HelpCircle,
   FileSearch,
-  ExternalLink
+  ExternalLink,
+  BookOpen,
+  Layers,
+  ChevronDown,
+  ChevronUp,
+  Sparkles
 } from "lucide-react";
 import { policiesApi, PolicyDocument, PolicySearchResponse } from "@/lib/api/policies";
+
+const DOC_TYPE_CONFIG: Record<string, { label: string; color: string }> = {
+  procurement_policy: { label: "Satın Alma Politikası", color: "bg-blue-500/10 text-blue-500 border-blue-500/20" },
+  sla: { label: "Hizmet Seviyesi (SLA)", color: "bg-purple-500/10 text-purple-500 border-purple-500/20" },
+  code_of_conduct: { label: "Davranış Kuralları", color: "bg-emerald-500/10 text-emerald-500 border-emerald-500/20" },
+  framework_agreement: { label: "Çerçeve Sözleşme", color: "bg-amber-500/10 text-amber-500 border-amber-500/20" },
+  legal: { label: "Yasal Kural", color: "bg-rose-500/10 text-rose-500 border-rose-500/20" },
+  other: { label: "Diğer Belge", color: "bg-gray-500/10 text-text-muted border-gray-500/20" },
+};
+
+function formatPolicyText(rawText: string) {
+  const lines = rawText.split("\n");
+  return lines.map((line, idx) => {
+    const trimmed = line.trim();
+    if (!trimmed) return <div key={idx} className="h-1.5" />;
+
+    // Skip redundant top markdown title if it's identical to header
+    if (trimmed.startsWith("# ") || trimmed.startsWith("---")) {
+      return null;
+    }
+
+    const isSubItem = /^\d+\.\d+\.?/.test(trimmed) || trimmed.startsWith("- ") || trimmed.startsWith("* ");
+    const parts = trimmed.split(/(\*\*[^*]+\*\*)/g);
+
+    return (
+      <div 
+        key={idx} 
+        className={`leading-relaxed text-xs ${
+          isSubItem 
+            ? "pl-2.5 text-text-primary border-l-2 border-primary/30 my-1 py-0.5 bg-surface/50 rounded-r" 
+            : "text-text-secondary my-0.5"
+        }`}
+      >
+        {parts.map((part, pIdx) => {
+          if (part.startsWith("**") && part.endsWith("**")) {
+            return (
+              <strong key={pIdx} className="font-semibold text-text-primary">
+                {part.slice(2, -2)}
+              </strong>
+            );
+          }
+          const cleanPart = part.replace(/^#{1,3}\s+/, "").replace(/&#x20;/g, " ");
+          return <span key={pIdx}>{cleanPart}</span>;
+        })}
+      </div>
+    );
+  });
+}
 
 export default function PoliciesPage() {
   const [policies, setPolicies] = useState<PolicyDocument[]>([]);
@@ -35,6 +88,7 @@ export default function PoliciesPage() {
   const [isSearching, setIsSearching] = useState(false);
   const [searchResult, setSearchResult] = useState<PolicySearchResponse | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
+  const [isContextExpanded, setIsContextExpanded] = useState(false);
 
   // Fetch policies
   const loadPolicies = async () => {
@@ -261,13 +315,24 @@ export default function PoliciesPage() {
                       {policy.created_at ? new Date(policy.created_at).toLocaleDateString("tr-TR") : "-"}
                     </td>
                     <td className="py-3.5 px-4 text-right">
-                      <button
-                        onClick={() => handleDelete(policy.id, policy.title)}
-                        className="p-1.5 text-text-muted hover:text-red-500 hover:bg-red-500/10 rounded transition-colors"
-                        title="Belgeyi ve vektörleri sil"
-                      >
-                        <Trash2 size={16} />
-                      </button>
+                      <div className="flex items-center justify-end gap-1.5">
+                        <a
+                          href={policiesApi.getFileUrl(policy.id)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="p-1.5 text-text-muted hover:text-primary hover:bg-surface-elevated rounded transition-colors"
+                          title="Orijinal Belgeyi Aç (PDF)"
+                        >
+                          <ExternalLink size={16} />
+                        </a>
+                        <button
+                          onClick={() => handleDelete(policy.id, policy.title)}
+                          className="p-1.5 text-text-muted hover:text-red-500 hover:bg-red-500/10 rounded transition-colors"
+                          title="Belgeyi ve vektörleri sil"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -312,37 +377,152 @@ export default function PoliciesPage() {
         )}
 
         {searchResult && (
-          <div className="mt-4 flex flex-col gap-4">
-            <div className="p-4 bg-bg border border-border rounded-md">
-              <span className="text-xs font-semibold text-text-muted uppercase tracking-wider block mb-2">
-                LLM&apos;e İletilen Bağlam (Context):
-              </span>
-              <pre className="text-xs text-text-primary font-mono whitespace-pre-wrap leading-relaxed">
-                {searchResult.context}
-              </pre>
-            </div>
-
-            {searchResult.hits.length > 0 && (
-              <div>
-                <span className="text-xs font-semibold text-text-muted uppercase tracking-wider block mb-2">
-                  Eşleşen Vektör Parçaları ({searchResult.hits.length}):
-                </span>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                  {searchResult.hits.map((hit, idx) => (
-                    <div key={idx} className="p-3 bg-surface-elevated border border-border rounded-md flex flex-col justify-between">
-                      <div>
-                        <div className="text-xs font-medium text-primary mb-1">
-                          {hit.source} (Parça #{hit.chunk_index + 1})
-                        </div>
-                        <p className="text-xs text-text-secondary line-clamp-4 leading-relaxed">
-                          {hit.text}
-                        </p>
-                      </div>
+          <div className="mt-6 flex flex-col gap-6">
+            {/* Çoklu Belge Kapsamı Bildirimi */}
+            {(() => {
+              const uniqueTitles = Array.from(new Set(searchResult.hits.map(h => h.title || h.source)));
+              if (uniqueTitles.length > 1) {
+                return (
+                  <div className="p-3.5 bg-blue-500/10 border border-blue-500/20 rounded-lg flex items-start gap-3">
+                    <Sparkles className="text-blue-500 h-5 w-5 shrink-0 mt-0.5" />
+                    <div className="text-xs">
+                      <strong className="text-text-primary block font-semibold mb-0.5">
+                        Çoklu Belge Kapsamı ({uniqueTitles.length} Farklı Kaynak Belge)
+                      </strong>
+                      <span className="text-text-secondary leading-relaxed">
+                        Bu sorgu için hem <strong>{uniqueTitles.join("</strong> hem de <strong>")}</strong> belgelerinden ilgili hükümler getirildi. Olası çelişkiler veya tamamlayıcı maddeler aşağıda kaynak kartlarında bağımsız olarak gösterilmektedir.
+                      </span>
                     </div>
-                  ))}
+                  </div>
+                );
+              }
+              return null;
+            })()}
+
+            {/* Kaynak Kartları (Source Cards) */}
+            {searchResult.hits.length > 0 ? (
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-xs font-semibold text-text-muted uppercase tracking-wider">
+                    Eşleşen Kaynak Kartları ({searchResult.hits.length} Parça)
+                  </span>
+                  <span className="text-xs text-text-muted hidden sm:inline">
+                    Doğrudan ilgili madde hükümleri önceliklendirilmiştir
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {searchResult.hits.map((hit, idx) => {
+                    const docType = hit.document_type || "other";
+                    const docConfig = DOC_TYPE_CONFIG[docType] || DOC_TYPE_CONFIG.other;
+                    const fileUrl = hit.doc_id ? policiesApi.getFileUrl(hit.doc_id, hit.page_number) : null;
+
+                    return (
+                      <div 
+                        key={idx} 
+                        className="bg-surface-elevated border border-border rounded-lg p-4 flex flex-col justify-between hover:border-primary/40 transition-colors shadow-sm"
+                      >
+                        <div>
+                          {/* Kart Başlığı ve Meta Veriler */}
+                          <div className="flex items-start justify-between gap-2 mb-2 pb-2.5 border-b border-border/50">
+                            <div className="flex flex-col gap-1 min-w-0">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className={`text-[10px] font-semibold uppercase px-2 py-0.5 rounded border ${docConfig.color}`}>
+                                  {docConfig.label}
+                                </span>
+                                {hit.page_number && (
+                                  <span className="text-[10px] bg-bg px-2 py-0.5 rounded border border-border text-text-muted flex items-center gap-1 font-medium">
+                                    <BookOpen size={11} className="text-primary" /> Sayfa {hit.page_number}
+                                  </span>
+                                )}
+                                <span className="text-[10px] bg-bg px-2 py-0.5 rounded border border-border text-text-muted font-mono">
+                                  #{hit.chunk_index + 1}
+                                </span>
+                              </div>
+                              <h4 className="font-semibold text-text-primary text-xs truncate mt-0.5" title={hit.title || hit.source}>
+                                {hit.title || hit.source}
+                              </h4>
+                            </div>
+
+                            {/* Orijinal Belgeyi Aç Butonu */}
+                            {fileUrl ? (
+                              <a
+                                href={fileUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="shrink-0 flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium text-primary bg-primary/10 hover:bg-primary/20 rounded transition-colors"
+                                title="Orijinal PDF belgesini ilgili sayfada aç"
+                              >
+                                <ExternalLink size={12} />
+                                <span>Aç</span>
+                              </a>
+                            ) : (
+                              <span className="text-[10px] text-text-muted italic">Bağlantı yok</span>
+                            )}
+                          </div>
+
+                          {/* Madde / Bölüm Başlığı */}
+                          {hit.section_title && (
+                            <div className="text-xs font-semibold text-primary mb-2 flex items-center gap-1.5 bg-primary/5 px-2.5 py-1.5 rounded border border-primary/15">
+                              <Layers size={13} className="shrink-0 text-primary" />
+                              <span className="truncate">{hit.section_title}</span>
+                            </div>
+                          )}
+
+                          {/* Okunabilir Formatlanmış Metin */}
+                          <div className="mt-2 text-xs">
+                            {formatPolicyText(hit.text)}
+                          </div>
+                        </div>
+
+                        {/* Kart Alt Bilgisi */}
+                        <div className="mt-3 pt-2.5 border-t border-border/50 flex items-center justify-between text-[11px] text-text-muted">
+                          <span className="truncate max-w-[170px]" title={hit.file_name || ""}>
+                            📄 {hit.file_name || "Belge"}
+                          </span>
+                          {hit.score !== undefined && hit.score !== null && (
+                            <span className="text-[10px] font-mono bg-bg px-1.5 py-0.5 rounded text-text-secondary border border-border">
+                              Skor: {hit.score.toFixed(3)}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
+            ) : (
+              <div className="p-4 bg-bg border border-border rounded-md text-xs text-text-muted text-center">
+                Bu sorgu için eşleşen politika parçası bulunamadı.
+              </div>
             )}
+
+            {/* Katlanabilir LLM Bağlamı (Raw Context) */}
+            <div className="border border-border rounded-lg overflow-hidden bg-bg">
+              <button
+                type="button"
+                onClick={() => setIsContextExpanded(!isContextExpanded)}
+                className="w-full flex items-center justify-between p-3.5 text-xs font-medium text-text-secondary hover:text-text-primary hover:bg-surface/50 transition-colors"
+              >
+                <span className="flex items-center gap-2">
+                  <span className="font-semibold text-text-muted uppercase tracking-wider">
+                    LLM&apos;e İletilen Bağlam (Context)
+                  </span>
+                  <span className="text-[11px] text-text-muted">
+                    ({searchResult.hits.length} kaynak birleştirildi)
+                  </span>
+                </span>
+                {isContextExpanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+              </button>
+
+              {isContextExpanded && (
+                <div className="p-4 border-t border-border bg-bg/80">
+                  <pre className="text-xs text-text-primary font-mono whitespace-pre-wrap leading-relaxed max-h-96 overflow-y-auto">
+                    {searchResult.context}
+                  </pre>
+                </div>
+              )}
+            </div>
           </div>
         )}
       </div>

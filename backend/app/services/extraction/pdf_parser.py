@@ -160,6 +160,71 @@ def extract_text_from_pdf(file_path: str | Path) -> str:
         raise PDFParseError(f"Failed to parse PDF: {e}") from e
 
 
+def extract_pages_from_pdf(file_path: str | Path) -> list[dict]:
+    """
+    PDF dosyasından metin ve tabloları sayfa sayfa çıkarır.
+    Her sayfanın sayfa numarasını (1-indexed) korur.
+
+    Returns:
+        List of dicts:
+        [
+            {"page_number": 1, "text": "...", "tables": [...]},
+            ...
+        ]
+    """
+    file_path = Path(file_path)
+    if not file_path.exists():
+        raise PDFParseError(f"File not found: {file_path}")
+
+    try:
+        with pdfplumber.open(file_path) as pdf:
+            if not pdf.pages:
+                raise PDFParseError("PDF has no pages")
+
+            pages = []
+            for page_num, page in enumerate(pdf.pages, start=1):
+                raw_page_text = page.extract_text(
+                    x_tolerance=3,
+                    y_tolerance=3,
+                    layout=False,
+                ) or ""
+
+                if not raw_page_text.strip():
+                    raw_page_text = page.extract_text(layout=True) or ""
+
+                import re
+                lines = [line.strip() for line in raw_page_text.splitlines()]
+                page_text = "\n".join(lines)
+                page_text = re.sub(r"\n{3,}", "\n\n", page_text).strip()
+
+                tables = page.extract_tables({
+                    "vertical_strategy": "lines",
+                    "horizontal_strategy": "lines",
+                    "snap_tolerance": 3,
+                    "join_tolerance": 3,
+                })
+
+                table_texts = []
+                if tables:
+                    for table in tables:
+                        if table:
+                            formatted = _format_table(table)
+                            if formatted.strip():
+                                table_texts.append(formatted)
+
+                pages.append({
+                    "page_number": page_num,
+                    "text": page_text,
+                    "tables": table_texts,
+                })
+
+            return pages
+    except (PDFParseError, ScannedPDFError):
+        raise
+    except Exception as e:
+        raise PDFParseError(f"Failed to extract pages from PDF: {e}") from e
+
+
 def get_page_count(file_path: str | Path) -> int:
     """PDF'deki sayfa sayısını döndürür. Validation için kullanılır."""
     try:
