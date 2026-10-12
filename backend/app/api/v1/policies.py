@@ -26,6 +26,8 @@ router = APIRouter(prefix="/api/v1/policies", tags=["policies"])
 
 # ── Schemas ────────────────────────────────────────────────────────────────────
 
+from datetime import datetime
+
 class PolicyDocumentResponse(BaseModel):
     id: uuid.UUID
     organization_id: uuid.UUID
@@ -38,8 +40,8 @@ class PolicyDocumentResponse(BaseModel):
     chunk_count: Optional[int] = None
     qdrant_collection: Optional[str] = None
     processing_error: Optional[str] = None
-    created_at: Optional[str] = None
-    updated_at: Optional[str] = None
+    created_at: Optional[datetime | str] = None
+    updated_at: Optional[datetime | str] = None
 
     model_config = {"from_attributes": True}
 
@@ -85,6 +87,24 @@ def _extract_text_from_file(file_path: Path, filename: str) -> str:
             return f.read()
     else:
         raise ValueError(f"Desteklenmeyen dosya uzantısı: {suffix}. Sadece PDF, TXT ve MD desteklenir.")
+
+
+def _to_response(p: PolicyDocument) -> PolicyDocumentResponse:
+    return PolicyDocumentResponse(
+        id=p.id,
+        organization_id=p.organization_id,
+        title=p.title,
+        file_name=p.file_name,
+        file_path=p.file_path,
+        document_type=p.document_type,
+        is_active=p.is_active,
+        is_chunked=p.is_chunked,
+        chunk_count=p.chunk_count,
+        qdrant_collection=p.qdrant_collection,
+        processing_error=p.processing_error,
+        created_at=p.created_at.isoformat() if p.created_at else None,
+        updated_at=p.updated_at.isoformat() if p.updated_at else None,
+    )
 
 
 # ── Endpoints ──────────────────────────────────────────────────────────────────
@@ -200,9 +220,15 @@ async def upload_policy(
             raise ValueError("Belgeden metin çıkarılamadı veya belge boş.")
 
         # Chunking ve Qdrant ingestion
-        chunks = rag_service._chunk_text(extracted_text, chunk_size=1000, overlap=200)
+        chunks = rag_service._chunk_text(extracted_text)
         if not chunks:
             raise ValueError("Belge parçalara (chunks) ayrılamadı.")
+
+        # Eski embedding'leri temizle (varsa)
+        await rag_service.delete_document(
+            organization_id=str(policy.organization_id),
+            doc_id=str(policy.id)
+        )
 
         metadata = {
             "title": policy.title,
@@ -287,6 +313,73 @@ async def delete_policy(
     await db.commit()
 
     return {"message": "Policy document and associated vector embeddings successfully deleted", "id": str(policy_id)}
+
+
+@router.post("/{policy_id}/reindex", response_model=PolicyDocumentResponse, summary="Re-extract and re-index a policy document")
+async def reindex_policy(
+    policy_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Mevcut politika belgesini yeniden parse eder, chunk'lar ve Qdrant vektör tabanını günceller.
+    """
+    policy = await db.get(PolicyDocument, policy_id)
+    if not policy:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Policy document {policy_id} not found"
+        )
+
+    file_path = Path(policy.file_path)
+    if not file_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Policy file not found on disk: {policy.file_path}"
+        )
+
+    rag_service = RAGService()
+    try:
+        extracted_text = _extract_text_from_file(file_path, policy.file_name)
+        if not extracted_text.strip():
+            raise ValueError("Belgeden metin çıkarılamadı veya belge boş.")
+
+        chunks = rag_service._chunk_text(extracted_text)
+        if not chunks:
+            raise ValueError("Belge parçalara (chunks) ayrılamadı.")
+
+        # Eski embedding'leri temizle
+        await rag_service.delete_document(
+            organization_id=str(policy.organization_id),
+            doc_id=str(policy.id)
+        )
+
+        metadata = {
+            "title": policy.title,
+            "source": policy.title,
+            "file_name": policy.file_name,
+            "document_type": policy.document_type,
+            "is_active": True,
+        }
+
+        await rag_service.vector_store.ingest_documents(
+            organization_id=str(policy.organization_id),
+            doc_id=str(policy.id),
+            chunks=chunks,
+            metadata=metadata,
+        )
+
+        policy.is_chunked = True
+        policy.chunk_count = len(chunks)
+        policy.processing_error = None
+    except Exception as e:
+        policy.is_chunked = False
+        policy.chunk_count = 0
+        policy.processing_error = f"Yeniden indeksleme hatası: {str(e)}"
+
+    await db.commit()
+    await db.refresh(policy)
+
+    return _to_response(policy)
 
 
 @router.post("/search", response_model=PolicySearchResponse, summary="Search active policies (RAG Test)")

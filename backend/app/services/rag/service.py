@@ -20,27 +20,81 @@ class RAGService:
     def __init__(self):
         self.vector_store = QdrantService()
 
-    def _chunk_text(self, text: str, chunk_size: int = 1000, overlap: int = 200) -> List[str]:
+    def _chunk_text(self, text: str, chunk_size: int = 1200, overlap: int = 150) -> List[str]:
         """
-        Uzun metni, birbiriyle örtüşen (overlap) küçük parçalara (chunks) böler.
-        Neden overlap? Cümlenin yarısı bir chunk'ta, diğer yarısı diğer chunk'ta
-        kalırsa LLM bağlamı (context) kaybedebilir.
+        Belgeyi başlık, madde ve paragraf sınırlarını koruyarak mantıksal parçalara böler.
+        Kelimeleri ve cümleleri ortadan bölmez, maddelerin anlam bütünlüğünü korur.
         """
-        if not text:
+        if not text or not text.strip():
             return []
 
+        import re
+
+        # 1. Normalizasyon
+        normalized = re.sub(r"\r\n", "\n", text)
+        normalized = re.sub(r"\n{3,}", "\n\n", normalized).strip()
+
+        # 2. Satır satır başlık ve madde sınırlarını tespit et
+        lines = normalized.split("\n")
+        sections = []
+        current_section = []
+
+        heading_pattern = re.compile(
+            r"^(#{1,3}\s+|(?:MADDE|Madde|ARTICLE|Article|BÖLÜM|Bölüm)\s+\d+[:.]?)"
+        )
+
+        for line in lines:
+            line_str = line.strip()
+            # Sayfa ayraçları veya tek başına kalan çizgileri atla
+            if re.match(r"^---\s*(?:Page\s+\d+\s*---)?$", line_str, re.IGNORECASE) or line_str == "---":
+                continue
+
+            if heading_pattern.match(line_str):
+                if current_section:
+                    sec_text = "\n".join(current_section).strip()
+                    if sec_text:
+                        sections.append(sec_text)
+                    current_section = []
+                current_section.append(line_str)
+            else:
+                if line_str:
+                    current_section.append(line_str)
+
+        if current_section:
+            sec_text = "\n".join(current_section).strip()
+            if sec_text:
+                sections.append(sec_text)
+
+        # Eğer madde veya başlık tespit edilemediyse, çift satır sonu (paragraf) ile ayır
+        if len(sections) <= 1:
+            sections = [p.strip() for p in normalized.split("\n\n") if p.strip()]
+
+        # 3. Her madde/bölümü mantıksal bir chunk olarak ayır
         chunks = []
-        start = 0
-        text_length = len(text)
+        for sec in sections:
+            sec = sec.strip()
+            if not sec:
+                continue
 
-        while start < text_length:
-            end = start + chunk_size
-            chunk = text[start:end]
-            chunks.append(chunk)
-            # Bir sonraki chunk, mevcut chunk'ın son 'overlap' karakterinden başlar
-            start += chunk_size - overlap
+            # Eğer bölüm tek başına chunk_size'dan büyükse, paragraflar üzerinden böl
+            if len(sec) > chunk_size:
+                paragraphs = [p.strip() for p in sec.split("\n\n") if p.strip()]
+                cur = ""
+                for p in paragraphs:
+                    if len(cur) + len(p) + 2 <= chunk_size:
+                        cur = f"{cur}\n\n{p}".strip() if cur else p
+                    else:
+                        if cur:
+                            chunks.append(cur)
+                        cur = p
+                if cur:
+                    chunks.append(cur)
+            else:
+                chunks.append(sec)
 
-        return chunks
+        # 25 karakterden uzun olan geçerli parçaları döndür
+        result = [c for c in chunks if len(c.strip()) > 25]
+        return result or [normalized]
 
     async def ingest_document(
         self, 

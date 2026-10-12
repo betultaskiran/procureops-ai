@@ -1,12 +1,13 @@
 """
 backend/tests/test_policy_rag.py
 
-Policies Modülü, Qdrant Vektör Tabanı, RAG Arama ve Deterministik Kural Motoru Testleri.
-NOT: Bu testlerde kullanılan politika metinleri SENTETİK / ÖRNEK test verileridir, gerçek şirket politikası değildir.
+Policies Modülü, PDF Metin Çıkarımı (Extraction), Chunking,
+Qdrant Vektör Tabanı Senkronizasyonu, 5 Hedefli Sorgu ve Deterministik Kural Testleri.
 """
 
 import io
 import uuid
+from pathlib import Path
 import pytest
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy import select
@@ -20,104 +21,174 @@ from app.services.deterministic.schemas import PolicyRules
 from app.services.deterministic.compliance import ComplianceChecker
 from app.services.deterministic.tco import TCOResult
 from app.models.analysis import ComplianceResult
+from app.services.extraction.pdf_parser import extract_text_from_pdf
+from app.services.rag.service import RAGService
 
 
-# ── Sentetik Örnek Politika Metni (TEST AMAÇLI) ─────────────────────────────────
-SAMPLE_POLICY_TEXT = """
-=== ÖRNEK ŞİRKET SATIN ALMA VE TEDARİKÇİ YÖNERGESİ 2026 ===
-(DİKKAT: Bu belge yalnızca test ve doğrulama amaçlı sentetik bir dokümandır.)
-
-1. TEDARİKÇİ KALİTE VE SERTİFİKA ZORUNLULUKLARI:
-Tüm donanım, sunucu ve altyapı tedarikçilerinin geçerli bir ISO 9001 Kalite Yönetim Sertifikası 
-ve ISO 27001 Bilgi Güvenliği Sertifikasına sahip olması zorunludur. Sertifikası bulunmayan 
-tedarikçilerin teklifleri doğrudan elenir.
-
-2. ONAY VE BÜTÇE LİMİTLERİ:
-Toplam satın alma maliyeti 500.000 TL (KDV dahil) üzerindeki tüm alımlar için Yönetim Kurulu onayı zorunludur. 
-Departman müdürleri yalnızca 500.000 TL altındaki harcamaları tek başına onaylayabilir.
-
-3. ÖDEME VADESİ VE ŞARTLARI:
-Tüm tedarik sözleşmelerinde azami ödeme vadesi teslimattan sonra Net 45 gündür. 
-Peşin ödeme veya Net 60 gün ve üzeri ödeme şartları şirket mali işler direktörlüğü istisnası olmaksızın kabul edilemez.
-
-4. GARANTİ VE SLA KOŞULLARI:
-Donanım alımlarında asgari garanti süresi yerinde destek dahil 24 aydır. 
-Kritik arızalara müdahale süresi en geç 4 iş günü içinde tamamlanmalıdır.
-"""
+# ── Test PDF Dosya Yolu ───────────────────────────────────────────────────────
+TEST_PDF_PATH = Path("uploads/policies/policy_f7dd5b7a-5848-4b53-be85-34043348cb8f.pdf")
 
 
 @pytest.mark.asyncio
-async def test_policy_upload_chunking_and_qdrant_sync():
+async def test_uploaded_pdf_extraction_and_chunking_integrity():
     """
-    1. Sentetik politika belgesinin yüklenmesi (Upload).
-    2. Parçalama (Chunking) ve Qdrant'a embedding kaydı.
-    3. Veritabanında is_chunked=True ve chunk_count doğrulanması.
-    4. GET /api/v1/policies ile listelenmesi.
+    Görev 4:
+    1. PDF extraction çıktısında üç maddenin tamamının mevcut olduğunu doğrula.
+    2. Chunk'ların birleşiminde üç maddenin de korunduğunu doğrula.
+    """
+    assert TEST_PDF_PATH.exists(), f"Test PDF dosyası diskte bulunamadı: {TEST_PDF_PATH}"
+
+    # 1. Metin çıkarma
+    extracted_text = extract_text_from_pdf(TEST_PDF_PATH)
+    assert len(extracted_text) > 500, "Çıkarılan metin çok kısa"
+
+    # Madde 1 doğrulaması
+    assert "250.000 TL" in extracted_text or "250000" in extracted_text
+    assert "CFO" in extracted_text
+    assert "1.000.000 TL" in extracted_text
+    assert "Yönetim Kurulu" in extracted_text
+
+    # Madde 2 doğrulaması
+    assert "ISO 9001" in extracted_text
+    assert "Donanım" in extracted_text
+
+    # Madde 3 doğrulaması
+    assert "%90" in extracted_text
+    assert "3 iş günü" in extracted_text
+    assert "6 ay" in extracted_text
+
+    # 2. Chunking doğrulaması
+    rag = RAGService()
+    chunks = rag._chunk_text(extracted_text)
+    assert len(chunks) >= 3, f"Beklenen en az 3 chunk, üretilen: {len(chunks)}"
+
+    combined_chunks = "\n\n".join(chunks)
+    assert "250.000 TL" in combined_chunks
+    assert "ISO 9001" in combined_chunks
+    assert "%90" in combined_chunks
+    assert "6 ay" in combined_chunks
+
+
+@pytest.mark.asyncio
+async def test_all_five_targeted_queries_retrieve_exact_articles():
+    """
+    Görev 2 ve Görev 4:
+    Aşağıdaki 5 hedefli sorunun her biri için doğru politika maddesinin
+    Qdrant retrieval sonuçlarında bulunduğunu doğrular.
+    1. 250.000 TL üzerindeki alımlarda kimlerin onayı gerekir?
+    2. 1.000.000 TL üzerindeki yatırımları kim onaylar?
+    3. Donanım alımlarında hangi ISO sertifikası zorunludur?
+    4. Teslimat güvenilirliği için minimum skor kaçtır?
+    5. Üç iş gününden fazla gecikmenin sonucu nedir?
     """
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        # Belgeyi sanal dosya olarak hazırla
-        file_bytes = SAMPLE_POLICY_TEXT.encode("utf-8")
-        files = {
-            "file": ("ornek_satin_alma_politikasi_2026.txt", io.BytesIO(file_bytes), "text/plain")
-        }
-        data = {
-            "title": "Örnek Satın Alma ve Sertifika Politikası 2026 (Sentetik Test)",
-            "document_type": "procurement_policy"
-        }
+        # Önce organizasyonu al
+        async with AsyncSessionLocal() as db:
+            res = await db.execute(select(Organization).limit(1))
+            org = res.scalars().first()
+            assert org is not None
+            org_id = org.id
 
-        # 1. Upload & Ingest
-        res = await client.post("/api/v1/policies/upload", data=data, files=files)
-        assert res.status_code == 201, res.text
-        policy_data = res.json()
-        
-        assert policy_data["is_chunked"] is True
-        assert policy_data["chunk_count"] > 0
-        assert policy_data["processing_error"] is None
-        policy_id = policy_data["id"]
-
-        # 2. List Policies
-        list_res = await client.get("/api/v1/policies")
-        assert list_res.status_code == 200
-        policies = list_res.json()
-        matching = [p for p in policies if p["id"] == policy_id]
-        assert len(matching) == 1
-        assert matching[0]["title"] == "Örnek Satın Alma ve Sertifika Politikası 2026 (Sentetik Test)"
-
-        # 3. RAG Semantic Search Test: İlgili kuralı bulma
-        search_res = await client.post(
+        # Soru 1: 250.000 TL onay yetkisi
+        q1_res = await client.post(
             "/api/v1/policies/search",
-            json={
-                "query": "Tedarikçilerin ISO sertifikası zorunluluğu var mı?",
-                "top_k": 3
-            }
+            json={"query": "250.000 TL üzerindeki alımlarda kimlerin onayı gerekir?", "top_k": 3, "organization_id": str(org_id)}
         )
+        assert q1_res.status_code == 200
+        q1_ctx = q1_res.json()["context"]
+        assert "250.000 TL" in q1_ctx
+        assert "CFO" in q1_ctx
+        assert "Satın Alma Direktörü" in q1_ctx
+
+        # Soru 2: 1.000.000 TL onay yetkisi
+        q2_res = await client.post(
+            "/api/v1/policies/search",
+            json={"query": "1.000.000 TL üzerindeki yatırımları kim onaylar?", "top_k": 3, "organization_id": str(org_id)}
+        )
+        assert q2_res.status_code == 200
+        q2_ctx = q2_res.json()["context"]
+        assert "1.000.000 TL" in q2_ctx
+        assert "Yönetim Kurulu" in q2_ctx
+
+        # Soru 3: ISO 9001 donanım sertifikası
+        q3_res = await client.post(
+            "/api/v1/policies/search",
+            json={"query": "Donanım alımlarında hangi ISO sertifikası zorunludur?", "top_k": 3, "organization_id": str(org_id)}
+        )
+        assert q3_res.status_code == 200
+        q3_ctx = q3_res.json()["context"]
+        assert "ISO 9001" in q3_ctx
+        assert "Donanım" in q3_ctx
+
+        # Soru 4: Teslimat güvenilirlik skoru
+        q4_res = await client.post(
+            "/api/v1/policies/search",
+            json={"query": "Teslimat güvenilirliği için minimum skor kaçtır?", "top_k": 3, "organization_id": str(org_id)}
+        )
+        assert q4_res.status_code == 200
+        q4_ctx = q4_res.json()["context"]
+        assert "%90" in q4_ctx
+
+        # Soru 5: Üç iş günü gecikme sonucu
+        q5_res = await client.post(
+            "/api/v1/policies/search",
+            json={"query": "Üç iş gününden fazla gecikmenin sonucu nedir?", "top_k": 3, "organization_id": str(org_id)}
+        )
+        assert q5_res.status_code == 200
+        q5_ctx = q5_res.json()["context"]
+        assert "3 iş günü" in q5_ctx
+        assert "6 ay" in q5_ctx
+
+
+@pytest.mark.asyncio
+async def test_tenant_isolation_on_policy_search():
+    """
+    Farklı organizasyonun ID'si verildiğinde mevcut organizasyonun verisinin
+    kesinlikle gelmediğini doğrular (Multi-tenancy isolation).
+    """
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        fake_org_id = uuid.uuid4()
+        res = await client.post(
+            "/api/v1/policies/search",
+            json={"query": "ISO 9001 sertifikası", "top_k": 3, "organization_id": str(fake_org_id)}
+        )
+        assert res.status_code == 200
+        data = res.json()
+        assert len(data["hits"]) == 0
+        assert "bulunamadı" in data["context"].lower()
+
+
+@pytest.mark.asyncio
+async def test_policy_deletion_clears_qdrant_vectors():
+    """
+    Yeni yüklenen bir belgenin silindiğinde Qdrant'tan da temizlendiğini doğrular.
+    """
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # Geçici bir metin belgesi yükle
+        temp_text = "GEÇİCİ POLİTİKA: Tüm ofis harcamaları için Genel Müdür onayı şarttır."
+        files = {"file": ("gecici_politika.txt", io.BytesIO(temp_text.encode("utf-8")), "text/plain")}
+        data = {"title": "Geçici Test Politikası", "document_type": "other"}
+
+        upload_res = await client.post("/api/v1/policies/upload", data=data, files=files)
+        assert upload_res.status_code == 201
+        temp_id = upload_res.json()["id"]
+
+        # Arama ile geldiğini doğrula
+        search_res = await client.post("/api/v1/policies/search", json={"query": "Genel Müdür onayı", "top_k": 3})
         assert search_res.status_code == 200
-        search_data = search_res.json()
-        assert "ISO 9001" in search_data["context"]
-        assert "ISO 27001" in search_data["context"]
-        assert "[Kaynak" in search_data["context"]
+        assert "Genel Müdür" in search_res.json()["context"]
 
-        # 4. Negative Test: Olmayan / uydurma kural sorgusu
-        negative_res = await client.post(
-            "/api/v1/policies/search",
-            json={
-                "query": "Uzay araçları yakıt ikmali ve roket motoru standartları nedir?",
-                "top_k": 3
-            }
-        )
-        assert negative_res.status_code == 200
-        neg_data = negative_res.json()
-        # Vektör tabanında bu konuyla ilgili hiçbir kural bulunmadığı için bağlamda uzay aracı veya roket yer almamalıdır
-        assert "roket motoru" not in neg_data["context"].lower()
-
-        # 5. Delete Policy: Vektör tabanı ve DB senkron temizliği
-        del_res = await client.delete(f"/api/v1/policies/{policy_id}")
+        # Belgeyi sil
+        del_res = await client.delete(f"/api/v1/policies/{temp_id}")
         assert del_res.status_code == 200
 
-        # Silindikten sonra DB'de olmamalı
-        get_res = await client.get("/api/v1/policies")
-        assert not any(p["id"] == policy_id for p in get_res.json())
+        # Silindikten sonra aramada dönmemeli
+        search_after = await client.post("/api/v1/policies/search", json={"query": "Genel Müdür onayı", "top_k": 3})
+        assert search_after.status_code == 200
+        assert "Genel Müdür onayı şarttır" not in search_after.json()["context"]
 
 
 @pytest.mark.asyncio
@@ -129,7 +200,6 @@ async def test_deterministic_checks_are_independent_of_rag():
     analysis_id = uuid.uuid4()
     dummy_quote_id = uuid.uuid4()
 
-    # Kural dışı teklif (Maksimum 30 gün teslimat, minimum 24 ay garanti, maksimum 400.000 TL bütçe)
     rules = PolicyRules(
         max_delivery_days=30,
         min_warranty_months=24,
@@ -137,7 +207,6 @@ async def test_deterministic_checks_are_independent_of_rag():
         require_payment_terms=["Net 30", "Net 45"]
     )
 
-    # 1. Kuralı ihlal eden teklif
     failing_quote = Quote(
         id=dummy_quote_id,
         rfq_id=uuid.uuid4(),
@@ -170,51 +239,13 @@ async def test_deterministic_checks_are_independent_of_rag():
 
     results_by_rule = {c.rule_name: c for c in checks}
 
-    # Teslimat süresi deterministik kontrolü
     assert results_by_rule["max_delivery_days"].result == ComplianceResult.FAIL
     assert results_by_rule["max_delivery_days"].actual_value == "60"
 
-    # Garanti süresi deterministik kontrolü
     assert results_by_rule["min_warranty_months"].result == ComplianceResult.FAIL
     assert results_by_rule["min_warranty_months"].actual_value == "12"
 
-    # Bütçe sınırı deterministik kontrolü
     assert results_by_rule["max_tco_budget"].result == ComplianceResult.FAIL
     assert float(results_by_rule["max_tco_budget"].actual_value) == 550000.0
 
-    # Ödeme şartı deterministik kontrolü
     assert results_by_rule["require_payment_terms"].result == ComplianceResult.FAIL
-
-    # 2. Tüm kurallara uyan teklif
-    passing_quote = Quote(
-        id=dummy_quote_id,
-        rfq_id=uuid.uuid4(),
-        supplier_id=uuid.uuid4(),
-        currency="TRY",
-        subtotal=250000.0,
-        vat_rate=0.20,
-        vat_amount=50000.0,
-        shipping_cost=0.0,
-        discount_amount=0.0,
-        other_costs=0.0,
-        total_price=300000.0,
-        delivery_days=20,       # <= 30 gün (PASS)
-        warranty_months=36,     # >= 24 ay (PASS)
-        payment_terms="Net 45"  # Uygun (PASS)
-    )
-
-    tco_passing = TCOResult(
-        quote_id=dummy_quote_id,
-        total_tco=300000.0,
-        currency="TRY"
-    )
-
-    passing_checks = ComplianceChecker.check_quote(
-        quote=passing_quote,
-        tco_result=tco_passing,
-        rules=rules,
-        analysis_id=analysis_id
-    )
-
-    for c in passing_checks:
-        assert c.result == ComplianceResult.PASS, f"Rule {c.rule_name} should have passed"

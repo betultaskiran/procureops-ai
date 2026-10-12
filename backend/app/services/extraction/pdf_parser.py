@@ -104,14 +104,22 @@ def extract_text_from_pdf(file_path: str | Path) -> str:
                 page_parts = [f"--- Page {page_num} ---"]
 
                 # ── Metin çıkar ────────────────────────────────────────────────
-                page_text = page.extract_text(
-                    x_tolerance=3,     # Yatay karakter toleransı
-                    y_tolerance=3,     # Dikey karakter toleransı
-                    layout=True,       # Sütun hizalamasını koru
+                raw_page_text = page.extract_text(
+                    x_tolerance=3,
+                    y_tolerance=3,
+                    layout=False,
                 ) or ""
 
-                if page_text.strip():
-                    page_parts.append(page_text.strip())
+                if not raw_page_text.strip():
+                    raw_page_text = page.extract_text(layout=True) or ""
+
+                import re
+                lines = [line.strip() for line in raw_page_text.splitlines()]
+                page_text = "\n".join(lines)
+                page_text = re.sub(r"\n{3,}", "\n\n", page_text).strip()
+
+                if page_text:
+                    page_parts.append(page_text)
                     total_text_length += len(page_text)
 
                 # ── Tablo çıkar ────────────────────────────────────────────────
