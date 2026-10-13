@@ -109,11 +109,17 @@ export default function QuotesAndRfqsPage() {
         archivedOnly: isArchivedTab,
         includeArchived: false,
       });
-      setRfqs(data.items);
-      setTotalCount(data.total_count);
-      setTotalPages(data.total_pages);
+      const items = Array.isArray(data?.items) 
+        ? data.items 
+        : Array.isArray(data) 
+          ? (data as unknown as RFQ[]) 
+          : [];
+      setRfqs(items);
+      setTotalCount(data?.total_count ?? items.length);
+      setTotalPages(data?.total_pages ?? (Math.ceil(items.length / targetPageSize) || 1));
       setError(null);
     } catch (err: any) {
+      setRfqs([]);
       setError(err.message || "Talepler yüklenirken hata oluştu.");
     } finally {
       setIsLoading(false);
@@ -171,7 +177,7 @@ export default function QuotesAndRfqsPage() {
       const res = await rfqsApi.deleteRfq(rfqToDelete.id);
       
       // Update local state immediately
-      setRfqs((prev) => prev.filter((r) => r.id !== rfqToDelete.id));
+      setRfqs((prev) => (Array.isArray(prev) ? prev.filter((r) => r.id !== rfqToDelete.id) : []));
       setQuotesCache((prev) => {
         const next = { ...prev };
         delete next[rfqToDelete.id];
@@ -206,7 +212,7 @@ export default function QuotesAndRfqsPage() {
       });
 
       // Update RFQ quotes_count in state
-      setRfqs((prev) => prev.map((r) => {
+      setRfqs((prev) => (Array.isArray(prev) ? prev.map((r) => {
         if (r.id === quote.rfq_id) {
           const nextCount = Math.max(0, (r.quotes_count || 1) - 1);
           return {
@@ -216,7 +222,7 @@ export default function QuotesAndRfqsPage() {
           };
         }
         return r;
-      }));
+      }) : []));
 
       setFeedback({ type: "success", message: res.message || "Teklif başarıyla silindi." });
       setQuoteToDelete(null);
@@ -295,6 +301,8 @@ export default function QuotesAndRfqsPage() {
         return <span className="px-2.5 py-1 rounded-full text-xs font-medium bg-surface-elevated text-text-muted">{status}</span>;
     }
   };
+
+  const rfqList = Array.isArray(rfqs) ? rfqs : [];
 
   return (
     <div className="space-y-6">
@@ -391,7 +399,7 @@ export default function QuotesAndRfqsPage() {
           <span className="text-sm font-medium">{error}</span>
           <button onClick={() => fetchRfqs()} className="ml-4 underline text-xs">Yeniden Dene</button>
         </div>
-      ) : rfqs.length === 0 ? (
+      ) : rfqList.length === 0 ? (
         <div className="bg-surface border border-border rounded-xl p-12 text-center flex flex-col items-center justify-center">
           <FileText size={40} className="text-text-muted mb-3 opacity-50" />
           <h3 className="text-base font-semibold text-text-primary">Uygun Talep Bulunamadı</h3>
@@ -411,7 +419,7 @@ export default function QuotesAndRfqsPage() {
         </div>
       ) : (
         <div className="space-y-3">
-          {rfqs.map((rfq) => {
+          {rfqList.map((rfq) => {
             const isExpanded = expandedRfqIds.has(rfq.id);
             const quotes = quotesCache[rfq.id] || [];
             const isLoadingQuotes = loadingQuotesFor.has(rfq.id);
