@@ -1,5 +1,28 @@
 import { apiClient } from "./client";
-import { RFQ, Quote, DashboardRFQResponse, AnalysisResponse, PurchaseOrderResponse, ReviewRequest, RFQCreateRequest, SupplierResponse, UploadResponse } from "./types";
+import { 
+  RFQ, 
+  Quote, 
+  DashboardRFQResponse, 
+  AnalysisResponse, 
+  PurchaseOrderResponse, 
+  ReviewRequest, 
+  RFQCreateRequest, 
+  SupplierResponse, 
+  UploadResponse,
+  PaginatedRFQResponse
+} from "./types";
+
+export interface GetRfqsOptions {
+  page?: number;
+  pageSize?: number;
+  limit?: number;
+  status?: string;
+  search?: string;
+  isArchived?: boolean;
+  includeArchived?: boolean;
+  archivedOnly?: boolean;
+  organizationId?: string;
+}
 
 export const rfqsApi = {
   // Real endpoint for Dashboard UI
@@ -7,13 +30,28 @@ export const rfqsApi = {
     return apiClient.get<DashboardRFQResponse[]>("/api/v1/dashboard/recent-rfqs");
   },
 
-  async getRfqs(options?: { includeArchived?: boolean; archivedOnly?: boolean; organizationId?: string }): Promise<RFQ[]> {
+  async getRfqs(options?: GetRfqsOptions): Promise<PaginatedRFQResponse> {
     const params = new URLSearchParams();
-    if (options?.includeArchived) params.append("include_archived", "true");
-    if (options?.archivedOnly) params.append("archived_only", "true");
+    if (options?.page) params.append("page", options.page.toString());
+    if (options?.pageSize) params.append("page_size", options.pageSize.toString());
+    if (options?.limit) params.append("limit", options.limit.toString());
+    if (options?.status && options.status !== "all") {
+      params.append("status", options.status);
+    }
+    if (options?.search && options.search.trim()) {
+      params.append("search", options.search.trim());
+    }
+    if (options?.isArchived !== undefined) {
+      params.append("is_archived", options.isArchived.toString());
+    } else if (options?.archivedOnly) {
+      params.append("archived_only", "true");
+    } else if (options?.includeArchived) {
+      params.append("include_archived", "true");
+    }
     if (options?.organizationId) params.append("organization_id", options.organizationId);
+
     const queryString = params.toString() ? `?${params.toString()}` : "";
-    return apiClient.get<RFQ[]>(`/api/v1/rfqs${queryString}`);
+    return apiClient.get<PaginatedRFQResponse>(`/api/v1/rfqs${queryString}`);
   },
   
   async createRfq(req: RFQCreateRequest): Promise<RFQ> {

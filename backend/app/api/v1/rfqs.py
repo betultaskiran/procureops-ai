@@ -129,21 +129,77 @@ async def _compute_rfq_metadata(rfq: RFQ, db: AsyncSession) -> tuple[int, bool, 
     return quotes_count, can_delete, has_po, delete_block_reason
 
 
+class PaginatedRFQResponse(BaseModel):
+    items: list[RFQResponse]
+    total_count: int
+    page: int
+    page_size: int
+    total_pages: int
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 # Endpoints
 
 @router.get(
     "",
-    response_model=list[RFQResponse],
-    summary="List all RFQs",
-    description="Fetch a list of all Request for Quotations in the system."
+    response_model=PaginatedRFQResponse,
+    summary="List all RFQs with pagination",
+    description="Fetch a paginated list of Request for Quotations with optional filters and search."
 )
 async def list_rfqs(
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    page_size: Optional[int] = Query(None, ge=1, le=100, description="Items per page (default 20, supports 10, 20, 50)"),
+    limit: Optional[int] = Query(None, ge=1, le=100, description="Alias for page_size"),
+    status: Optional[str] = Query(None, description="Filter by RFQ status"),
+    search: Optional[str] = Query(None, description="Search in title, description, or items"),
+    is_archived: Optional[bool] = Query(None, description="Filter by archived status"),
     include_archived: bool = Query(False, description="Include archived RFQs in listing"),
     archived_only: bool = Query(False, description="Return only archived RFQs"),
     organization_id: Optional[uuid.UUID] = Query(None),
     db: AsyncSession = Depends(get_db)
-) -> list[RFQResponse]:
-    query = (
+) -> PaginatedRFQResponse:
+    import math
+    from sqlalchemy import func, or_, cast, String
+    from app.models.rfq import RFQItem
+
+    effective_limit = page_size or limit or 20
+
+    conditions = []
+    if organization_id:
+        conditions.append(RFQ.organization_id == organization_id)
+
+    if status and status != "all":
+        conditions.append(RFQ.status == status)
+
+    if is_archived is not None:
+        conditions.append(RFQ.is_archived == is_archived)
+    elif archived_only:
+        conditions.append(RFQ.is_archived == True)
+    elif not include_archived:
+        conditions.append(RFQ.is_archived == False)
+
+    if search and search.strip():
+        term = f"%{search.strip()}%"
+        conditions.append(
+            or_(
+                RFQ.title.ilike(term),
+                RFQ.description.ilike(term),
+                cast(RFQ.id, String).ilike(term),
+                RFQ.items.any(RFQItem.description.ilike(term))
+            )
+        )
+
+    # 1. Total Count Query (executed on SQL server)
+    count_query = select(func.count(RFQ.id))
+    if conditions:
+        count_query = count_query.where(*conditions)
+    total_count_res = await db.execute(count_query)
+    total_count = total_count_res.scalar_one()
+
+    # 2. Paginated Data Query with OFFSET and LIMIT
+    offset_val = (page - 1) * effective_limit
+    data_query = (
         select(RFQ)
         .options(
             selectinload(RFQ.items),
@@ -152,15 +208,11 @@ async def list_rfqs(
         )
         .order_by(RFQ.created_at.desc())
     )
-    if organization_id:
-        query = query.where(RFQ.organization_id == organization_id)
+    if conditions:
+        data_query = data_query.where(*conditions)
+    data_query = data_query.offset(offset_val).limit(effective_limit)
 
-    if archived_only:
-        query = query.where(RFQ.is_archived == True)
-    elif not include_archived:
-        query = query.where(RFQ.is_archived == False)
-
-    result = await db.execute(query)
+    result = await db.execute(data_query)
     rfqs = result.scalars().all()
     
     response_items = []
@@ -174,8 +226,16 @@ async def list_rfqs(
         if rfq.created_by:
             dto.created_by_name = rfq.created_by.full_name
         response_items.append(dto)
+
+    total_pages = math.ceil(total_count / effective_limit) if total_count > 0 else 0
         
-    return response_items
+    return PaginatedRFQResponse(
+        items=response_items,
+        total_count=total_count,
+        page=page,
+        page_size=effective_limit,
+        total_pages=total_pages
+    )
 
 
 @router.get(

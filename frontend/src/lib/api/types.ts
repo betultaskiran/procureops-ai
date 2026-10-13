@@ -32,6 +32,14 @@ export interface RFQ {
   created_by_name?: string | null;
 }
 
+export interface PaginatedRFQResponse {
+  items: RFQ[];
+  total_count: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
 export interface QuoteItem {
   id: string;
   line_number: number;

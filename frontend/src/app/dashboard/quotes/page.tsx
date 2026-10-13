@@ -11,6 +11,8 @@ import {
   Trash2, 
   ChevronDown, 
   ChevronUp, 
+  ChevronLeft,
+  ChevronRight,
   ExternalLink, 
   AlertTriangle, 
   CheckCircle2, 
@@ -38,8 +40,15 @@ export default function QuotesAndRfqsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Pagination State
+  const [page, setPage] = useState<number>(1);
+  const [pageSize, setPageSize] = useState<number>(20);
+  const [totalCount, setTotalCount] = useState<number>(0);
+  const [totalPages, setTotalPages] = useState<number>(0);
+
   // Search & Filtering
   const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
 
   // Expandable Quotes Map
@@ -70,16 +79,39 @@ export default function QuotesAndRfqsPage() {
   const [isCreating, setIsCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
-  const fetchRfqs = async (filter?: string) => {
+  // Debounce search query by 300ms
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchQuery);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  // When debounced search or status filter changes, reset to page 1
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch, statusFilter]);
+
+  const fetchRfqs = async (
+    targetPage: number = page,
+    targetPageSize: number = pageSize,
+    targetStatus: string = statusFilter,
+    targetSearch: string = debouncedSearch
+  ) => {
     try {
       setIsLoading(true);
-      const activeFilter = typeof filter === "string" ? filter : statusFilter;
-      const isArchivedTab = activeFilter === "archived";
+      const isArchivedTab = targetStatus === "archived";
       const data = await rfqsApi.getRfqs({
+        page: targetPage,
+        pageSize: targetPageSize,
+        status: targetStatus === "archived" ? undefined : targetStatus,
+        search: targetSearch || undefined,
         archivedOnly: isArchivedTab,
         includeArchived: false,
       });
-      setRfqs(data);
+      setRfqs(data.items);
+      setTotalCount(data.total_count);
+      setTotalPages(data.total_pages);
       setError(null);
     } catch (err: any) {
       setError(err.message || "Talepler yüklenirken hata oluştu.");
@@ -89,8 +121,8 @@ export default function QuotesAndRfqsPage() {
   };
 
   useEffect(() => {
-    fetchRfqs();
-  }, []);
+    fetchRfqs(page, pageSize, statusFilter, debouncedSearch);
+  }, [page, pageSize, statusFilter, debouncedSearch]);
 
   // Auto-hide toast feedback after 5 seconds
   useEffect(() => {
@@ -147,6 +179,7 @@ export default function QuotesAndRfqsPage() {
       });
       setFeedback({ type: "success", message: res.message || "RFQ talebi başarıyla silindi." });
       setRfqToDelete(null);
+      await fetchRfqs(page, pageSize, statusFilter, debouncedSearch);
     } catch (err: any) {
       setDeleteError(err.message || "RFQ silinirken bir hata oluştu.");
     } finally {
@@ -235,23 +268,8 @@ export default function QuotesAndRfqsPage() {
 
   const handleTabChange = (tabId: string) => {
     setStatusFilter(tabId);
-    fetchRfqs(tabId);
+    setPage(1);
   };
-
-  // Filtered RFQs
-  const filteredRfqs = rfqs.filter((rfq) => {
-    const matchesSearch = 
-      rfq.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      rfq.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      rfq.items?.some((i) => i.description.toLowerCase().includes(searchQuery.toLowerCase()));
-
-    const matchesStatus = 
-      statusFilter === "all" || statusFilter === "archived" 
-        ? true 
-        : rfq.status === statusFilter;
-
-    return matchesSearch && matchesStatus;
-  });
 
   const getStatusBadge = (status: string, hasPo?: boolean) => {
     switch (status) {
@@ -304,7 +322,7 @@ export default function QuotesAndRfqsPage() {
           <div className="flex items-center gap-3">
             <h1 className="text-2xl font-bold tracking-tight text-text-primary">Quotes & RFQs</h1>
             <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
-              {rfqs.length} Talep
+              {totalCount} Talep
             </span>
           </div>
           <p className="text-sm text-text-muted mt-1">
@@ -373,16 +391,16 @@ export default function QuotesAndRfqsPage() {
           <span className="text-sm font-medium">{error}</span>
           <button onClick={() => fetchRfqs()} className="ml-4 underline text-xs">Yeniden Dene</button>
         </div>
-      ) : filteredRfqs.length === 0 ? (
+      ) : rfqs.length === 0 ? (
         <div className="bg-surface border border-border rounded-xl p-12 text-center flex flex-col items-center justify-center">
           <FileText size={40} className="text-text-muted mb-3 opacity-50" />
           <h3 className="text-base font-semibold text-text-primary">Uygun Talep Bulunamadı</h3>
           <p className="text-sm text-text-muted mt-1 max-w-sm">
-            {searchQuery || statusFilter !== "all" 
+            {debouncedSearch || statusFilter !== "all" 
               ? "Arama kriterlerinize uyan bir RFQ kaydı bulunmuyor." 
               : "Henüz oluşturulmuş bir satın alma talebi (RFQ) yok. Yeni bir talep oluşturarak başlayabilirsiniz."}
           </p>
-          {!searchQuery && statusFilter === "all" && (
+          {!debouncedSearch && statusFilter === "all" && (
             <button
               onClick={() => setIsCreateOpen(true)}
               className="mt-4 flex items-center gap-2 bg-primary hover:bg-primary-hover text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
@@ -393,7 +411,7 @@ export default function QuotesAndRfqsPage() {
         </div>
       ) : (
         <div className="space-y-3">
-          {filteredRfqs.map((rfq) => {
+          {rfqs.map((rfq) => {
             const isExpanded = expandedRfqIds.has(rfq.id);
             const quotes = quotesCache[rfq.id] || [];
             const isLoadingQuotes = loadingQuotesFor.has(rfq.id);
@@ -658,6 +676,89 @@ export default function QuotesAndRfqsPage() {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* ── Pagination Controls Bar ── */}
+      {!isLoading && !error && totalCount > 0 && (
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-surface border border-border p-4 rounded-xl text-sm">
+          {/* Info text & Page Size Selector */}
+          <div className="flex items-center gap-4 text-text-muted">
+            <span>
+              {totalCount === 0 
+                ? "0 kayıt" 
+                : `${(page - 1) * pageSize + 1}–${Math.min(page * pageSize, totalCount)} / ${totalCount} kayıt gösteriliyor`}
+            </span>
+            <div className="flex items-center gap-2 border-l border-border pl-4">
+              <span className="text-xs">Sayfa başına:</span>
+              <select
+                value={pageSize}
+                onChange={(e) => {
+                  setPageSize(Number(e.target.value));
+                  setPage(1);
+                }}
+                className="bg-bg border border-border text-text-primary text-xs rounded-md px-2 py-1 focus:outline-none focus:border-primary cursor-pointer"
+              >
+                <option value={10}>10</option>
+                <option value={20}>20</option>
+                <option value={50}>50</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Navigation Buttons */}
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={page <= 1}
+              className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-border bg-surface-elevated text-text-primary text-xs font-medium hover:bg-border disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              <ChevronLeft size={14} />
+              Önceki
+            </button>
+
+            {/* Page number buttons */}
+            <div className="flex items-center gap-1 mx-1">
+              {Array.from({ length: totalPages }, (_, i) => i + 1)
+                .filter((p) => {
+                  return (
+                    p === 1 ||
+                    p === totalPages ||
+                    (p >= page - 1 && p <= page + 1)
+                  );
+                })
+                .map((p, idx, arr) => {
+                  const prev = arr[idx - 1];
+                  const showEllipsis = prev && p - prev > 1;
+                  return (
+                    <React.Fragment key={p}>
+                      {showEllipsis && (
+                        <span className="px-1 text-xs text-text-muted">...</span>
+                      )}
+                      <button
+                        onClick={() => setPage(p)}
+                        className={`w-7 h-7 rounded-md text-xs font-medium flex items-center justify-center transition-colors ${
+                          page === p
+                            ? "bg-primary text-white shadow-sm"
+                            : "bg-surface-elevated text-text-muted hover:text-text-primary hover:bg-border"
+                        }`}
+                      >
+                        {p}
+                      </button>
+                    </React.Fragment>
+                  );
+                })}
+            </div>
+
+            <button
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              disabled={page >= totalPages || totalPages === 0}
+              className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-border bg-surface-elevated text-text-primary text-xs font-medium hover:bg-border disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              Sonraki
+              <ChevronRight size={14} />
+            </button>
+          </div>
         </div>
       )}
 

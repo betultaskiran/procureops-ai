@@ -45,15 +45,15 @@ async def get_recent_rfqs(db: AsyncSession = Depends(get_db)) -> List[DashboardR
     # where(RFQ.organization_id == current_user.organization_id)
 
     # To prevent N+1 queries, we eagerly load the related objects we need.
-    # Note: selectinload is safe here, but for very large databases, a custom joined query might be better.
     stmt = (
         select(RFQ)
+        .where(RFQ.is_archived == False)
         .options(
             selectinload(RFQ.analyses).selectinload(Analysis.recommendation).selectinload(Recommendation.recommended_quote).selectinload(Quote.supplier),
             selectinload(RFQ.analyses).selectinload(Analysis.tco_results)
         )
         .order_by(desc(RFQ.created_at))
-        .limit(20) # Limit for dashboard
+        .limit(10)  # Lightweight limit for dashboard
     )
     
     result = await db.execute(stmt)

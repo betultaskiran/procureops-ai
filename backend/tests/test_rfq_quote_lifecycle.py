@@ -400,7 +400,8 @@ async def test_rfq_list_reflects_metadata_and_updates_after_deletion():
         # Verify present in list
         list_res = await client.get("/api/v1/rfqs")
         assert list_res.status_code == 200
-        rfqs = list_res.json()
+        data = list_res.json()
+        rfqs = data["items"] if isinstance(data, dict) and "items" in data else data
         target = next((r for r in rfqs if r["id"] == rfq_id), None)
         assert target is not None
         assert "can_delete" in target
@@ -413,7 +414,8 @@ async def test_rfq_list_reflects_metadata_and_updates_after_deletion():
 
         # Verify absent from list
         list_after = await client.get("/api/v1/rfqs")
-        rfqs_after = list_after.json()
+        data_after = list_after.json()
+        rfqs_after = data_after["items"] if isinstance(data_after, dict) and "items" in data_after else data_after
         target_after = next((r for r in rfqs_after if r["id"] == rfq_id), None)
         assert target_after is None
 
@@ -603,16 +605,20 @@ async def test_rfq_archive_and_unarchive_flow():
         assert archive_res.json()["is_archived"] is True
 
         # 2. Check default list excludes archived RFQ
+        def get_items(res):
+            d = res.json()
+            return d["items"] if isinstance(d, dict) and "items" in d else d
+
         default_list = await client.get("/api/v1/rfqs")
-        assert not any(r["id"] == rfq_id for r in default_list.json())
+        assert not any(r["id"] == rfq_id for r in get_items(default_list))
 
         # 3. Check archived_only=true includes this RFQ
         archived_list = await client.get("/api/v1/rfqs?archived_only=true")
-        assert any(r["id"] == rfq_id for r in archived_list.json())
+        assert any(r["id"] == rfq_id for r in get_items(archived_list))
 
         # 4. Check include_archived=true includes this RFQ
         all_list = await client.get("/api/v1/rfqs?include_archived=true")
-        assert any(r["id"] == rfq_id for r in all_list.json())
+        assert any(r["id"] == rfq_id for r in get_items(all_list))
 
         # 5. Repeated archive -> 400
         repeat_archive = await client.post(f"/api/v1/rfqs/{rfq_id}/archive")
@@ -626,7 +632,7 @@ async def test_rfq_archive_and_unarchive_flow():
 
         # 7. Check default list now includes it again
         restored_list = await client.get("/api/v1/rfqs")
-        assert any(r["id"] == rfq_id for r in restored_list.json())
+        assert any(r["id"] == rfq_id for r in get_items(restored_list))
 
 
 @pytest.mark.asyncio
