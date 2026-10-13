@@ -288,7 +288,8 @@ class RAGService:
             "var", "yok", "ise", "de", "da", "ki", "tüm", "her", "gibi", "kendi", "sonucu",
             "süresi", "durumu", "hakkında", "ilgili", "alınır", "edilir", "yapılır", "olur",
             "hangisi", "hangi", "kim", "kimler", "kimden", "kimlerden", "tarafından", "şartı",
-            "kuralı", "madde", "belge", "şirket", "şirketin", "şirkette"
+            "kuralı", "madde", "belge", "şirket", "şirketin", "şirkette",
+            "edilmeli", "yapılmalı", "olmalı", "olmalıdır", "geç", "erken"
         }
 
         special_phrases = [
@@ -316,6 +317,53 @@ class RAGService:
                 found_topics.append(stem)
 
         return list(set(found_topics))
+
+    @staticmethod
+    def split_query_clauses(query: str) -> List[str]:
+        """
+        Sorguyu bağımsız alt ifadelere/sorulara ayırır.
+        've', 'ayrıca', 'hem de' bağlaçları veya noktalı virgül ile böler.
+        Yalnızca alt ifadeler bağımsız bir yüklem veya soru kalıbı taşıyorsa (bileşik soru ise) bölme uygular.
+        """
+        if not query:
+            return []
+        import re
+        raw_clauses = re.split(r"\s+(?:ve|ayrıca|hem\s+de)\s+|;\s*", query.strip(), flags=re.IGNORECASE)
+        clauses = [rc.strip() for rc in raw_clauses if len(rc.strip()) >= 3]
+        if len(clauses) <= 1:
+            return [query.strip()]
+
+        clause_markers = {
+            "kaç", "ne", "nedir", "nelerdir", "kim", "kimler", "hangi", "mı", "mi", "mu", "mü",
+            "edilmeli", "yapılmalı", "olmalı", "olmalıdır", "alınır", "edilir", "yapılır", "olur",
+            "kaçtır", "kaçdır", "gerekir", "süresi", "şartı", "orani", "oranı"
+        }
+
+        def has_clause_marker(t: str) -> bool:
+            words = set(re.findall(r"[a-z0-9çğıöşü]+", t.lower()))
+            return bool(words & clause_markers)
+
+        # Eğer ayrılan parçalardan herhangi biri yüklem/soru işareti taşımıyorsa (örn: 'otel ve yemek harcırahı'),
+        # bu durum tekil bir tamlamadır; bölme uygulanmaz.
+        if not all(has_clause_marker(c) for c in clauses):
+            return [query.strip()]
+
+        return clauses
+
+    @staticmethod
+    def extract_clause_topics_with_context(
+        clause_topics: List[str], 
+        full_query_topics: List[str]
+    ) -> List[str]:
+        """
+        Alt ifadenin konularını çıkarır ve ana sorgudaki anahtar varlıkları (sunucu, donanım, alım vb.) korur.
+        """
+        domain_entities = {
+            "sunucu", "donanım", "laptop", "bilgisayar", "dizüstü", 
+            "tedarikçi", "alım", "yatırım", "yazılım", "cihaz"
+        }
+        context_entities = [t for t in full_query_topics if t in domain_entities]
+        return list(set(clause_topics + context_entities))
 
     @staticmethod
     def check_topic_grounding(query_topics: List[str], chunk_text: str, section_title: Optional[str] = None) -> float:
@@ -363,23 +411,36 @@ class RAGService:
         Retrieval sonuçlarını precision odaklı filtreler ve sıralar:
         1. Asgari alaka eşiğini denetler: BM25 eşleşmesi varsa 0.62, saf dense aramada 0.63 taban eşik uygulanır.
         2. Konusal uyum (topical grounding) denetimi: Sorgunun kavramlarıyla örtüşmeyen semantik drift parçalarını eler.
-        3. En yüksek aday dahi asgari eşiği geçemiyorsa boş döner (negatif kanıt / yetersiz bilgi).
-        4. Adaptif skor aralığı (top_score - score_window) dışındaki ilgisiz parçaları eler.
-        5. İçerik maddeleri mevcutken kapak/üstbilgi (is_header=True) parçalarını eler.
-        6. Soruyla gerçekten ilişkili olanları seçer (yapay dolgu yapmaz).
+        3. Çoklu niyet (multi-intent / composite queries) desteği: Sorguda 've', 'ayrıca' gibi bağlaçlarla
+           birden fazla gereksinim (örn. teslimat süresi ve garanti kapsamı) sorulduğunda, her iki konuya
+           ait bağımsız maddelerin ikisini de bağlama dahil eder.
+        4. En yüksek aday dahi asgari eşiği geçemiyorsa boş döner (negatif kanıt / yetersiz bilgi).
+        5. Adaptif skor aralığı (top_score - score_window) dışındaki ilgisiz parçaları eler.
+        6. İçerik maddeleri mevcutken kapak/üstbilgi (is_header=True) parçalarını eler.
+        7. Soruyla gerçekten ilişkili olanları seçer (yapay dolgu yapmaz).
         """
         if not candidates:
             return []
 
-        query_topics = self.extract_query_topics(query) if query else []
-
-        # Skorlarına göre sıralı olduğundan emin ol
         sorted_candidates = sorted(
             candidates,
             key=lambda c: float(c.get("score") or 0.0),
             reverse=True
         )
 
+        if not query:
+            top_sc = float(sorted_candidates[0].get("score") or 0.0)
+            return [c for c in sorted_candidates if float(c.get("score") or 0.0) >= max(min_score, top_sc - score_window)][:top_k]
+
+        # Sorguyu alt ifadelere ve konulara ayır
+        clauses = self.split_query_clauses(query)
+        full_topics = self.extract_query_topics(query)
+        clause_topics_list = [
+            self.extract_clause_topics_with_context(self.extract_query_topics(c), full_topics)
+            for c in clauses
+        ]
+
+        # 1. Asgari eşik ve konusal uyum filtresi
         filtered = []
         for c in sorted_candidates:
             sc = float(c.get("score") or 0.0)
@@ -388,17 +449,19 @@ class RAGService:
             if sc < cand_min:
                 continue
 
-            # Konusal uyum denetimi (Topical Grounding)
-            if query_topics:
-                overlap = self.check_topic_grounding(
-                    query_topics,
-                    c.get("text", ""),
-                    c.get("section_title", "")
-                )
-                if overlap < min_topical_overlap:
-                    continue
+            text = c.get("text", "")
+            sec_title = c.get("section_title", "")
 
-            filtered.append(c)
+            global_overlap = self.check_topic_grounding(full_topics, text, sec_title)
+            clause_overlaps = [self.check_topic_grounding(ct, text, sec_title) for ct in clause_topics_list]
+            best_overlap = max([global_overlap] + clause_overlaps)
+
+            if best_overlap < min_topical_overlap:
+                continue
+
+            c_with_meta = dict(c)
+            c_with_meta["_clause_overlaps"] = clause_overlaps
+            filtered.append(c_with_meta)
 
         if not filtered:
             return []
@@ -406,16 +469,50 @@ class RAGService:
         top_score = float(filtered[0].get("score") or 0.0)
         has_content_candidates = any(not c.get("is_header", False) for c in filtered)
 
-        final_hits = []
-        for c in filtered:
-            sc = float(c.get("score") or 0.0)
-            if sc < top_score - score_window:
-                continue
-            if has_content_candidates and c.get("is_header", False):
-                continue
-            final_hits.append(c)
+        # 2. Seçim stratejisi:
+        # A) Tekil niyetli sorgu ise (len(clauses) <= 1): standart adaptive score_window uygula
+        if len(clauses) <= 1:
+            final_hits = []
+            for c in filtered:
+                sc = float(c.get("score") or 0.0)
+                if sc < top_score - score_window:
+                    continue
+                if has_content_candidates and c.get("is_header", False):
+                    continue
+                c_clean = dict(c)
+                c_clean.pop("_clause_overlaps", None)
+                final_hits.append(c_clean)
+            return final_hits[:top_k]
 
-        return final_hits[:top_k]
+        # B) Çoklu niyetli (composite) sorgu ise:
+        # Her bir alt ifadeyi karşılayan en iyi adayı seç
+        selected_for_clauses = {}
+        for clause_idx, ct in enumerate(clause_topics_list):
+            best_cand_for_clause = None
+            best_cand_score = -1.0
+            for c in filtered:
+                if has_content_candidates and c.get("is_header", False):
+                    continue
+                c_overlap = c.get("_clause_overlaps", [])[clause_idx] if "_clause_overlaps" in c else 0.0
+                if c_overlap >= min_topical_overlap:
+                    sc = float(c.get("score") or 0.0)
+                    if sc > best_cand_score:
+                        best_cand_score = sc
+                        best_cand_for_clause = c
+            if best_cand_for_clause:
+                cand_key = f"{best_cand_for_clause.get('doc_id')}_{best_cand_for_clause.get('chunk_index')}"
+                selected_for_clauses[cand_key] = best_cand_for_clause
+
+        final_hits = sorted(list(selected_for_clauses.values()), key=lambda c: float(c.get("score") or 0.0), reverse=True)
+
+        # Temizlik: yardımcı alanları kaldır
+        clean_final_hits = []
+        for c in final_hits:
+            c_clean = dict(c)
+            c_clean.pop("_clause_overlaps", None)
+            clean_final_hits.append(c_clean)
+
+        return clean_final_hits[:top_k]
 
     def format_context_from_payloads(self, results: List[Dict[str, Any]]) -> str:
         """

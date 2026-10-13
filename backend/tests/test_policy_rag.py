@@ -603,3 +603,90 @@ async def test_topical_grounding_alternative_and_negative_queries():
         assert "bulunamadı" in d_neg5["context"].lower()
 
 
+@pytest.mark.asyncio
+async def test_composite_multi_intent_query_retrieves_both_articles():
+    """
+    Kullanıcının bildirdiği çoklu niyetli (composite) sorgu senaryolarını test eder:
+    1. 'Dizüstü bilgisayarın garanti süresi ne kadar?' -> 1 hit (GARANTİ, 24 ay).
+    2. 'Özel konfigürasyonlu sunucu en geç kaç günde teslim edilmeli ve garantisi ne kadar olmalı?'
+       -> 2 hit (TESLİMAT [30 gün] ve GARANTİ [36 ay]).
+    3. 'Standart sunucu siparişinde teslimat süresi 14 gün mü, 30 gün mü?' -> 1 hit (TESLİMAT, 14 gün).
+    4. Negatif sorgu: Banka teminat mektubu oranı ve ödeme vadesi -> 0 hit.
+    5. Negatif sorgu: Yurt dışı otel ve yemek harcırahı -> 0 hit.
+    """
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        async with AsyncSessionLocal() as db:
+            res = await db.execute(select(Organization).limit(1))
+            org = res.scalars().first()
+            assert org is not None
+            org_id = str(org.id)
+
+        # 1. Tekil sorgu: Dizüstü garanti süresi
+        r1 = await client.post("/api/v1/policies/search", json={
+            "query": "Dizüstü bilgisayarın garanti süresi ne kadar?",
+            "top_k": 3,
+            "organization_id": org_id
+        })
+        assert r1.status_code == 200
+        d1 = r1.json()
+        assert len(d1["hits"]) == 1
+        assert "GARANTİ" in (d1["hits"][0]["section_title"] or "").upper()
+        assert "24 ay" in d1["hits"][0]["text"]
+        assert "24 ay" in d1["context"]
+
+        # 2. Çoklu niyetli sorgu: Özel konfigürasyonlu sunucu teslimatı ve garantisi
+        r2 = await client.post("/api/v1/policies/search", json={
+            "query": "Özel konfigürasyonlu sunucu en geç kaç günde teslim edilmeli ve garantisi ne kadar olmalı?",
+            "top_k": 3,
+            "organization_id": org_id
+        })
+        assert r2.status_code == 200
+        d2 = r2.json()
+        assert len(d2["hits"]) == 2, f"Beklenen 2 hit, gelen: {len(d2['hits'])}"
+        
+        hit_titles = [(h.get("section_title") or "").upper() for h in d2["hits"]]
+        assert any("TESLİMAT" in ht for ht in hit_titles), "Teslimat maddesi eksik"
+        assert any("GARANTİ" in ht for ht in hit_titles), "Garanti maddesi eksik"
+        
+        # LLM context her iki maddeyi de içermeli
+        assert any(term in d2["context"] for term in ["30 gün", "30 takvim", "30"])
+        assert "36 ay" in d2["context"]
+
+        # 3. Tekil sorgu: Standart sunucu siparişinde teslimat süresi
+        r3 = await client.post("/api/v1/policies/search", json={
+            "query": "Standart sunucu siparişinde teslimat süresi 14 gün mü, 30 gün mü?",
+            "top_k": 3,
+            "organization_id": org_id
+        })
+        assert r3.status_code == 200
+        d3 = r3.json()
+        assert len(d3["hits"]) == 1
+        assert "TESLİMAT" in (d3["hits"][0]["section_title"] or "").upper()
+        assert "14" in d3["hits"][0]["text"]
+        assert "14" in d3["context"]
+
+        # 4. Negatif sorgu: Teminat mektubu ve ödeme vadesi
+        r4 = await client.post("/api/v1/policies/search", json={
+            "query": "Tedarikçilere avans ödemesi yapılırken banka teminat mektubu oranı yüzde kaçtır ve ödeme vadesi kaç gündür?",
+            "top_k": 3,
+            "organization_id": org_id
+        })
+        assert r4.status_code == 200
+        d4 = r4.json()
+        assert len(d4["hits"]) == 0
+        assert "bulunamadı" in d4["context"].lower()
+
+        # 5. Negatif sorgu: Yurt dışı seyahat harcırah limiti
+        r5 = await client.post("/api/v1/policies/search", json={
+            "query": "Şirket çalışanlarının yurt dışı seyahatlerinde günlük otel ve yemek harcırah limiti kaç Euro'dur?",
+            "top_k": 3,
+            "organization_id": org_id
+        })
+        assert r5.status_code == 200
+        d5 = r5.json()
+        assert len(d5["hits"]) == 0
+        assert "bulunamadı" in d5["context"].lower()
+
+
+
