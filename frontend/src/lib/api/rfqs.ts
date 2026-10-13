@@ -7,8 +7,13 @@ export const rfqsApi = {
     return apiClient.get<DashboardRFQResponse[]>("/api/v1/dashboard/recent-rfqs");
   },
 
-  async getRfqs(): Promise<RFQ[]> {
-    return apiClient.get<RFQ[]>("/api/v1/rfqs");
+  async getRfqs(options?: { includeArchived?: boolean; archivedOnly?: boolean; organizationId?: string }): Promise<RFQ[]> {
+    const params = new URLSearchParams();
+    if (options?.includeArchived) params.append("include_archived", "true");
+    if (options?.archivedOnly) params.append("archived_only", "true");
+    if (options?.organizationId) params.append("organization_id", options.organizationId);
+    const queryString = params.toString() ? `?${params.toString()}` : "";
+    return apiClient.get<RFQ[]>(`/api/v1/rfqs${queryString}`);
   },
   
   async createRfq(req: RFQCreateRequest): Promise<RFQ> {
@@ -70,5 +75,44 @@ export const rfqsApi = {
 
   async createSupplier(req: import("./types").SupplierCreateRequest): Promise<SupplierResponse> {
     return apiClient.post<SupplierResponse>("/api/v1/suppliers", req);
+  },
+
+  async deleteRfq(id: string, organizationId?: string): Promise<{ status: string; message: string; id: string }> {
+    const query = organizationId ? `?organization_id=${organizationId}` : "";
+    return apiClient.delete<{ status: string; message: string; id: string }>(`/api/v1/rfqs/${id}${query}`);
+  },
+
+  async deleteQuote(quoteId: string, rfqId?: string, organizationId?: string): Promise<{ status: string; message: string; id: string; rfq_id: string }> {
+    const basePath = rfqId ? `/api/v1/rfqs/${rfqId}/quotes/${quoteId}` : `/api/v1/quotes/${quoteId}`;
+    const query = organizationId ? `?organization_id=${organizationId}` : "";
+    return apiClient.delete<{ status: string; message: string; id: string; rfq_id: string }>(`${basePath}${query}`);
+  },
+
+  async cancelRfq(rfqId: string, reason: string, cancelPos: boolean = true, organizationId?: string): Promise<RFQ> {
+    return apiClient.post<RFQ>(`/api/v1/rfqs/${rfqId}/cancel`, {
+      reason,
+      cancel_pos: cancelPos,
+      organization_id: organizationId
+    });
+  },
+
+  async archiveRfq(rfqId: string, reason?: string, organizationId?: string): Promise<RFQ> {
+    return apiClient.post<RFQ>(`/api/v1/rfqs/${rfqId}/archive`, {
+      reason,
+      organization_id: organizationId
+    });
+  },
+
+  async unarchiveRfq(rfqId: string, organizationId?: string): Promise<RFQ> {
+    return apiClient.post<RFQ>(`/api/v1/rfqs/${rfqId}/unarchive`, {
+      organization_id: organizationId
+    });
+  },
+
+  async cancelPurchaseOrder(rfqId: string, poId: string, reason: string, organizationId?: string): Promise<PurchaseOrderResponse> {
+    return apiClient.post<PurchaseOrderResponse>(`/api/v1/rfqs/${rfqId}/purchase-orders/${poId}/cancel`, {
+      reason,
+      organization_id: organizationId
+    });
   }
 };

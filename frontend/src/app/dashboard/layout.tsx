@@ -52,7 +52,14 @@ export default function DashboardLayout({
             Dashboard
           </Link>
           
-          <Link href="/dashboard/quotes" className="flex items-center gap-3 px-3 py-2 rounded-md text-text-muted hover:bg-surface-elevated hover:text-text-primary font-medium text-sm transition-colors">
+          <Link 
+            href="/dashboard/quotes" 
+            className={`flex items-center gap-3 px-3 py-2 rounded-md font-medium text-sm transition-colors ${
+              pathname.startsWith("/dashboard/quotes")
+                ? "bg-primary/10 text-primary" 
+                : "text-text-muted hover:bg-surface-elevated hover:text-text-primary"
+            }`}
+          >
             <FileText size={18} />
             Quotes & RFQs
           </Link>

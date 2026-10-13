@@ -32,10 +32,12 @@ SUPPLIER_ID:
 """
 
 import uuid
+import os
 from pathlib import Path
+from typing import Optional
 
 import aiofiles
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -92,6 +94,8 @@ class QuoteResponse(BaseModel):
     extraction_notes: str | None = None
     is_compliant: bool | None
     items: list[QuoteItemResponse] = []
+    can_delete: bool = True
+    delete_block_reason: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -282,6 +286,50 @@ async def upload_quote_document(
     )
 
 
+# ── Quote Deletion Validation ──────────────────────────────────────────────────
+
+async def _compute_quote_can_delete(quote_id: uuid.UUID, db: AsyncSession) -> tuple[bool, str | None]:
+    """
+    Checks if a quote can be safely deleted.
+    Quotes linked to Purchase Orders or Approved Approvals/Recommendations cannot be deleted.
+    """
+    from app.models.order import PurchaseOrder
+    from app.models.analysis import Approval, ApprovalStatus, Analysis, Recommendation
+
+    # 1. Purchase Order check
+    po_res = await db.execute(
+        select(PurchaseOrder.id).where(PurchaseOrder.quote_id == quote_id).limit(1)
+    )
+    if po_res.scalar_one_or_none() is not None:
+        return False, "Onaylanmış bir satın alma kararında veya Satın Alma Siparişinde (PO) yer alan teklif silinemez."
+
+    # 2. Approved human approval referencing this quote
+    approval_res = await db.execute(
+        select(Approval.id).where(
+            Approval.selected_quote_id == quote_id,
+            Approval.status.in_([ApprovalStatus.APPROVED.value, ApprovalStatus.EXCEPTION_APPROVED.value])
+        ).limit(1)
+    )
+    if approval_res.scalar_one_or_none() is not None:
+        return False, "Onaylanmış bir satın alma kararında veya Satın Alma Siparişinde (PO) yer alan teklif silinemez."
+
+    # 3. Approved recommendation referencing this quote
+    rec_approval_res = await db.execute(
+        select(Approval.id)
+        .join(Approval.analysis)
+        .join(Analysis.recommendation)
+        .where(
+            Recommendation.recommended_quote_id == quote_id,
+            Approval.status.in_([ApprovalStatus.APPROVED.value, ApprovalStatus.EXCEPTION_APPROVED.value])
+        )
+        .limit(1)
+    )
+    if rec_approval_res.scalar_one_or_none() is not None:
+        return False, "Onaylanmış bir satın alma kararında veya Satın Alma Siparişinde (PO) yer alan teklif silinemez."
+
+    return True, None
+
+
 @router.get(
     "/rfqs/{rfq_id}/quotes",
     response_model=list[QuoteResponse],
@@ -305,7 +353,10 @@ async def list_quotes(
     
     response_list = []
     for q in quotes:
+        can_del, block_reason = await _compute_quote_can_delete(q.id, db)
         dto = QuoteResponse.model_validate(q)
+        dto.can_delete = can_del
+        dto.delete_block_reason = block_reason
         if q.supplier:
             dto.supplier_name = q.supplier.name
         response_list.append(dto)
@@ -337,7 +388,10 @@ async def get_quote(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Quote {quote_id} not found",
         )
+    can_del, block_reason = await _compute_quote_can_delete(quote.id, db)
     dto = QuoteResponse.model_validate(quote)
+    dto.can_delete = can_del
+    dto.delete_block_reason = block_reason
     if quote.supplier:
         dto.supplier_name = quote.supplier.name
     return dto
@@ -368,8 +422,105 @@ async def get_rfq_quote(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Quote {quote_id} not found under RFQ {rfq_id}",
         )
+    can_del, block_reason = await _compute_quote_can_delete(quote.id, db)
     dto = QuoteResponse.model_validate(quote)
+    dto.can_delete = can_del
+    dto.delete_block_reason = block_reason
     if quote.supplier:
         dto.supplier_name = quote.supplier.name
     return dto
+
+
+@router.delete(
+    "/rfqs/{rfq_id}/quotes/{quote_id}",
+    status_code=status.HTTP_200_OK,
+    summary="Delete a supplier quote under an RFQ",
+)
+@router.delete(
+    "/quotes/{quote_id}",
+    status_code=status.HTTP_200_OK,
+    summary="Delete a supplier quote (Alias)",
+)
+async def delete_quote(
+    quote_id: uuid.UUID,
+    rfq_id: uuid.UUID | None = None,
+    organization_id: Optional[uuid.UUID] = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Tedarikçi teklifini güvenli bir şekilde siler.
+    PO veya onaylanmış bir analizde yer alan tekliflerin silinmesi engellenir.
+    """
+    query = select(Quote).where(Quote.id == quote_id)
+    if rfq_id:
+        query = query.where(Quote.rfq_id == rfq_id)
+    result = await db.execute(query)
+    quote = result.scalar_one_or_none()
+    if not quote:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Teklif ({quote_id}) bulunamadı",
+        )
+
+    rfq = await db.get(RFQ, quote.rfq_id)
+    if not rfq:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Teklife bağlı RFQ ({quote.rfq_id}) bulunamadı",
+        )
+
+    # Multi-tenancy check
+    if organization_id and rfq.organization_id != organization_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Bu organizasyona ait olmayan teklif silinemez",
+        )
+
+    # Deletion rules check
+    can_del, block_reason = await _compute_quote_can_delete(quote.id, db)
+    if not can_del:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=block_reason,
+        )
+
+    # Clean up physical quote document file if no other quote references it
+    if quote.quote_document_id:
+        doc = await db.get(QuoteDocument, quote.quote_document_id)
+        if doc:
+            other_q = await db.execute(
+                select(Quote.id).where(
+                    Quote.quote_document_id == doc.id,
+                    Quote.id != quote.id
+                ).limit(1)
+            )
+            if other_q.scalar_one_or_none() is None:
+                if doc.file_path and os.path.exists(doc.file_path):
+                    try:
+                        os.remove(doc.file_path)
+                    except OSError:
+                        pass
+                await db.delete(doc)
+
+    await db.delete(quote)
+    await db.flush()
+
+    # If RFQ has no quotes left and is in collecting_quotes, revert to draft
+    remaining_quotes = await db.execute(select(Quote.id).where(Quote.rfq_id == rfq.id))
+    if not remaining_quotes.scalars().all():
+        from sqlalchemy import update
+        from app.models.rfq import RFQStatus
+        if rfq.status == RFQStatus.COLLECTING_QUOTES.value:
+            await db.execute(
+                update(RFQ).where(RFQ.id == rfq.id).values(status=RFQStatus.DRAFT.value)
+            )
+
+    await db.commit()
+
+    return {
+        "status": "success",
+        "message": "Tedarikçi teklifi başarıyla silindi",
+        "id": str(quote_id),
+        "rfq_id": str(rfq.id),
+    }
 

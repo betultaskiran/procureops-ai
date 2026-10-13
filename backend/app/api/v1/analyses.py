@@ -211,6 +211,14 @@ async def review_analysis(
 
     # İş akışı (Workflow) ayrımı:
     if request.status in [ApprovalStatus.APPROVED.value, ApprovalStatus.EXCEPTION_APPROVED.value]:
+        from app.models.rfq import RFQ, RFQStatus
+        rfq_res = await db.execute(select(RFQ).where(RFQ.id == analysis.rfq_id))
+        rfq_obj = rfq_res.scalars().first()
+        if rfq_obj:
+            rfq_obj.status = RFQStatus.APPROVED.value
+            db.add(rfq_obj)
+            await db.commit()
+            
         # 1. PO Kaydı oluştur (senkron)
         po = await PurchaseOrderService.create_po_from_approval(db, approval)
         # 2. Email Job'ı kuyruğa at (asenkron, BackgroundTasks)

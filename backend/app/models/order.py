@@ -32,6 +32,10 @@ class PurchaseOrder(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     email_sent: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     email_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # İptal alanları
+    cancellation_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     # ── Relationships ──────────────────────────────────────────────────────────
     quote: Mapped["Quote"] = relationship()
     approval: Mapped["Approval"] = relationship()

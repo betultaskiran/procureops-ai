@@ -1,14 +1,19 @@
+import os
 import uuid
 from datetime import date, datetime
+from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.db.session import get_db
-from app.models.rfq import RFQ
+from app.models.analysis import Analysis, Approval, ApprovalStatus
+from app.models.order import PurchaseOrder
+from app.models.quote import Quote
+from app.models.rfq import RFQ, RFQItem, RFQStatus, QuoteDocument
 
 router = APIRouter(prefix="/api/v1/rfqs", tags=["rfqs"])
 
@@ -27,6 +32,7 @@ class RFQResponse(BaseModel):
     id: uuid.UUID
     organization_id: uuid.UUID
     created_by_id: uuid.UUID | None
+    created_by_name: str | None = None
     title: str
     description: str | None
     required_quantity: int | None
@@ -36,9 +42,14 @@ class RFQResponse(BaseModel):
     min_warranty_months: int | None = None
     payment_terms: str | None = None
     status: str
+    is_archived: bool = False
     created_at: datetime
     updated_at: datetime | None
     items: list[RFQItemResponse] = []
+    quotes_count: int = 0
+    can_delete: bool = True
+    delete_block_reason: str | None = None
+    has_po: bool = False
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -58,6 +69,65 @@ class RFQCreateRequest(BaseModel):
     payment_terms: str | None = None
     items: list[RFQItemCreate] = []
 
+class RFQCancelRequest(BaseModel):
+    reason: str
+    cancel_pos: bool = True
+    organization_id: Optional[uuid.UUID] = None
+
+class RFQArchiveRequest(BaseModel):
+    reason: Optional[str] = None
+    organization_id: Optional[uuid.UUID] = None
+
+class POCancelRequest(BaseModel):
+    reason: str
+    organization_id: Optional[uuid.UUID] = None
+
+
+# ── Metadata & Safe Deletion Validation ────────────────────────────────────────
+
+async def _compute_rfq_metadata(rfq: RFQ, db: AsyncSession) -> tuple[int, bool, bool, str | None]:
+    """
+    Computes quotes count, deletion eligibility, presence of Purchase Orders,
+    and deletion blocking reason based on business rules.
+    """
+    quotes_count = len(rfq.quotes) if rfq.quotes else 0
+
+    # 1. Any Purchase Orders created for quotes under this RFQ?
+    po_res = await db.execute(
+        select(PurchaseOrder.id)
+        .join(PurchaseOrder.quote)
+        .where(Quote.rfq_id == rfq.id)
+        .limit(1)
+    )
+    has_po = po_res.scalar_one_or_none() is not None
+
+    # 2. Is RFQ status marked as approved?
+    is_approved_status = (rfq.status == RFQStatus.APPROVED.value)
+
+    # 3. Any approved Human Approval records?
+    approval_res = await db.execute(
+        select(Approval.id)
+        .join(Approval.analysis)
+        .where(
+            Analysis.rfq_id == rfq.id,
+            Approval.status.in_([ApprovalStatus.APPROVED.value, ApprovalStatus.EXCEPTION_APPROVED.value])
+        )
+        .limit(1)
+    )
+    has_approved_approval = approval_res.scalar_one_or_none() is not None
+
+    if has_po or is_approved_status or has_approved_approval:
+        can_delete = False
+        delete_block_reason = (
+            "Onaylanmış veya Satın Alma Siparişi (PO) oluşturulmuş bir RFQ silinemez. "
+            "Kayıt arşivlenmeli veya iş akışı iptal edilmelidir."
+        )
+    else:
+        can_delete = True
+        delete_block_reason = None
+
+    return quotes_count, can_delete, has_po, delete_block_reason
+
 
 # Endpoints
 
@@ -67,14 +137,45 @@ class RFQCreateRequest(BaseModel):
     summary="List all RFQs",
     description="Fetch a list of all Request for Quotations in the system."
 )
-async def list_rfqs(db: AsyncSession = Depends(get_db)) -> list[RFQResponse]:
-    result = await db.execute(
+async def list_rfqs(
+    include_archived: bool = Query(False, description="Include archived RFQs in listing"),
+    archived_only: bool = Query(False, description="Return only archived RFQs"),
+    organization_id: Optional[uuid.UUID] = Query(None),
+    db: AsyncSession = Depends(get_db)
+) -> list[RFQResponse]:
+    query = (
         select(RFQ)
-        .options(selectinload(RFQ.items))
+        .options(
+            selectinload(RFQ.items),
+            selectinload(RFQ.created_by),
+            selectinload(RFQ.quotes),
+        )
         .order_by(RFQ.created_at.desc())
     )
+    if organization_id:
+        query = query.where(RFQ.organization_id == organization_id)
+
+    if archived_only:
+        query = query.where(RFQ.is_archived == True)
+    elif not include_archived:
+        query = query.where(RFQ.is_archived == False)
+
+    result = await db.execute(query)
     rfqs = result.scalars().all()
-    return [RFQResponse.model_validate(rfq) for rfq in rfqs]
+    
+    response_items = []
+    for rfq in rfqs:
+        quotes_count, can_delete, has_po, delete_block_reason = await _compute_rfq_metadata(rfq, db)
+        dto = RFQResponse.model_validate(rfq)
+        dto.quotes_count = quotes_count
+        dto.can_delete = can_delete
+        dto.has_po = has_po
+        dto.delete_block_reason = delete_block_reason
+        if rfq.created_by:
+            dto.created_by_name = rfq.created_by.full_name
+        response_items.append(dto)
+        
+    return response_items
 
 
 @router.get(
@@ -88,7 +189,13 @@ async def get_rfq(
     db: AsyncSession = Depends(get_db)
 ) -> RFQResponse:
     result = await db.execute(
-        select(RFQ).where(RFQ.id == rfq_id).options(selectinload(RFQ.items))
+        select(RFQ)
+        .where(RFQ.id == rfq_id)
+        .options(
+            selectinload(RFQ.items),
+            selectinload(RFQ.created_by),
+            selectinload(RFQ.quotes),
+        )
     )
     rfq = result.scalars().first()
     
@@ -98,7 +205,77 @@ async def get_rfq(
             detail=f"RFQ {rfq_id} not found"
         )
         
-    return RFQResponse.model_validate(rfq)
+    quotes_count, can_delete, has_po, delete_block_reason = await _compute_rfq_metadata(rfq, db)
+    dto = RFQResponse.model_validate(rfq)
+    dto.quotes_count = quotes_count
+    dto.can_delete = can_delete
+    dto.has_po = has_po
+    dto.delete_block_reason = delete_block_reason
+    if rfq.created_by:
+        dto.created_by_name = rfq.created_by.full_name
+        
+    return dto
+
+
+@router.delete(
+    "/{rfq_id}",
+    status_code=status.HTTP_200_OK,
+    summary="Delete an RFQ safely",
+    description="Deletes an RFQ if it has not been approved and no PO has been issued."
+)
+async def delete_rfq(
+    rfq_id: uuid.UUID,
+    organization_id: Optional[uuid.UUID] = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(RFQ)
+        .where(RFQ.id == rfq_id)
+        .options(
+            selectinload(RFQ.quotes),
+            selectinload(RFQ.quote_documents),
+            selectinload(RFQ.analyses)
+        )
+    )
+    rfq = result.scalar_one_or_none()
+    if not rfq:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"RFQ {rfq_id} bulunamadı",
+        )
+
+    # Multi-tenancy check
+    if organization_id and rfq.organization_id != organization_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Bu organizasyona ait olmayan RFQ silinemez",
+        )
+
+    # Business rule verification
+    _, can_delete, has_po, block_reason = await _compute_rfq_metadata(rfq, db)
+    if not can_delete:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=block_reason,
+        )
+
+    # Remove physical quote document files from disk
+    for doc in rfq.quote_documents:
+        if doc.file_path and os.path.exists(doc.file_path):
+            try:
+                os.remove(doc.file_path)
+            except OSError:
+                pass
+
+    # Delete RFQ (DB cascades to items, quotes, quote_documents, unapproved analyses)
+    await db.delete(rfq)
+    await db.commit()
+
+    return {
+        "status": "success",
+        "message": f"RFQ '{rfq.title}' ve ilişkili teklifler başarıyla silindi",
+        "id": str(rfq_id),
+    }
 
 
 class PurchaseOrderResponse(BaseModel):
@@ -108,9 +285,443 @@ class PurchaseOrderResponse(BaseModel):
     approval_id: uuid.UUID
     status: str
     email_sent: bool
+    cancellation_reason: str | None = None
+    cancelled_at: datetime | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+@router.post(
+    "/{rfq_id}/cancel",
+    response_model=RFQResponse,
+    summary="Cancel an RFQ",
+    description="Cancels an RFQ and optionally cancels linked active Purchase Orders with audit logging."
+)
+async def cancel_rfq(
+    rfq_id: uuid.UUID,
+    payload: RFQCancelRequest,
+    db: AsyncSession = Depends(get_db)
+) -> RFQResponse:
+    from app.models.order import PurchaseOrder
+    from app.models.quote import Quote
+    from app.models.audit import AuditEvent
+    from datetime import timezone
+
+    if not payload.reason or len(payload.reason.strip()) < 3:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="İptal gerekçesi en az 3 karakter olmalıdır.",
+        )
+
+    result = await db.execute(
+        select(RFQ)
+        .where(RFQ.id == rfq_id)
+        .options(
+            selectinload(RFQ.items),
+            selectinload(RFQ.created_by),
+            selectinload(RFQ.quotes),
+        )
+    )
+    rfq = result.scalar_one_or_none()
+    if not rfq:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"RFQ {rfq_id} bulunamadı",
+        )
+
+    if payload.organization_id and rfq.organization_id != payload.organization_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Bu organizasyona ait olmayan RFQ üzerinde işlem yapılamaz",
+        )
+
+    if rfq.status == RFQStatus.CANCELLED.value:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="RFQ zaten iptal edilmiş durumda.",
+        )
+
+    # Check for active POs linked to this RFQ's quotes
+    po_query = await db.execute(
+        select(PurchaseOrder)
+        .join(PurchaseOrder.quote)
+        .where(Quote.rfq_id == rfq.id)
+    )
+    all_pos = po_query.scalars().all()
+    active_pos = [po for po in all_pos if po.status != "cancelled"]
+
+    cancelled_po_numbers = []
+    if active_pos:
+        if not payload.cancel_pos:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="RFQ'ya bağlı aktif Satın Alma Siparişleri (PO) bulunmaktadır. RFQ'yu iptal etmek için önce PO'ları iptal edin veya cancel_pos parametresini onaylayın.",
+            )
+        now_utc = datetime.now(timezone.utc)
+        for po in active_pos:
+            po.status = "cancelled"
+            po.cancellation_reason = f"RFQ iptali nedeniyle: {payload.reason.strip()}"
+            po.cancelled_at = now_utc
+            cancelled_po_numbers.append(po.po_number)
+            db.add(
+                AuditEvent(
+                    organization_id=rfq.organization_id,
+                    event_type="po_cancelled",
+                    entity_type="purchase_order",
+                    entity_id=po.id,
+                    payload={
+                        "po_number": po.po_number,
+                        "reason": f"RFQ iptali nedeniyle: {payload.reason.strip()}",
+                        "rfq_id": str(rfq.id),
+                    }
+                )
+            )
+
+    rfq.status = RFQStatus.CANCELLED.value
+
+    # Audit log for RFQ cancellation
+    db.add(
+        AuditEvent(
+            organization_id=rfq.organization_id,
+            event_type="rfq_cancelled",
+            entity_type="rfq",
+            entity_id=rfq.id,
+            payload={
+                "reason": payload.reason.strip(),
+                "cancelled_pos": cancelled_po_numbers,
+            }
+        )
+    )
+
+    await db.commit()
+    refreshed_result = await db.execute(
+        select(RFQ)
+        .where(RFQ.id == rfq_id)
+        .options(
+            selectinload(RFQ.items),
+            selectinload(RFQ.created_by),
+            selectinload(RFQ.quotes),
+        )
+    )
+    rfq = refreshed_result.scalar_one()
+
+    quotes_count, can_delete, has_po, delete_block_reason = await _compute_rfq_metadata(rfq, db)
+    dto = RFQResponse.model_validate(rfq)
+    dto.quotes_count = quotes_count
+    dto.can_delete = can_delete
+    dto.has_po = has_po
+    dto.delete_block_reason = delete_block_reason
+    if rfq.created_by:
+        dto.created_by_name = rfq.created_by.full_name
+    return dto
+
+
+@router.post(
+    "/{rfq_id}/archive",
+    response_model=RFQResponse,
+    summary="Archive an RFQ",
+    description="Archives an RFQ to remove it from the active list without deleting or changing business status."
+)
+async def archive_rfq(
+    rfq_id: uuid.UUID,
+    payload: Optional[RFQArchiveRequest] = None,
+    db: AsyncSession = Depends(get_db)
+) -> RFQResponse:
+    from app.models.audit import AuditEvent
+
+    result = await db.execute(
+        select(RFQ)
+        .where(RFQ.id == rfq_id)
+        .options(
+            selectinload(RFQ.items),
+            selectinload(RFQ.created_by),
+            selectinload(RFQ.quotes),
+        )
+    )
+    rfq = result.scalar_one_or_none()
+    if not rfq:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"RFQ {rfq_id} bulunamadı",
+        )
+
+    org_id = payload.organization_id if payload else None
+    if org_id and rfq.organization_id != org_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Bu organizasyona ait olmayan RFQ üzerinde işlem yapılamaz",
+        )
+
+    if rfq.is_archived:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="RFQ zaten arşivlenmiş durumda.",
+        )
+
+    rfq.is_archived = True
+
+    db.add(
+        AuditEvent(
+            organization_id=rfq.organization_id,
+            event_type="rfq_archived",
+            entity_type="rfq",
+            entity_id=rfq.id,
+            payload={
+                "reason": payload.reason if payload else None,
+            }
+        )
+    )
+
+    await db.commit()
+    refreshed_result = await db.execute(
+        select(RFQ)
+        .where(RFQ.id == rfq_id)
+        .options(
+            selectinload(RFQ.items),
+            selectinload(RFQ.created_by),
+            selectinload(RFQ.quotes),
+        )
+    )
+    rfq = refreshed_result.scalar_one()
+
+    quotes_count, can_delete, has_po, delete_block_reason = await _compute_rfq_metadata(rfq, db)
+    dto = RFQResponse.model_validate(rfq)
+    dto.quotes_count = quotes_count
+    dto.can_delete = can_delete
+    dto.has_po = has_po
+    dto.delete_block_reason = delete_block_reason
+    if rfq.created_by:
+        dto.created_by_name = rfq.created_by.full_name
+    return dto
+
+
+@router.post(
+    "/{rfq_id}/unarchive",
+    response_model=RFQResponse,
+    summary="Unarchive an RFQ",
+    description="Restores an archived RFQ back to the active list."
+)
+async def unarchive_rfq(
+    rfq_id: uuid.UUID,
+    payload: Optional[RFQArchiveRequest] = None,
+    db: AsyncSession = Depends(get_db)
+) -> RFQResponse:
+    from app.models.audit import AuditEvent
+
+    result = await db.execute(
+        select(RFQ)
+        .where(RFQ.id == rfq_id)
+        .options(
+            selectinload(RFQ.items),
+            selectinload(RFQ.created_by),
+            selectinload(RFQ.quotes),
+        )
+    )
+    rfq = result.scalar_one_or_none()
+    if not rfq:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"RFQ {rfq_id} bulunamadı",
+        )
+
+    org_id = payload.organization_id if payload else None
+    if org_id and rfq.organization_id != org_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Bu organizasyona ait olmayan RFQ üzerinde işlem yapılamaz",
+        )
+
+    if not rfq.is_archived:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="RFQ arşivlenmiş değil.",
+        )
+
+    rfq.is_archived = False
+
+    db.add(
+        AuditEvent(
+            organization_id=rfq.organization_id,
+            event_type="rfq_unarchived",
+            entity_type="rfq",
+            entity_id=rfq.id,
+            payload={}
+        )
+    )
+
+    await db.commit()
+    refreshed_result = await db.execute(
+        select(RFQ)
+        .where(RFQ.id == rfq_id)
+        .options(
+            selectinload(RFQ.items),
+            selectinload(RFQ.created_by),
+            selectinload(RFQ.quotes),
+        )
+    )
+    rfq = refreshed_result.scalar_one()
+
+    quotes_count, can_delete, has_po, delete_block_reason = await _compute_rfq_metadata(rfq, db)
+    dto = RFQResponse.model_validate(rfq)
+    dto.quotes_count = quotes_count
+    dto.can_delete = can_delete
+    dto.has_po = has_po
+    dto.delete_block_reason = delete_block_reason
+    if rfq.created_by:
+        dto.created_by_name = rfq.created_by.full_name
+    return dto
+
+
+@router.post(
+    "/{rfq_id}/purchase-orders/{po_id}/cancel",
+    response_model=PurchaseOrderResponse,
+    summary="Cancel a Purchase Order under an RFQ",
+    description="Cancels an issued Purchase Order with mandatory reason, recording audit event without deleting financial record."
+)
+async def cancel_rfq_purchase_order(
+    rfq_id: uuid.UUID,
+    po_id: uuid.UUID,
+    payload: POCancelRequest,
+    db: AsyncSession = Depends(get_db)
+) -> PurchaseOrderResponse:
+    from app.models.order import PurchaseOrder
+    from app.models.quote import Quote
+    from app.models.audit import AuditEvent
+    from datetime import timezone
+
+    if not payload.reason or len(payload.reason.strip()) < 3:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="İptal gerekçesi en az 3 karakter olmalıdır.",
+        )
+
+    rfq = await db.get(RFQ, rfq_id)
+    if not rfq:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"RFQ {rfq_id} bulunamadı",
+        )
+
+    if payload.organization_id and rfq.organization_id != payload.organization_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Bu organizasyona ait olmayan sipariş üzerinde işlem yapılamaz",
+        )
+
+    po_query = await db.execute(
+        select(PurchaseOrder)
+        .join(PurchaseOrder.quote)
+        .where(
+            PurchaseOrder.id == po_id,
+            Quote.rfq_id == rfq_id
+        )
+    )
+    po = po_query.scalar_one_or_none()
+    if not po:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Satın Alma Siparişi ({po_id}) bu RFQ altında bulunamadı",
+        )
+
+    if po.status == "cancelled":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Satın Alma Siparişi zaten iptal edilmiş durumda.",
+        )
+
+    po.status = "cancelled"
+    po.cancellation_reason = payload.reason.strip()
+    po.cancelled_at = datetime.now(timezone.utc)
+
+    db.add(
+        AuditEvent(
+            organization_id=rfq.organization_id,
+            event_type="po_cancelled",
+            entity_type="purchase_order",
+            entity_id=po.id,
+            payload={
+                "po_number": po.po_number,
+                "reason": payload.reason.strip(),
+                "rfq_id": str(rfq.id),
+            }
+        )
+    )
+
+    await db.commit()
+    await db.refresh(po)
+    return PurchaseOrderResponse.model_validate(po)
+
+
+@router.post(
+    "/purchase-orders/{po_id}/cancel",
+    response_model=PurchaseOrderResponse,
+    summary="Cancel a Purchase Order directly",
+)
+async def cancel_purchase_order_direct(
+    po_id: uuid.UUID,
+    payload: POCancelRequest,
+    db: AsyncSession = Depends(get_db)
+) -> PurchaseOrderResponse:
+    from app.models.order import PurchaseOrder
+    from app.models.quote import Quote
+    from app.models.audit import AuditEvent
+    from datetime import timezone
+
+    if not payload.reason or len(payload.reason.strip()) < 3:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="İptal gerekçesi en az 3 karakter olmalıdır.",
+        )
+
+    po_query = await db.execute(
+        select(PurchaseOrder)
+        .join(PurchaseOrder.quote)
+        .options(selectinload(PurchaseOrder.quote).selectinload(Quote.rfq))
+        .where(PurchaseOrder.id == po_id)
+    )
+    po = po_query.scalar_one_or_none()
+    if not po:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Satın Alma Siparişi ({po_id}) bulunamadı",
+        )
+
+    rfq = po.quote.rfq if po.quote else None
+    org_id = rfq.organization_id if rfq else None
+
+    if payload.organization_id and org_id and org_id != payload.organization_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Bu organizasyona ait olmayan sipariş üzerinde işlem yapılamaz",
+        )
+
+    if po.status == "cancelled":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Satın Alma Siparişi zaten iptal edilmiş durumda.",
+        )
+
+    po.status = "cancelled"
+    po.cancellation_reason = payload.reason.strip()
+    po.cancelled_at = datetime.now(timezone.utc)
+
+    db.add(
+        AuditEvent(
+            organization_id=org_id,
+            event_type="po_cancelled",
+            entity_type="purchase_order",
+            entity_id=po.id,
+            payload={
+                "po_number": po.po_number,
+                "reason": payload.reason.strip(),
+                "rfq_id": str(rfq.id) if rfq else None,
+            }
+        )
+    )
+
+    await db.commit()
+    await db.refresh(po)
+    return PurchaseOrderResponse.model_validate(po)
 
 @router.get(
     "/{rfq_id}/purchase-orders",

@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { 
   ArrowLeft, 
   CheckCircle, 
@@ -16,13 +17,39 @@ import {
   Loader2,
   ShieldAlert,
   UploadCloud,
-  Plus
+  Plus,
+  Trash2,
+  Archive,
+  ArchiveRestore,
+  Ban
 } from "lucide-react";
 import { rfqsApi } from "@/lib/api/rfqs";
-import { RFQ, Quote, AnalysisResponse, TCOResultResponse, ComplianceCheckResponse, EvidenceItemResponse } from "@/lib/api/types";
+import { RFQ, Quote, AnalysisResponse, TCOResultResponse, ComplianceCheckResponse, EvidenceItemResponse, PurchaseOrderResponse } from "@/lib/api/types";
 
 export default function RFQDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const router = useRouter();
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
+  const [isDeleteRfqOpen, setIsDeleteRfqOpen] = useState(false);
+  const [quoteToDelete, setQuoteToDelete] = useState<Quote | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  
+  // Cancel RFQ states
+  const [isCancelRfqOpen, setIsCancelRfqOpen] = useState(false);
+  const [rfqCancelReason, setRfqCancelReason] = useState("");
+  const [rfqCancelPos, setRfqCancelPos] = useState(true);
+  const [isCancellingRfq, setIsCancellingRfq] = useState(false);
+  const [cancelRfqError, setCancelRfqError] = useState<string | null>(null);
+
+  // Cancel PO states
+  const [poToCancel, setPoToCancel] = useState<PurchaseOrderResponse | null>(null);
+  const [poCancelReason, setPoCancelReason] = useState("");
+  const [isCancellingPo, setIsCancellingPo] = useState(false);
+  const [cancelPoError, setCancelPoError] = useState<string | null>(null);
+
+  // Archive state
+  const [isArchiving, setIsArchiving] = useState(false);
+
   const resolvedParams = React.use(params);
   const rfqId = resolvedParams.id;
   
@@ -60,6 +87,113 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
   useEffect(() => {
     rfqsApi.getSuppliers().then(setSuppliers).catch(console.error);
   }, []);
+
+  const handleBack = () => {
+    if (typeof window !== "undefined" && window.history.length > 1) {
+      router.back();
+    } else {
+      router.push("/dashboard/quotes");
+    }
+  };
+
+  const handleCancelRfq = async () => {
+    if (!rfqCancelReason.trim() || rfqCancelReason.trim().length < 3) {
+      setCancelRfqError("Lütfen en az 3 karakterlik bir iptal gerekçesi girin.");
+      return;
+    }
+    try {
+      setIsCancellingRfq(true);
+      setCancelRfqError(null);
+      const updated = await rfqsApi.cancelRfq(rfqId, rfqCancelReason.trim(), rfqCancelPos);
+      setRfq(updated);
+      setIsCancelRfqOpen(false);
+      setRfqCancelReason("");
+      const updatedPos = await rfqsApi.getPurchaseOrders(rfqId);
+      setPurchaseOrders(updatedPos);
+    } catch (err: any) {
+      setCancelRfqError(err.message || "RFQ iptal edilirken bir hata oluştu.");
+    } finally {
+      setIsCancellingRfq(false);
+    }
+  };
+
+  const handleArchiveRfq = async () => {
+    try {
+      setIsArchiving(true);
+      const updated = await rfqsApi.archiveRfq(rfqId);
+      setRfq(updated);
+    } catch (err: any) {
+      alert(err.message || "Arşivleme başarısız oldu.");
+    } finally {
+      setIsArchiving(false);
+    }
+  };
+
+  const handleUnarchiveRfq = async () => {
+    try {
+      setIsArchiving(true);
+      const updated = await rfqsApi.unarchiveRfq(rfqId);
+      setRfq(updated);
+    } catch (err: any) {
+      alert(err.message || "Arşivden çıkarma başarısız oldu.");
+    } finally {
+      setIsArchiving(false);
+    }
+  };
+
+  const handleCancelPo = async () => {
+    if (!poToCancel) return;
+    if (!poCancelReason.trim() || poCancelReason.trim().length < 3) {
+      setCancelPoError("Lütfen en az 3 karakterlik bir iptal gerekçesi girin.");
+      return;
+    }
+    try {
+      setIsCancellingPo(true);
+      setCancelPoError(null);
+      const updatedPo = await rfqsApi.cancelPurchaseOrder(rfqId, poToCancel.id, poCancelReason.trim());
+      setPurchaseOrders(prev => prev.map(p => p.id === updatedPo.id ? updatedPo : p));
+      setPoToCancel(null);
+      setPoCancelReason("");
+      const updatedRfq = await rfqsApi.getRfq(rfqId);
+      setRfq(updatedRfq);
+    } catch (err: any) {
+      setCancelPoError(err.message || "Sipariş iptal edilirken bir hata oluştu.");
+    } finally {
+      setIsCancellingPo(false);
+    }
+  };
+
+  const handleDeleteRfq = async () => {
+    try {
+      setIsDeleting(true);
+      setDeleteError(null);
+      await rfqsApi.deleteRfq(rfqId);
+      router.push("/dashboard/quotes");
+    } catch (err: any) {
+      setDeleteError(err.message || "RFQ silinirken bir hata oluştu.");
+      setIsDeleting(false);
+    }
+  };
+
+  const handleDeleteQuote = async () => {
+    if (!quoteToDelete) return;
+    try {
+      setIsDeleting(true);
+      setDeleteError(null);
+      await rfqsApi.deleteQuote(quoteToDelete.id, rfqId);
+      setQuotes(prev => prev.filter(q => q.id !== quoteToDelete.id));
+      if (selectedQuoteId === quoteToDelete.id) {
+        setSelectedQuoteId(null);
+      }
+      setQuoteToDelete(null);
+      const updatedRfq = await rfqsApi.getRfq(rfqId);
+      setRfq(updatedRfq);
+    } catch (err: any) {
+      setDeleteError(err.message || "Teklif silinirken bir hata oluştu.");
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   const handleCreateSupplier = async () => {
     if (!newSupplierName.trim()) {
@@ -194,7 +328,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
         <ShieldAlert size={48} />
         <h2 className="text-xl font-semibold">Error Loading RFQ</h2>
         <p className="text-sm font-medium">{error || "RFQ not found."}</p>
-        <Link href="/dashboard" className="text-sm text-primary hover:underline mt-4">Return to Dashboard</Link>
+        <button onClick={handleBack} className="text-sm text-primary hover:underline mt-4">Quotes & RFQs Sayfasına Dön</button>
       </div>
     );
   }
@@ -213,6 +347,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
     switch(status.toLowerCase()) {
       case 'approved': return { bg: 'bg-success/10', border: 'border-success/20', text: 'text-success', dot: 'bg-success' };
       case 'rejected': return { bg: 'bg-red-500/10', border: 'border-red-500/20', text: 'text-red-500', dot: 'bg-red-500' };
+      case 'cancelled': return { bg: 'bg-zinc-700/30', border: 'border-zinc-700/50', text: 'text-zinc-400', dot: 'bg-zinc-400' };
       case 'pending_approval': return { bg: 'bg-amber-500/10', border: 'border-amber-500/20', text: 'text-amber-500', dot: 'bg-amber-500' };
       case 'analyzing': return { bg: 'bg-blue-500/10', border: 'border-blue-500/20', text: 'text-blue-500', dot: 'bg-blue-500' };
       default: return { bg: 'bg-slate-500/10', border: 'border-slate-500/20', text: 'text-slate-400', dot: 'bg-slate-400' };
@@ -231,12 +366,13 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
       {/* ── Header ──────────────────────────────────────────────────────── */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="flex items-center gap-4">
-          <Link 
-            href="/dashboard"
+          <button 
+            onClick={handleBack}
+            title="Quotes & RFQs Sayfasına Dön"
             className="w-8 h-8 rounded-full border border-border flex items-center justify-center text-text-muted hover:bg-surface-elevated hover:text-text-primary transition-colors"
           >
             <ArrowLeft size={16} />
-          </Link>
+          </button>
           <div>
             <div className="flex items-center gap-3">
               <h1 className="text-2xl font-semibold tracking-tight text-text-primary">{rfq.title || rfq.id.split('-')[0]}</h1>
@@ -244,35 +380,101 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                 <span className={`w-1.5 h-1.5 rounded-full ${statusBadge.dot}`}></span>
                 {formattedStatus}
               </span>
+              {rfq.is_archived && (
+                <span className="inline-flex items-center gap-1.5 bg-zinc-800 text-zinc-300 px-2.5 py-1 rounded-full text-[11px] font-medium border border-zinc-700">
+                  <Archive size={12} />
+                  Arşivlendi
+                </span>
+              )}
             </div>
             <p className="text-sm text-text-muted mt-1">Uploaded on {new Date(rfq.created_at).toLocaleDateString()}</p>
           </div>
         </div>
         
-        <div className="flex items-center gap-3">
-          <button 
-            onClick={() => setIsUploadQuoteOpen(true)}
-            className="flex items-center gap-2 bg-surface-elevated border border-border hover:bg-bg text-primary px-4 py-2 rounded text-sm font-medium transition-colors shadow-sm"
-          >
-            <Plus size={16} />
-            Add Supplier Quote
-          </button>
+        <div className="flex items-center gap-2.5 flex-wrap">
+          {rfq.status !== 'cancelled' && (
+            <button 
+              onClick={() => setIsUploadQuoteOpen(true)}
+              className="flex items-center gap-2 bg-surface-elevated border border-border hover:bg-bg text-primary px-3.5 py-2 rounded text-xs font-medium transition-colors shadow-sm"
+            >
+              <Plus size={15} />
+              Add Supplier Quote
+            </button>
+          )}
+
+          {/* Archive / Unarchive */}
+          {rfq.is_archived ? (
+            <button
+              onClick={handleUnarchiveRfq}
+              disabled={isArchiving}
+              title="Bu RFQ'yu arşivden çıkarıp aktif listeye al"
+              className="flex items-center gap-1.5 px-3 py-2 rounded bg-surface-elevated border border-border hover:bg-bg text-xs font-medium text-text-secondary transition-colors"
+            >
+              <ArchiveRestore size={14} />
+              Arşivden Çıkar
+            </button>
+          ) : (
+            <button
+              onClick={handleArchiveRfq}
+              disabled={isArchiving}
+              title="Bu RFQ'yu arşivle (aktif listeden kaldır)"
+              className="flex items-center gap-1.5 px-3 py-2 rounded bg-surface-elevated border border-border hover:bg-bg text-xs font-medium text-text-muted hover:text-text-primary transition-colors"
+            >
+              <Archive size={14} />
+              Arşivle
+            </button>
+          )}
+
+          {/* Cancel RFQ */}
+          {rfq.status !== 'cancelled' && (
+            <button
+              onClick={() => {
+                setIsCancelRfqOpen(true);
+                setCancelRfqError(null);
+                setRfqCancelReason("");
+              }}
+              title="Bu RFQ iş akışını gerekçe belirterek iptal et"
+              className="flex items-center gap-1.5 px-3 py-2 rounded border border-amber-500/30 text-amber-500 hover:bg-amber-500/10 text-xs font-medium transition-colors"
+            >
+              <Ban size={14} />
+              İptal Et
+            </button>
+          )}
           
           {displayQuote?.quote_document_id && (
-            <button className="flex items-center gap-2 bg-surface-elevated border border-border hover:bg-bg text-text-primary px-4 py-2 rounded text-sm font-medium transition-colors shadow-sm">
-              <Download size={16} />
+            <button className="flex items-center gap-2 bg-surface-elevated border border-border hover:bg-bg text-text-primary px-3.5 py-2 rounded text-xs font-medium transition-colors shadow-sm">
+              <Download size={14} />
               Original Document
             </button>
           )}
           {rfq.status === 'pending_approval' && purchaseOrders.length === 0 && (
             <button 
               onClick={() => setIsConfirmOpen(true)}
-              className="flex items-center gap-2 bg-success hover:bg-success/90 text-white px-6 py-2 rounded text-sm font-medium transition-colors shadow-sm"
+              className="flex items-center gap-2 bg-success hover:bg-success/90 text-white px-5 py-2 rounded text-xs font-medium transition-colors shadow-sm"
             >
-              <Check size={16} />
+              <Check size={15} />
               Approve & Create PO
             </button>
           )}
+
+          {/* Delete RFQ Action */}
+          <button
+            onClick={() => {
+              if (rfq.can_delete) {
+                setIsDeleteRfqOpen(true);
+                setDeleteError(null);
+              }
+            }}
+            disabled={!rfq.can_delete}
+            title={rfq.can_delete ? "Bu RFQ talebini sil" : (rfq.delete_block_reason || "Onaylanmış veya PO oluşturulmuş RFQ silinemez")}
+            className={`p-2 rounded border border-border transition-colors ${
+              rfq.can_delete
+                ? "text-text-muted hover:text-red-400 hover:bg-red-500/10"
+                : "text-zinc-600 cursor-not-allowed opacity-40"
+            }`}
+          >
+            <Trash2 size={15} />
+          </button>
         </div>
       </div>
 
@@ -386,16 +588,36 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                         </span>
                       </td>
                       <td className="px-4 py-3 text-right">
-                        <button 
-                          onClick={() => setSelectedQuoteId(q.id)}
-                          className={`text-xs font-semibold px-2.5 py-1 rounded transition-colors ${
-                            isSelected
-                              ? 'bg-primary text-white shadow-sm' 
-                              : 'text-primary hover:bg-primary/10'
-                          }`}
-                        >
-                          {isSelected ? 'Viewing' : 'View Details'}
-                        </button>
+                        <div className="flex items-center justify-end gap-1.5">
+                          <button 
+                            onClick={() => setSelectedQuoteId(q.id)}
+                            className={`text-xs font-semibold px-2.5 py-1 rounded transition-colors ${
+                              isSelected
+                                ? 'bg-primary text-white shadow-sm' 
+                                : 'text-primary hover:bg-primary/10'
+                            }`}
+                          >
+                            {isSelected ? 'Viewing' : 'View Details'}
+                          </button>
+                          
+                          <button
+                            onClick={() => {
+                              if (q.can_delete) {
+                                setQuoteToDelete(q);
+                                setDeleteError(null);
+                              }
+                            }}
+                            disabled={!q.can_delete}
+                            title={q.can_delete ? "Bu teklifi sil" : (q.delete_block_reason || "Onaylanmış teklif silinemez")}
+                            className={`p-1 rounded transition-colors ${
+                              q.can_delete
+                                ? "text-text-muted hover:text-red-400 hover:bg-red-500/10"
+                                : "text-zinc-600 cursor-not-allowed opacity-40"
+                            }`}
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -584,22 +806,86 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
           </div>
 
           {purchaseOrders.length > 0 ? (
-            <div className="bg-success border border-success/80 rounded-xl p-6 shadow-sm text-white">
-              <h2 className="text-sm font-semibold uppercase tracking-wider mb-2 flex items-center gap-2">
-                <CheckCircle size={16} className="text-white" />
-                Action Completed: Purchase Order Issued
-              </h2>
-              <p className="text-xs text-success-foreground/80 mb-4 leading-relaxed text-slate-100">
-                The RFQ was approved and the following Purchase Order was successfully generated.
-              </p>
-              {purchaseOrders.map(po => (
-                <div key={po.id} className="bg-white/10 rounded p-3 text-xs font-mono text-white border border-white/20 mb-2">
-                  PO Number: {po.po_number}<br/>
-                  Status: {po.status.toUpperCase()}<br/>
-                  Date: {new Date(po.created_at).toLocaleString()}<br/>
-                  Email Notification: {po.email_sent ? "Sent" : "Pending"}
-                </div>
-              ))}
+            <div className="flex flex-col gap-4">
+              {purchaseOrders.map(po => {
+                const isPoCancelled = po.status === 'cancelled';
+                return (
+                  <div 
+                    key={po.id} 
+                    className={`rounded-xl p-5 shadow-sm border ${
+                      isPoCancelled 
+                        ? 'bg-red-950/20 border-red-500/30 text-text-primary' 
+                        : 'bg-emerald-950/20 border-emerald-500/30 text-text-primary'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <h2 className="text-sm font-semibold uppercase tracking-wider flex items-center gap-2">
+                        {isPoCancelled ? (
+                          <>
+                            <Ban size={16} className="text-red-400" />
+                            <span className="text-red-400">Sipariş İptal Edildi</span>
+                          </>
+                        ) : (
+                          <>
+                            <CheckCircle size={16} className="text-emerald-400" />
+                            <span className="text-emerald-400">Satın Alma Siparişi Aktif</span>
+                          </>
+                        )}
+                      </h2>
+                      <span className={`px-2 py-0.5 rounded text-[11px] font-mono font-semibold border ${
+                        isPoCancelled 
+                          ? 'bg-red-500/20 text-red-300 border-red-500/40' 
+                          : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                      }`}>
+                        {po.status.toUpperCase()}
+                      </span>
+                    </div>
+
+                    <div className="bg-bg/60 rounded p-3 text-xs font-mono space-y-1 border border-border">
+                      <div className="flex justify-between">
+                        <span className="text-text-muted">PO No:</span>
+                        <span className="font-semibold text-text-primary">{po.po_number}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-text-muted">Oluşturulma:</span>
+                        <span>{new Date(po.created_at).toLocaleString()}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-text-muted">E-posta Bildirimi:</span>
+                        <span>{po.email_sent ? "Gönderildi" : "Beklemede"}</span>
+                      </div>
+                      {isPoCancelled && (
+                        <>
+                          <div className="flex justify-between text-red-300 pt-1 border-t border-border">
+                            <span className="text-text-muted">İptal Tarihi:</span>
+                            <span>{po.cancelled_at ? new Date(po.cancelled_at).toLocaleString() : "-"}</span>
+                          </div>
+                          <div className="pt-1 text-red-300 text-xs">
+                            <span className="text-text-muted block text-[10px] uppercase font-semibold">İptal Gerekçesi:</span>
+                            <span className="italic block mt-0.5">{po.cancellation_reason || "Gerekçe belirtilmedi"}</span>
+                          </div>
+                        </>
+                      )}
+                    </div>
+
+                    {!isPoCancelled && (
+                      <div className="mt-3 flex justify-end">
+                        <button
+                          onClick={() => {
+                            setPoToCancel(po);
+                            setPoCancelReason("");
+                            setCancelPoError(null);
+                          }}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-600/80 hover:bg-red-600 text-white text-xs font-medium transition-colors shadow-sm"
+                        >
+                          <Ban size={13} />
+                          Siparişi İptal Et
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           ) : (
             <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-sm text-white">
@@ -852,6 +1138,233 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
               >
                 {isUploading && <Loader2 size={14} className="animate-spin" />}
                 {isUploading ? "Uploading..." : "Upload Quote"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+
+      {/* ── Modal: Delete RFQ Confirmation ── */}
+      {isDeleteRfqOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-surface border border-border rounded-xl shadow-2xl max-w-md w-full overflow-hidden">
+            <div className="p-6">
+              <div className="flex items-center gap-3 text-red-400 mb-4">
+                <div className="p-2.5 rounded-full bg-red-500/10 border border-red-500/20">
+                  <AlertTriangle size={22} />
+                </div>
+                <h3 className="text-base font-semibold text-text-primary">RFQ Talebini Sil</h3>
+              </div>
+              <p className="text-sm text-text-muted">
+                Bu RFQ talebini ve bağlı tüm teklif belgelerini kalıcı olarak silmek istediğinizden emin misiniz?
+              </p>
+              <div className="mt-4 p-3 rounded-lg bg-bg border border-border text-xs">
+                <span className="font-mono text-text-muted">#{rfq.id.slice(0, 8)}</span>
+                <p className="font-semibold text-text-primary mt-1">{rfq.title}</p>
+              </div>
+              {deleteError && (
+                <div className="mt-3 p-3 rounded-lg bg-red-500/15 border border-red-500/30 text-xs text-red-300">
+                  {deleteError}
+                </div>
+              )}
+            </div>
+            <div className="px-6 py-4 border-t border-border bg-surface-elevated/40 flex justify-end gap-3">
+              <button
+                onClick={() => { setIsDeleteRfqOpen(false); setDeleteError(null); }}
+                disabled={isDeleting}
+                className="px-4 py-2 text-xs font-medium text-text-muted hover:text-text-primary transition-colors disabled:opacity-50"
+              >
+                Vazgeç
+              </button>
+              <button
+                onClick={handleDeleteRfq}
+                disabled={isDeleting}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold bg-red-600 hover:bg-red-500 text-white transition-colors shadow-sm disabled:opacity-50"
+              >
+                {isDeleting && <Loader2 size={13} className="animate-spin" />}
+                {isDeleting ? "Siliniyor..." : "Evet, RFQ'yu Sil"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal: Delete Quote Confirmation ── */}
+      {quoteToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-surface border border-border rounded-xl shadow-2xl max-w-md w-full overflow-hidden">
+            <div className="p-6">
+              <div className="flex items-center gap-3 text-red-400 mb-4">
+                <div className="p-2.5 rounded-full bg-red-500/10 border border-red-500/20">
+                  <AlertTriangle size={22} />
+                </div>
+                <h3 className="text-base font-semibold text-text-primary">Teklifi Sil</h3>
+              </div>
+              <p className="text-sm text-text-muted">
+                Bu tedarikçi teklifini silmek istediğinizden emin misiniz?
+              </p>
+              <div className="mt-4 p-3 rounded-lg bg-bg border border-border text-xs">
+                <p className="font-semibold text-text-primary">{quoteToDelete.supplier_name || "Tedarikçi Teklifi"}</p>
+                <p className="text-emerald-400 font-medium mt-1">
+                  ₺{Number(quoteToDelete.total_price).toLocaleString("tr-TR")} {quoteToDelete.currency}
+                </p>
+              </div>
+              {deleteError && (
+                <div className="mt-3 p-3 rounded-lg bg-red-500/15 border border-red-500/30 text-xs text-red-300">
+                  {deleteError}
+                </div>
+              )}
+            </div>
+            <div className="px-6 py-4 border-t border-border bg-surface-elevated/40 flex justify-end gap-3">
+              <button
+                onClick={() => { setQuoteToDelete(null); setDeleteError(null); }}
+                disabled={isDeleting}
+                className="px-4 py-2 text-xs font-medium text-text-muted hover:text-text-primary transition-colors disabled:opacity-50"
+              >
+                Vazgeç
+              </button>
+              <button
+                onClick={handleDeleteQuote}
+                disabled={isDeleting}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold bg-red-600 hover:bg-red-500 text-white transition-colors shadow-sm disabled:opacity-50"
+              >
+                {isDeleting && <Loader2 size={13} className="animate-spin" />}
+                {isDeleting ? "Siliniyor..." : "Evet, Teklifi Sil"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal: Cancel RFQ Confirmation ── */}
+      {isCancelRfqOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-surface border border-border rounded-xl shadow-2xl max-w-md w-full overflow-hidden">
+            <div className="p-6">
+              <div className="flex items-center gap-3 text-amber-500 mb-4">
+                <div className="p-2.5 rounded-full bg-amber-500/10 border border-amber-500/20">
+                  <Ban size={22} />
+                </div>
+                <div>
+                  <h3 className="text-base font-semibold text-text-primary">RFQ Talebini İptal Et</h3>
+                  <p className="text-xs text-text-muted mt-0.5">İş akışı durumu 'cancelled' olarak değiştirilecektir.</p>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                    İptal Gerekçesi <span className="text-red-400">*</span>
+                  </label>
+                  <textarea
+                    rows={3}
+                    placeholder="Örn: Proje bütçesi yönetim kurulu kararıyla iptal edildi veya talep gereksiz hale geldi..."
+                    value={rfqCancelReason}
+                    onChange={(e) => setRfqCancelReason(e.target.value)}
+                    className="w-full text-xs p-3 rounded-lg bg-bg border border-border text-text-primary placeholder:text-text-muted focus:outline-none focus:border-amber-500 transition-colors"
+                  />
+                  <p className="text-[11px] text-text-muted mt-1">En az 3 karakter gereklidir. Denetim günlüğüne (Audit Log) kaydedilir.</p>
+                </div>
+
+                {purchaseOrders.some(p => p.status !== 'cancelled') && (
+                  <label className="flex items-start gap-2.5 p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-xs text-amber-300 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={rfqCancelPos}
+                      onChange={(e) => setRfqCancelPos(e.target.checked)}
+                      className="mt-0.5 rounded border-amber-500 text-amber-500 focus:ring-0"
+                    />
+                    <span>Bağlı aktif Satın Alma Siparişlerini (PO) de otomatik olarak iptal et.</span>
+                  </label>
+                )}
+
+                {cancelRfqError && (
+                  <div className="p-3 rounded-lg bg-red-500/15 border border-red-500/30 text-xs text-red-300">
+                    {cancelRfqError}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="px-6 py-4 border-t border-border bg-surface-elevated/40 flex justify-end gap-3">
+              <button
+                onClick={() => { setIsCancelRfqOpen(false); setCancelRfqError(null); }}
+                disabled={isCancellingRfq}
+                className="px-4 py-2 text-xs font-medium text-text-muted hover:text-text-primary transition-colors disabled:opacity-50"
+              >
+                Vazgeç
+              </button>
+              <button
+                onClick={handleCancelRfq}
+                disabled={isCancellingRfq || !rfqCancelReason.trim() || rfqCancelReason.trim().length < 3}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold bg-amber-600 hover:bg-amber-500 text-white transition-colors shadow-sm disabled:opacity-50"
+              >
+                {isCancellingRfq && <Loader2 size={13} className="animate-spin" />}
+                {isCancellingRfq ? "İptal Ediliyor..." : "Evet, RFQ'yu İptal Et"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal: Cancel PO Confirmation ── */}
+      {poToCancel && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-surface border border-border rounded-xl shadow-2xl max-w-md w-full overflow-hidden">
+            <div className="p-6">
+              <div className="flex items-center gap-3 text-red-400 mb-4">
+                <div className="p-2.5 rounded-full bg-red-500/10 border border-red-500/20">
+                  <Ban size={22} />
+                </div>
+                <div>
+                  <h3 className="text-base font-semibold text-text-primary">Siparişi İptal Et</h3>
+                  <p className="text-xs text-text-muted font-mono mt-0.5">{poToCancel.po_number}</p>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <p className="text-xs text-text-muted">
+                  Bu işlem Satın Alma Siparişini 'cancelled' durumuna geçirecektir. Yasal ve denetim izi gereği PO ve teklif kayıtları fiziksel olarak silinmez.
+                </p>
+
+                <div>
+                  <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                    İptal Gerekçesi <span className="text-red-400">*</span>
+                  </label>
+                  <textarea
+                    rows={3}
+                    placeholder="Örn: Tedarikçi taahhüt edilen teslimat süresine uyamayacağını bildirdi..."
+                    value={poCancelReason}
+                    onChange={(e) => setPoCancelReason(e.target.value)}
+                    className="w-full text-xs p-3 rounded-lg bg-bg border border-border text-text-primary placeholder:text-text-muted focus:outline-none focus:border-red-500 transition-colors"
+                  />
+                  <p className="text-[11px] text-text-muted mt-1">En az 3 karakter gereklidir.</p>
+                </div>
+
+                {cancelPoError && (
+                  <div className="p-3 rounded-lg bg-red-500/15 border border-red-500/30 text-xs text-red-300">
+                    {cancelPoError}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="px-6 py-4 border-t border-border bg-surface-elevated/40 flex justify-end gap-3">
+              <button
+                onClick={() => { setPoToCancel(null); setCancelPoError(null); }}
+                disabled={isCancellingPo}
+                className="px-4 py-2 text-xs font-medium text-text-muted hover:text-text-primary transition-colors disabled:opacity-50"
+              >
+                Vazgeç
+              </button>
+              <button
+                onClick={handleCancelPo}
+                disabled={isCancellingPo || !poCancelReason.trim() || poCancelReason.trim().length < 3}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold bg-red-600 hover:bg-red-500 text-white transition-colors shadow-sm disabled:opacity-50"
+              >
+                {isCancellingPo && <Loader2 size={13} className="animate-spin" />}
+                {isCancellingPo ? "İptal Ediliyor..." : "Evet, Siparişi İptal Et"}
               </button>
             </div>
           </div>

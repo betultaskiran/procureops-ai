@@ -98,6 +98,13 @@ class RFQ(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         index=True,  # "Bekleyen RFQ'ları listele" gibi sorgular sık çalışır
     )
 
+    is_archived: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        nullable=False,
+        index=True,
+    )
+
     # ── Relationships ──────────────────────────────────────────────────────────
     organization: Mapped["Organization"] = relationship(back_populates="rfqs")
 

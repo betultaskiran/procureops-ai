@@ -23,9 +23,13 @@ export interface RFQ {
   min_warranty_months: number | null;
   payment_terms: string | null;
   items: RFQItem[];
-  // We may join these from the backend eventually
   quotes_count?: number; 
   total_value?: number;
+  can_delete?: boolean;
+  delete_block_reason?: string | null;
+  has_po?: boolean;
+  is_archived?: boolean;
+  created_by_name?: string | null;
 }
 
 export interface QuoteItem {
@@ -59,6 +63,8 @@ export interface Quote {
   extraction_confidence: number | null;
   is_compliant: boolean | null;
   items: QuoteItem[];
+  can_delete?: boolean;
+  delete_block_reason?: string | null;
 }
 
 
@@ -123,6 +129,8 @@ export interface PurchaseOrderResponse {
   approval_id: string;
   status: string;
   email_sent: boolean;
+  cancellation_reason?: string | null;
+  cancelled_at?: string | null;
   created_at: string;
 }
 
