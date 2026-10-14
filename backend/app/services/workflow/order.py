@@ -12,6 +12,17 @@ class PurchaseOrderService:
     
     @staticmethod
     async def create_po_from_approval(db: AsyncSession, approval: Approval) -> PurchaseOrder:
+        # İdempotency kontrolü: Bu onaya ait aktif bir PO varsa tekrar üretme
+        existing_res = await db.execute(
+            select(PurchaseOrder).where(
+                PurchaseOrder.approval_id == approval.id,
+                PurchaseOrder.status != "cancelled"
+            )
+        )
+        existing_po = existing_res.scalar_one_or_none()
+        if existing_po:
+            return existing_po
+
         # Quote ID belirle: Normal onayda agent'ın önerdiği quote, 
         # Exception onayında ise yöneticinin seçtiği quote kullanılır.
         quote_id = approval.selected_quote_id
@@ -35,6 +46,34 @@ class PurchaseOrderService:
         )
         
         db.add(po)
+        await db.flush()
+
+        # AuditEvent kaydet
+        from app.models.quote import Quote
+        from app.models.rfq import RFQ
+        from app.models.audit import AuditEvent
+
+        quote_obj = await db.get(Quote, quote_id)
+        org_id = None
+        if quote_obj:
+            rfq_obj = await db.get(RFQ, quote_obj.rfq_id)
+            if rfq_obj:
+                org_id = rfq_obj.organization_id
+
+        db.add(AuditEvent(
+            organization_id=org_id,
+            actor_id=approval.reviewer_id,
+            event_type="po_created",
+            entity_type="purchase_order",
+            entity_id=po.id,
+            payload={
+                "po_number": po.po_number,
+                "quote_id": str(quote_id),
+                "approval_id": str(approval.id),
+                "status": po.status
+            }
+        ))
+
         await db.commit()
         await db.refresh(po)
         

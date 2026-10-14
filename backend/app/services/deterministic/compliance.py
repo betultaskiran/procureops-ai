@@ -8,12 +8,13 @@ Böylece halüsinasyon riski engellenir.
 
 import uuid
 import json
+from decimal import Decimal
 from typing import List
 
 from app.models.quote import Quote
 from app.models.analysis import ComplianceCheck, ComplianceResult
 from app.services.deterministic.schemas import PolicyRules
-from app.services.deterministic.tco import TCOResult
+from app.services.deterministic.tco import TCOCalculator, TCOResult
 
 
 class ComplianceChecker:
@@ -132,6 +133,68 @@ class ComplianceChecker:
                             quote.payment_terms, json.dumps(allowed_terms), "Kabul edilemez ödeme koşulu."
                         )
                     )
+
+        # 5. Maliyet Verisi Eksiksizlik Kontrolü (Cost Completeness)
+        missing_fields = TCOCalculator.get_missing_financial_fields(quote)
+        if missing_fields:
+            if "subtotal" in missing_fields:
+                checks.append(
+                    cls._create_check(
+                        analysis_id, quote.id, "cost_completeness",
+                        "Maliyet verisi eksiksizlik kontrolü",
+                        ComplianceResult.FAIL,
+                        f"Eksik: {', '.join(missing_fields)}",
+                        "subtotal, vat, shipping",
+                        f"Temel fiyat verisi eksik ({', '.join(missing_fields)}). Fiyat doğrulaması yapılamadı."
+                    )
+                )
+            else:
+                checks.append(
+                    cls._create_check(
+                        analysis_id, quote.id, "cost_completeness",
+                        "Maliyet verisi eksiksizlik kontrolü",
+                        ComplianceResult.WARNING,
+                        f"Eksik: {', '.join(missing_fields)}",
+                        "subtotal, vat, shipping",
+                        f"Eksik maliyet kalemleri mevcut: {', '.join(missing_fields)}. İnsan incelemesi önerilir."
+                    )
+                )
+        else:
+            checks.append(
+                cls._create_check(
+                    analysis_id, quote.id, "cost_completeness",
+                    "Maliyet verisi eksiksizlik kontrolü",
+                    ComplianceResult.PASS,
+                    "Eksiksiz",
+                    "subtotal, vat, shipping",
+                    "Maliyet kalemleri eksiksiz."
+                )
+            )
+
+        # 6. Doküman Veri Çıkarma Güven Skoru Kontrolü (Extraction Confidence)
+        if quote.extraction_confidence is not None:
+            if quote.extraction_confidence < Decimal("0.70"):
+                checks.append(
+                    cls._create_check(
+                        analysis_id, quote.id, "extraction_confidence",
+                        "Doküman veri çıkarma güven skoru kontrolü",
+                        ComplianceResult.WARNING,
+                        str(quote.extraction_confidence),
+                        ">= 0.70",
+                        f"Düşük güven skoru ({quote.extraction_confidence:.2f}). Teklif belgesinin manuel kontrolü gereklidir."
+                    )
+                )
+            else:
+                checks.append(
+                    cls._create_check(
+                        analysis_id, quote.id, "extraction_confidence",
+                        "Doküman veri çıkarma güven skoru kontrolü",
+                        ComplianceResult.PASS,
+                        str(quote.extraction_confidence),
+                        ">= 0.70",
+                        "Güven skoru yeterli."
+                    )
+                )
 
         return checks
 

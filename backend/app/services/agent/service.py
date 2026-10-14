@@ -14,7 +14,9 @@ from sqlalchemy import select, func
 
 from app.models.analysis import Analysis, ComplianceResult, Recommendation, AnalysisStatus
 from app.models.quote import Quote
+from app.models.rfq import RFQ
 from app.models.supplier import SupplierHistory
+from app.services.deterministic.tco import TCOCalculator
 from app.services.llm import get_llm_provider
 from app.services.llm.base import ExtractionConfig
 from app.services.rag.service import RAGService
@@ -26,6 +28,30 @@ class AgentService:
         self.db = db
         self.llm = get_llm_provider()
         self.rag = RAGService()
+
+    def _build_dynamic_rag_query(self, rfq: RFQ | None, quotes: List[Quote]) -> str:
+        """
+        RFQ başlığı, talep edilen kalemler ve ticari koşullardan dinamik,
+        kapsayıcı ve hedefe yönelik bir RAG sorgusu oluşturur.
+        """
+        parts = []
+        if rfq:
+            if rfq.title:
+                parts.append(rfq.title)
+            try:
+                if rfq.items:
+                    item_descs = [it.description for it in rfq.items if it.description]
+                    parts.extend(item_descs[:3])
+            except Exception:
+                pass
+            if rfq.max_delivery_days:
+                parts.append(f"teslimat süresi {rfq.max_delivery_days} gün")
+            if rfq.min_warranty_months:
+                parts.append(f"garanti süresi {rfq.min_warranty_months} ay")
+            if rfq.payment_terms:
+                parts.append(f"ödeme vadesi {rfq.payment_terms}")
+        parts.append("onay limiti ve bütçe yetkisi teslimat süresi gecikme cezası garanti ve teknik şartlar")
+        return " ".join(parts)
 
     async def generate_recommendation(self, analysis_id: uuid.UUID, organization_id: str) -> Recommendation:
         """
@@ -43,6 +69,14 @@ class AgentService:
         analysis = result.scalars().first()
         if not analysis:
             raise ValueError(f"Analysis {analysis_id} not found.")
+
+        # RFQ ve kalemlerini çek
+        rfq_res = await self.db.execute(
+            select(RFQ)
+            .where(RFQ.id == analysis.rfq_id)
+            .options(selectinload(RFQ.items))
+        )
+        rfq = rfq_res.scalars().first()
 
         # Tekliflerin asıl detayları (Items vs) için Quote'ları çek
         quotes_res = await self.db.execute(
@@ -75,6 +109,8 @@ class AgentService:
             else:
                 # Uygun teklifler için detaylı TCO ve kalem verilerini hazırla
                 tco = next((t for t in analysis.tco_results if t.quote_id == quote.id), None)
+                missing = TCOCalculator.get_missing_financial_fields(quote)
+                warnings = [c.notes for c in checks if c.result == ComplianceResult.WARNING]
                 eligible_quotes.append({
                     "quote_id": str(quote.id),
                     "supplier_name": quote.supplier.name,
@@ -82,16 +118,24 @@ class AgentService:
                     "delivery_days": quote.delivery_days,
                     "warranty_months": quote.warranty_months,
                     "payment_terms": quote.payment_terms,
+                    "has_incomplete_financial_data": len(missing) > 0,
+                    "missing_fields": missing,
+                    "warnings": warnings,
+                    "extraction_confidence": float(quote.extraction_confidence) if quote.extraction_confidence is not None else None,
                     "items": [{"desc": i.description, "qty": float(i.quantity), "price": float(i.unit_price)} for i in quote.items]
                 })
 
-        # 3. RAG'dan kurumsal hafızayı (Context) çek
-        rag_query = "Tedarikçi riskleri, satın alma yönergeleri ve ödeme kısıtlamaları."
-        rag_context = await self.rag.retrieve_context(
-            organization_id=organization_id,
-            query=rag_query,
-            top_k=3
-        )
+        # 3. RAG'dan kurumsal hafızayı (Context) çek (Tenant-safe dinamik sorgu)
+        effective_org_id = str(rfq.organization_id) if rfq and rfq.organization_id else organization_id
+        if not effective_org_id or effective_org_id == "None":
+            rag_context = ""
+        else:
+            rag_query = self._build_dynamic_rag_query(rfq, quotes)
+            rag_context = await self.rag.retrieve_context(
+                organization_id=effective_org_id,
+                query=rag_query,
+                top_k=3
+            )
 
         # 3.5 SQL'den Tedarikçi Geçmişini (Supplier Memory) çek (Phase 8)
         supplier_ids = list(set([quote.supplier_id for quote in quotes]))
@@ -180,6 +224,9 @@ class AgentService:
             "veya 'SQL TEDARİKÇİ GEÇMİŞİ' bölümündeki geçmiş performans verilerini (Örn: ortalama gecikme günü, kalite sorunu) "
             "analizinde kullanıyorsan, bunu KESİNLİKLE kaynağına atıf yaparak yaz. Örn: '...zorunludur [Kaynak 1: Eski Sözleşme]' veya '...5 gün gecikme yaşanmıştır [Kaynak 2: SQL Geçmişi]'. "
             "Kaynağı belirtilmeyen hiçbir kurumsal veya geçmiş bilgi üretme (Halüsinasyon yapma).\n\n"
+            "ÖNEMLİ KURAL 4 (GÜVENLİK VE EKSİK VERİ): Eğer seçtiğin teklifin 'has_incomplete_financial_data' değeri true ise, "
+            "veya teklifte uyarılar ('warnings') varsa, ya da 'extraction_confidence' 0.70'in altındaysa, "
+            "kesinlikle 'is_human_review_required' alanını true olarak işaretle ve risk faktörlerinde bu eksikliği veya uyarıyı açıkça belirt.\n\n"
         )
         
         prompt += "--- KURUMSAL HAFIZA (RAG CONTEXT) ---\n"

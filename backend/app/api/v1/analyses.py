@@ -78,8 +78,44 @@ class AnalysisResponse(BaseModel):
     compliance_checks: List[ComplianceCheckResponse] = []
     recommendation: RecommendationResponse | None = None
     evidence_items: List[EvidenceItemResponse] = []
+    is_stale: bool = False
 
     model_config = {"from_attributes": True}
+
+
+def _resolve_policy_rules(rfq, explicit_rules: PolicyRules | None) -> PolicyRules:
+    """
+    İstek gövdesinde açıkça belirtilmeyen kuralları RFQ'nun kendi
+    ticari ve bütçe alanlarından otomatik olarak türetir.
+    """
+    budget = (
+        explicit_rules.max_tco_budget
+        if explicit_rules and explicit_rules.max_tco_budget is not None
+        else (float(rfq.budget) if rfq.budget is not None else None)
+    )
+    delivery = (
+        explicit_rules.max_delivery_days
+        if explicit_rules and explicit_rules.max_delivery_days is not None
+        else rfq.max_delivery_days
+    )
+    warranty = (
+        explicit_rules.min_warranty_months
+        if explicit_rules and explicit_rules.min_warranty_months is not None
+        else rfq.min_warranty_months
+    )
+    if explicit_rules and explicit_rules.require_payment_terms is not None:
+        payment_terms = explicit_rules.require_payment_terms
+    elif rfq.payment_terms:
+        payment_terms = [rfq.payment_terms]
+    else:
+        payment_terms = None
+
+    return PolicyRules(
+        max_tco_budget=budget,
+        max_delivery_days=delivery,
+        min_warranty_months=warranty,
+        require_payment_terms=payment_terms,
+    )
 
 
 # ── Endpoints ──────────────────────────────────────────────────────────────────
@@ -102,11 +138,53 @@ async def run_analysis(
     """
     RFQ için Analiz başlatır.
     """
-    # 1. Deterministik Analiz (TCO ve Kurallar)
+    from app.models.rfq import RFQ, RFQStatus
+    from app.models.analysis import Analysis, AnalysisStatus
+    from app.models.audit import AuditEvent
+    from sqlalchemy import select
+
+    # 1. RFQ kontrolü
+    rfq = await db.get(RFQ, rfq_id)
+    if not rfq:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"RFQ {rfq_id} bulunamadı."
+        )
+
+    # İptal edilmiş RFQ kontrolü
+    if rfq.status == RFQStatus.CANCELLED.value or rfq.status == "cancelled":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="İptal edilmiş (cancelled) bir talep için analiz çalıştırılamaz."
+        )
+
+    # Multi-tenancy kontrolü: İstemci başka bir organizasyon kimliği gönderdiyse yetkisiz
+    if request.organization_id and rfq.organization_id and request.organization_id != rfq.organization_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Bu organizasyona ait olmayan bir talep için analiz başlatamazsınız."
+        )
+
+    # Concurrency kilidi: Halen RUNNING durumunda olan bir analiz varsa 409 dön
+    running_res = await db.execute(
+        select(Analysis.id).where(
+            Analysis.rfq_id == rfq_id,
+            Analysis.status == AnalysisStatus.RUNNING.value
+        ).limit(1)
+    )
+    if running_res.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Bu RFQ için devam eden aktif bir analiz süreci bulunmaktadır."
+        )
+
+    # Kuralları çözümle (RFQ alanları ile fallback)
+    effective_rules = _resolve_policy_rules(rfq, request.rules)
+
+    # Deterministik Analiz (TCO ve Kurallar)
     det_engine = DeterministicEngine(db=db)
-    
     try:
-        analysis = await det_engine.run_analysis(rfq_id=rfq_id, rules=request.rules or PolicyRules())
+        analysis = await det_engine.run_analysis(rfq_id=rfq_id, rules=effective_rules)
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -118,9 +196,11 @@ async def run_analysis(
     agent_service = AgentService(db=db)
     
     try:
+        # Organizasyon otoritesi RFQ'dan türetilir, istemciye güvenilmez
+        tenant_org_id = str(rfq.organization_id) if rfq.organization_id else ""
         recommendation = await agent_service.generate_recommendation(
             analysis_id=analysis.id,
-            organization_id=str(request.organization_id)
+            organization_id=tenant_org_id
         )
         
         # 3. Doğrulama Katmanı (Verification)
@@ -131,17 +211,32 @@ async def run_analysis(
         # Reload analysis with evidence items
         await db.refresh(analysis, ["evidence_items"])
 
-        # SQLAlchemy ilişkiyi otomatik yansıtmamış olabilir, manually set for response
-        # Update RFQ status
-        from app.models.rfq import RFQ
-        rfq_obj = await db.get(RFQ, rfq_id)
-        if rfq_obj:
-            rfq_obj.status = "pending_approval"
-            await db.commit()
+        # RFQ durumunu güncelle
+        rfq.status = "pending_approval"
+
+        # AuditEvent kaydet
+        db.add(AuditEvent(
+            organization_id=rfq.organization_id,
+            event_type="analysis_completed",
+            entity_type="analysis",
+            entity_id=analysis.id,
+            payload={
+                "rfq_id": str(rfq.id),
+                "quote_count": len(analysis.tco_results),
+                "rules": effective_rules.model_dump(),
+            }
+        ))
+        await db.commit()
 
         analysis.recommendation = verified_recommendation
-        return AnalysisResponse.model_validate(analysis)
+        resp = AnalysisResponse.model_validate(analysis)
+        resp.is_stale = False
+        return resp
     except Exception as e:
+        if isinstance(e, HTTPException):
+            raise e
+        analysis.status = AnalysisStatus.FAILED
+        await db.commit()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Agent analysis failed: {str(e)}",
@@ -153,6 +248,7 @@ class ReviewRequest(BaseModel):
     reviewer_id: uuid.UUID | None = None # Geliştirme ortamı için opsiyonel
     selected_quote_id: uuid.UUID | None = None
     acknowledged_policy_violation: bool = False
+    organization_id: uuid.UUID | None = None
 
 class ReviewResponse(BaseModel):
     id: uuid.UUID
@@ -181,6 +277,10 @@ async def review_analysis(
     onaylaması veya reddetmesi işlemini gerçekleştirir.
     """
     from app.models.analysis import Analysis, Approval, ApprovalStatus
+    from app.models.rfq import RFQ, RFQStatus
+    from app.models.quote import Quote
+    from app.models.order import PurchaseOrder
+    from app.models.audit import AuditEvent
     from app.services.workflow.order import PurchaseOrderService
     from app.services.workflow.email import EmailService
     from sqlalchemy import select
@@ -192,8 +292,78 @@ async def review_analysis(
     if not analysis:
         raise HTTPException(status_code=404, detail="Analysis not found")
 
+    # RFQ kontrolü
+    rfq = await db.get(RFQ, analysis.rfq_id)
+    if not rfq:
+        raise HTTPException(status_code=404, detail="RFQ not found")
+
+    # İptal edilmiş RFQ kontrolü
+    if rfq.status == "cancelled" or rfq.status == RFQStatus.CANCELLED.value:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="İptal edilmiş (cancelled) bir RFQ'ya ait analiz onaylanamaz veya değerlendirilemez."
+        )
+
+    # Multi-tenancy kontrolü
+    if request.organization_id and rfq.organization_id and request.organization_id != rfq.organization_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Bu organizasyona ait olmayan bir analiz için işlem yapamazsınız."
+        )
+
     if request.status not in [e.value for e in ApprovalStatus]:
         raise HTTPException(status_code=400, detail="Invalid approval status")
+
+    # Seçilen teklifin RFQ'ya ait olduğunu doğrula
+    if request.selected_quote_id:
+        selected_quote = await db.get(Quote, request.selected_quote_id)
+        if not selected_quote or selected_quote.rfq_id != rfq.id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Seçilen teklif bu RFQ'ya ait değildir."
+            )
+
+    # Onay işlemlerinde kural uyumsuzluğu ve duplicate PO koruması
+    if request.status in [ApprovalStatus.APPROVED.value, ApprovalStatus.EXCEPTION_APPROVED.value]:
+        # Hangi quote onaylanacak?
+        chosen_quote_id = request.selected_quote_id
+        if not chosen_quote_id:
+            await db.refresh(analysis, ["recommendation"])
+            if analysis.recommendation:
+                chosen_quote_id = analysis.recommendation.recommended_quote_id
+
+        if chosen_quote_id:
+            chosen_quote = await db.get(Quote, chosen_quote_id)
+            if chosen_quote and chosen_quote.is_compliant is False:
+                # Kural ihlali olan teklif için zorunlu exception_approved ve acknowledge kontrolü
+                if (
+                    request.status != ApprovalStatus.EXCEPTION_APPROVED.value
+                    or not request.acknowledged_policy_violation
+                ):
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=(
+                            "Deterministik kurallara uymayan teklifler standart olarak onaylanamaz. "
+                            "'exception_approved' statüsü ve kural ihlalinin açıkça teyit edilmesi "
+                            "(acknowledged_policy_violation=True) zorunludur."
+                        )
+                    )
+
+        # Mükerrer PO koruması: RFQ için aktif bir PO varsa tekrar onaylanamaz
+        existing_po_res = await db.execute(
+            select(PurchaseOrder)
+            .join(Quote, PurchaseOrder.quote_id == Quote.id)
+            .where(
+                Quote.rfq_id == rfq.id,
+                PurchaseOrder.status != "cancelled"
+            )
+        )
+        active_po = existing_po_res.scalar_one_or_none()
+        if active_po:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Bu RFQ için zaten düzenlenmiş aktif bir Sipariş Emri ({active_po.po_number}) bulunmaktadır."
+            )
 
     approval = Approval(
         analysis_id=analysis_id,
@@ -206,25 +376,37 @@ async def review_analysis(
     )
     
     db.add(approval)
-    await db.commit()
-    await db.refresh(approval)
+    await db.flush()
 
     # İş akışı (Workflow) ayrımı:
     if request.status in [ApprovalStatus.APPROVED.value, ApprovalStatus.EXCEPTION_APPROVED.value]:
-        from app.models.rfq import RFQ, RFQStatus
-        rfq_res = await db.execute(select(RFQ).where(RFQ.id == analysis.rfq_id))
-        rfq_obj = rfq_res.scalars().first()
-        if rfq_obj:
-            rfq_obj.status = RFQStatus.APPROVED.value
-            db.add(rfq_obj)
-            await db.commit()
+        rfq.status = RFQStatus.APPROVED.value
+        db.add(rfq)
+        await db.flush()
             
         # 1. PO Kaydı oluştur (senkron)
         po = await PurchaseOrderService.create_po_from_approval(db, approval)
         # 2. Email Job'ı kuyruğa at (asenkron, BackgroundTasks)
         background_tasks.add_task(EmailService.send_po_email, str(po.id))
     
-    # REJECTED veya REVISION_REQUESTED durumlarında PO/Email çalışmaz.
+    # AuditEvent kaydet
+    db.add(AuditEvent(
+        organization_id=rfq.organization_id,
+        actor_id=request.reviewer_id,
+        event_type="analysis_reviewed",
+        entity_type="approval",
+        entity_id=approval.id,
+        payload={
+            "analysis_id": str(analysis_id),
+            "status": request.status,
+            "selected_quote_id": str(request.selected_quote_id) if request.selected_quote_id else None,
+            "acknowledged_policy_violation": request.acknowledged_policy_violation,
+            "comment": request.comment
+        }
+    ))
+
+    await db.commit()
+    await db.refresh(approval)
 
     return ReviewResponse.model_validate(approval)
 
@@ -242,6 +424,7 @@ async def get_latest_analysis(
     from sqlalchemy import select
     from sqlalchemy.orm import selectinload
     from app.models.analysis import Analysis
+    from app.models.quote import Quote
 
     result = await db.execute(
         select(Analysis)
@@ -262,5 +445,26 @@ async def get_latest_analysis(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"No analysis found for RFQ {rfq_id}"
         )
+
+    # Dinamik bayatlama (staleness) kontrolü
+    quotes_res = await db.execute(
+        select(Quote).where(Quote.rfq_id == rfq_id)
+    )
+    current_quotes = list(quotes_res.scalars().all())
+
+    is_stale = False
+    if len(current_quotes) != len(analysis.tco_results):
+        is_stale = True
+    else:
+        analyzed_quote_ids = {tco.quote_id for tco in analysis.tco_results}
+        for q in current_quotes:
+            if q.id not in analyzed_quote_ids:
+                is_stale = True
+                break
+            if q.updated_at and analysis.created_at and q.updated_at > analysis.created_at:
+                is_stale = True
+                break
         
-    return AnalysisResponse.model_validate(analysis)
+    resp = AnalysisResponse.model_validate(analysis)
+    resp.is_stale = is_stale
+    return resp

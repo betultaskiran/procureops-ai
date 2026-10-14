@@ -81,11 +81,11 @@ class QuoteResponse(BaseModel):
     quote_document_id: uuid.UUID | None
     currency: str
     subtotal: float
-    vat_rate: float
-    vat_amount: float
-    shipping_cost: float
-    discount_amount: float
-    other_costs: float
+    vat_rate: float | None = None
+    vat_amount: float | None = None
+    shipping_cost: float | None = None
+    discount_amount: float | None = 0.0
+    other_costs: float | None = 0.0
     total_price: float
     delivery_days: int | None
     payment_terms: str | None

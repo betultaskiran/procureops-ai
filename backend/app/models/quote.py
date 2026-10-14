@@ -70,10 +70,10 @@ class Quote(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     subtotal: Mapped[Decimal] = mapped_column(Numeric(14, 4), nullable=False)
 
     # KDV oranı: 0.2000 = %20
-    vat_rate: Mapped[Decimal] = mapped_column(Numeric(5, 4), nullable=False, default=Decimal("0"))
-    vat_amount: Mapped[Decimal] = mapped_column(Numeric(14, 4), nullable=False, default=Decimal("0"))
+    vat_rate: Mapped[Decimal | None] = mapped_column(Numeric(5, 4), nullable=True)
+    vat_amount: Mapped[Decimal | None] = mapped_column(Numeric(14, 4), nullable=True)
 
-    shipping_cost: Mapped[Decimal] = mapped_column(Numeric(14, 4), nullable=False, default=Decimal("0"))
+    shipping_cost: Mapped[Decimal | None] = mapped_column(Numeric(14, 4), nullable=True)
     discount_amount: Mapped[Decimal] = mapped_column(Numeric(14, 4), nullable=False, default=Decimal("0"))
 
     # Kurulum, bakım vb. ek maliyetler

@@ -3,7 +3,7 @@ import uuid
 from typing import List
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
-from sqlalchemy import select
+from sqlalchemy import select, delete
 
 from app.models.analysis import (
     Analysis,
@@ -72,11 +72,10 @@ class VerificationService:
         citations = re.findall(pattern, all_text)
         unique_citations = set(citations)
 
-        # Eski evidence'ları temizle (varsa)
+        # Eski evidence'ları temizle (idempotent ve temiz sonuç için)
         await self.db.execute(
-            select(EvidenceItem).where(EvidenceItem.analysis_id == analysis.id)
-        ) # This is a bit complex to delete directly, easier to just not worry about duplicates if it's run once.
-        # Since it runs once per analysis, we just insert.
+            delete(EvidenceItem).where(EvidenceItem.analysis_id == analysis.id)
+        )
 
         evidence_items = []
         for citation in unique_citations:
