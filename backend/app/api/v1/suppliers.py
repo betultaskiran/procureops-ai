@@ -1,7 +1,7 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,6 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_db
 from app.models.organization import Organization
 from app.models.supplier import Supplier
+from app.services.supplier.performance import SupplierPerformanceService
+from app.services.supplier.schemas import (
+    PaginatedSupplierHistoryResponse,
+    SupplierPerformanceResponse,
+)
 
 router = APIRouter(prefix="/api/v1/suppliers", tags=["suppliers"])
 
@@ -121,6 +126,83 @@ async def create_supplier(
     )
     db.add(supplier)
     await db.commit()
-    await db.refresh(supplier)
-
     return SupplierResponse.model_validate(supplier)
+
+
+@router.get(
+    "/{supplier_id}/performance",
+    response_model=SupplierPerformanceResponse,
+    summary="Get supplier performance intelligence",
+    description="Calculates reliability, financial totals, order counts, and quality metrics based on actual historical data."
+)
+async def get_supplier_performance(
+    supplier_id: uuid.UUID,
+    organization_id: uuid.UUID | None = Query(None, description="Optional tenant organization ID"),
+    db: AsyncSession = Depends(get_db),
+) -> SupplierPerformanceResponse:
+    org = await _get_current_organization(db)
+
+    # Multi-tenancy isolation: if client explicitly supplies a different organization_id, reject with 404
+    if organization_id is not None and organization_id != org.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Tedarikçi ({supplier_id}) bulunamadı",
+        )
+
+    # Scoped supplier query
+    result = await db.execute(
+        select(Supplier).where(
+            Supplier.id == supplier_id,
+            Supplier.organization_id == org.id,
+        )
+    )
+    supplier = result.scalar_one_or_none()
+    if not supplier:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Tedarikçi ({supplier_id}) bulunamadı",
+        )
+
+    service = SupplierPerformanceService(db=db)
+    return await service.get_supplier_performance(supplier)
+
+
+@router.get(
+    "/{supplier_id}/history",
+    response_model=PaginatedSupplierHistoryResponse,
+    summary="Get paginated supplier order history",
+    description="Returns a paginated list of unified order history records (POs and legacy history) with provenance."
+)
+async def get_supplier_history(
+    supplier_id: uuid.UUID,
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    page_size: int = Query(20, ge=1, le=100, description="Items per page (max 100)"),
+    organization_id: uuid.UUID | None = Query(None, description="Optional tenant organization ID"),
+    db: AsyncSession = Depends(get_db),
+) -> PaginatedSupplierHistoryResponse:
+    org = await _get_current_organization(db)
+
+    # Multi-tenancy isolation: if client explicitly supplies a different organization_id, reject with 404
+    if organization_id is not None and organization_id != org.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Tedarikçi ({supplier_id}) bulunamadı",
+        )
+
+    # Scoped supplier query
+    result = await db.execute(
+        select(Supplier).where(
+            Supplier.id == supplier_id,
+            Supplier.organization_id == org.id,
+        )
+    )
+    supplier = result.scalar_one_or_none()
+    if not supplier:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Tedarikçi ({supplier_id}) bulunamadı",
+        )
+
+    service = SupplierPerformanceService(db=db)
+    return await service.get_supplier_history(supplier, page=page, page_size=page_size)
+

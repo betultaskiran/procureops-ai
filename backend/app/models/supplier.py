@@ -82,6 +82,14 @@ class SupplierHistory(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         index=True,
     )
 
+    # İsteğe bağlı dahili PO bağlantısı (platform üzerinden oluşturulan siparişler için)
+    purchase_order_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("purchase_orders.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
     # Sipariş referansı: PO numarası, sözleşme numarası vb.
     order_reference: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
@@ -108,6 +116,9 @@ class SupplierHistory(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 
     # ── Relationships ──────────────────────────────────────────────────────────
     supplier: Mapped["Supplier"] = relationship(back_populates="history")
+    purchase_order: Mapped["PurchaseOrder | None"] = relationship(
+        back_populates="supplier_history_entry",
+    )
 
     def __repr__(self) -> str:
         return (

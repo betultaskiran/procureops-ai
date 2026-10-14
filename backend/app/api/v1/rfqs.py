@@ -1,6 +1,7 @@
 import os
 import uuid
 from datetime import date, datetime
+from decimal import Decimal
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -347,6 +348,11 @@ class PurchaseOrderResponse(BaseModel):
     email_sent: bool
     cancellation_reason: str | None = None
     cancelled_at: datetime | None = None
+    expected_delivery_date: date | None = None
+    actual_delivery_date: date | None = None
+    delivered_at: datetime | None = None
+    final_amount: Decimal | None = None
+    delivery_notes: str | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

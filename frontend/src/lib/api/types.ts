@@ -141,6 +141,11 @@ export interface PurchaseOrderResponse {
   email_sent: boolean;
   cancellation_reason?: string | null;
   cancelled_at?: string | null;
+  expected_delivery_date?: string | null;
+  actual_delivery_date?: string | null;
+  delivered_at?: string | null;
+  final_amount?: number | null;
+  delivery_notes?: string | null;
   created_at: string;
 }
 

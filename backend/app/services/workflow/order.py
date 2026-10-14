@@ -35,30 +35,35 @@ class PurchaseOrderService:
                 raise ValueError("No valid quote found to create Purchase Order.")
             quote_id = recommendation.recommended_quote_id
 
-        # Rastgele bir PO numarası üret
+        from datetime import date, timedelta
+        from app.models.quote import Quote
+        from app.models.rfq import RFQ
+        from app.models.audit import AuditEvent
+        from app.models.order import PurchaseOrderStatus
+
+        quote_obj = await db.get(Quote, quote_id)
+        org_id = None
+        expected_delivery_date = None
+        if quote_obj:
+            rfq_obj = await db.get(RFQ, quote_obj.rfq_id)
+            if rfq_obj:
+                org_id = rfq_obj.organization_id
+            if quote_obj.delivery_days is not None:
+                start_date = approval.reviewed_at.date() if approval.reviewed_at else date.today()
+                expected_delivery_date = start_date + timedelta(days=quote_obj.delivery_days)
+
         po_number = f"PO-2026-{str(uuid.uuid4())[:8].upper()}"
 
         po = PurchaseOrder(
             po_number=po_number,
             quote_id=quote_id,
             approval_id=approval.id,
-            status="issued"
+            status=PurchaseOrderStatus.ISSUED.value,
+            expected_delivery_date=expected_delivery_date,
         )
         
         db.add(po)
         await db.flush()
-
-        # AuditEvent kaydet
-        from app.models.quote import Quote
-        from app.models.rfq import RFQ
-        from app.models.audit import AuditEvent
-
-        quote_obj = await db.get(Quote, quote_id)
-        org_id = None
-        if quote_obj:
-            rfq_obj = await db.get(RFQ, quote_obj.rfq_id)
-            if rfq_obj:
-                org_id = rfq_obj.organization_id
 
         db.add(AuditEvent(
             organization_id=org_id,
