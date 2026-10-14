@@ -85,9 +85,10 @@ export const rfqsApi = {
     return res.json();
   },
   
-  async analyzeRfq(rfqId: string): Promise<AnalysisResponse> {
+  async analyzeRfq(rfqId: string, organizationId?: string): Promise<AnalysisResponse> {
     return apiClient.post<AnalysisResponse>(`/api/v1/rfqs/${rfqId}/analyze`, {
-      rules: {} // Use default rules
+      rules: {}, // Use default rules
+      organization_id: organizationId
     });
   },
 
@@ -99,8 +100,8 @@ export const rfqsApi = {
     return apiClient.get<PurchaseOrderResponse[]>(`/api/v1/rfqs/${id}/purchase-orders`);
   },
   
-  async reviewAnalysis(analysisId: string, req: ReviewRequest): Promise<any> {
-    return apiClient.post(`/api/v1/analyses/${analysisId}/review`, req);
+  async reviewAnalysis(analysisId: string, req: ReviewRequest): Promise<import("./types").ReviewResponse> {
+    return apiClient.post<import("./types").ReviewResponse>(`/api/v1/analyses/${analysisId}/review`, req);
   },
   
   async getRfqQuote(rfqId: string, quoteId: string): Promise<Quote> {

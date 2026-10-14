@@ -30,6 +30,7 @@ export interface RFQ {
   has_po?: boolean;
   is_archived?: boolean;
   created_by_name?: string | null;
+  organization_id?: string | null;
 }
 
 export interface PaginatedRFQResponse {
@@ -59,11 +60,11 @@ export interface Quote {
   quote_document_id?: string | null;
   currency: string;
   subtotal: number;
-  vat_rate: number;
-  vat_amount: number;
-  shipping_cost: number;
-  discount_amount: number;
-  other_costs: number;
+  vat_rate: number | null;
+  vat_amount: number | null;
+  shipping_cost: number | null;
+  discount_amount: number | null;
+  other_costs: number | null;
   total_price: number;
   delivery_days: number | null;
   payment_terms: string | null;
@@ -91,7 +92,7 @@ export interface TCOResultResponse {
   quote_id: string;
   total_tco: number;
   currency: string;
-  calculation_notes: string;
+  calculation_notes: string | null;
 }
 
 export interface ComplianceCheckResponse {
@@ -127,6 +128,7 @@ export interface AnalysisResponse {
   compliance_checks: ComplianceCheckResponse[];
   recommendation: RecommendationResponse | null;
   evidence_items: EvidenceItemResponse[];
+  is_stale?: boolean;
 }
 
 
@@ -145,8 +147,19 @@ export interface PurchaseOrderResponse {
 export interface ReviewRequest {
   status: string;
   comment?: string;
+  reviewer_id?: string;
   selected_quote_id?: string;
   acknowledged_policy_violation?: boolean;
+  organization_id?: string;
+}
+
+export interface ReviewResponse {
+  id: string;
+  analysis_id: string;
+  status: string;
+  comment: string | null;
+  selected_quote_id: string | null;
+  acknowledged_policy_violation: boolean;
 }
 
 export interface RFQItemCreate {

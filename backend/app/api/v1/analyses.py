@@ -6,10 +6,12 @@ Analiz endpoint'leri. Şimdilik sadece deterministik (TCO + Compliance) çalış
 """
 
 import uuid
+from datetime import datetime, timezone
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from pydantic import BaseModel
+from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
@@ -18,6 +20,21 @@ from app.services.deterministic.orchestrator import DeterministicEngine
 from app.models.analysis import ComplianceResult
 
 router = APIRouter(prefix="/api/v1", tags=["analyses"])
+
+
+def _is_later(dt_a: datetime | None, dt_b: datetime | None) -> bool:
+    """
+    dt_a'nın dt_b'den sonra olup olmadığını güvenle kontrol eder.
+    None değerlerini ve timezone-aware / naive datetime uyuşmazlıklarını
+    hata üretmeden UTC tabanında eşitler.
+    """
+    if dt_a is None or dt_b is None:
+        return False
+    if dt_a.tzinfo is not None and dt_b.tzinfo is None:
+        dt_b = dt_b.replace(tzinfo=timezone.utc)
+    elif dt_a.tzinfo is None and dt_b.tzinfo is not None:
+        dt_a = dt_a.replace(tzinfo=timezone.utc)
+    return dt_a > dt_b
 
 
 # ── Response Schemas ───────────────────────────────────────────────────────────
@@ -211,8 +228,10 @@ async def run_analysis(
         # Reload analysis with evidence items
         await db.refresh(analysis, ["evidence_items"])
 
-        # RFQ durumunu güncelle
+        # RFQ durumunu güncelle ve analiz zaman damgasını senkronize et
         rfq.status = "pending_approval"
+        analysis.created_at = func.now()
+        analysis.updated_at = func.now()
 
         # AuditEvent kaydet
         db.add(AuditEvent(
@@ -227,6 +246,7 @@ async def run_analysis(
             }
         ))
         await db.commit()
+        await db.refresh(analysis, ["created_at", "updated_at"])
 
         analysis.recommendation = verified_recommendation
         resp = AnalysisResponse.model_validate(analysis)
@@ -425,6 +445,7 @@ async def get_latest_analysis(
     from sqlalchemy.orm import selectinload
     from app.models.analysis import Analysis
     from app.models.quote import Quote
+    from app.models.rfq import RFQ
 
     result = await db.execute(
         select(Analysis)
@@ -446,14 +467,35 @@ async def get_latest_analysis(
             detail=f"No analysis found for RFQ {rfq_id}"
         )
 
-    # Dinamik bayatlama (staleness) kontrolü
+    # Dinamik bayatlama (staleness) kontrolü:
+    # 1. RFQ kuralları/detayları analizden sonra güncellendiyse (rfq.updated_at > analysis.created_at)
+    # 2. Teklif sayısı analizde temsil edilen teklif sayısından farklıysa (yeni teklif eklendi/silindi)
+    # 3. Herhangi bir teklif analizden sonra güncellendiyse (quote.updated_at > analysis.created_at)
+    rfq = await db.get(RFQ, rfq_id)
     quotes_res = await db.execute(
         select(Quote).where(Quote.rfq_id == rfq_id)
     )
     current_quotes = list(quotes_res.scalars().all())
 
+    # Analizde temsil edilen teklif sayısı:
+    # Cascade delete nedeniyle silinen tekliflerin tco_results kayıtları silinmiş olabileceğinden,
+    # analizin tamamlandığı andaki orijinal teklif sayısını AuditEvent kaydından teyit ederiz.
+    from app.models.audit import AuditEvent
+    represented_quote_count = len(analysis.tco_results)
+    audit_res = await db.execute(
+        select(AuditEvent.payload).where(
+            AuditEvent.entity_id == analysis.id,
+            AuditEvent.event_type == "analysis_completed"
+        ).limit(1)
+    )
+    audit_payload = audit_res.scalar_one_or_none()
+    if audit_payload and isinstance(audit_payload, dict) and "quote_count" in audit_payload:
+        represented_quote_count = int(audit_payload["quote_count"])
+
     is_stale = False
-    if len(current_quotes) != len(analysis.tco_results):
+    if rfq and _is_later(rfq.updated_at, analysis.created_at):
+        is_stale = True
+    elif len(current_quotes) != represented_quote_count:
         is_stale = True
     else:
         analyzed_quote_ids = {tco.quote_id for tco in analysis.tco_results}
@@ -461,7 +503,7 @@ async def get_latest_analysis(
             if q.id not in analyzed_quote_ids:
                 is_stale = True
                 break
-            if q.updated_at and analysis.created_at and q.updated_at > analysis.created_at:
+            if _is_later(q.updated_at, analysis.created_at):
                 is_stale = True
                 break
         

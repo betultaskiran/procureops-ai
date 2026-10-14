@@ -21,14 +21,29 @@ import {
   Trash2,
   Archive,
   ArchiveRestore,
-  Ban
+  Ban,
+  Sparkles,
+  TrendingUp,
+  RefreshCw
 } from "lucide-react";
 import { rfqsApi } from "@/lib/api/rfqs";
-import { RFQ, Quote, AnalysisResponse, TCOResultResponse, ComplianceCheckResponse, EvidenceItemResponse, PurchaseOrderResponse } from "@/lib/api/types";
+import { 
+  RFQ, 
+  Quote, 
+  AnalysisResponse, 
+  TCOResultResponse, 
+  ComplianceCheckResponse, 
+  EvidenceItemResponse, 
+  PurchaseOrderResponse,
+  ReviewResponse 
+} from "@/lib/api/types";
+import { ComparisonMatrix } from "@/components/analysis/ComparisonMatrix";
+import { EvidencePanel } from "@/components/analysis/EvidencePanel";
+import { StaleNoticeBanner } from "@/components/analysis/StaleNoticeBanner";
+import { ReviewModal } from "@/components/analysis/ReviewModal";
 
 export default function RFQDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const router = useRouter();
-  const [isConfirmOpen, setIsConfirmOpen] = useState(false);
   const [isDeleteRfqOpen, setIsDeleteRfqOpen] = useState(false);
   const [quoteToDelete, setQuoteToDelete] = useState<Quote | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -57,14 +72,16 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
   const [quotes, setQuotes] = useState<Quote[]>([]);
   const [selectedQuoteId, setSelectedQuoteId] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<AnalysisResponse | null>(null);
-  const [purchaseOrders, setPurchaseOrders] = useState<any[]>([]);
+  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrderResponse[]>([]);
   
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Workflow states
-  const [isApproving, setIsApproving] = useState(false);
-  const [approvalError, setApprovalError] = useState<string | null>(null);
+  // Multi-Analysis & Review states
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [isReviewOpen, setIsReviewOpen] = useState(false);
+  const [reviewQuoteId, setReviewQuoteId] = useState<string | null>(null);
 
   // Upload Quote Modal states
   const [isUploadQuoteOpen, setIsUploadQuoteOpen] = useState(false);
@@ -188,6 +205,8 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
       setQuoteToDelete(null);
       const updatedRfq = await rfqsApi.getRfq(rfqId);
       setRfq(updatedRfq);
+      // Refresh analysis to reflect updated staleness
+      rfqsApi.getAnalysis(rfqId).then(setAnalysis).catch(() => {});
     } catch (err: any) {
       setDeleteError(err.message || "Teklif silinirken bir hata oluştu.");
     } finally {
@@ -244,11 +263,47 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
       }
       setIsUploadQuoteOpen(false);
       setUploadFile(null);
+      // Refresh analysis to reflect updated staleness
+      rfqsApi.getAnalysis(rfqId).then(setAnalysis).catch(() => {});
     } catch (err: any) {
       setUploadError(err.message || "Dosya yüklenirken bir hata oluştu.");
     } finally {
       setIsUploading(false);
     }
+  };
+
+  const handleRunAnalysis = async () => {
+    if (quotes.length < 2 || isAnalyzing) return;
+    try {
+      setIsAnalyzing(true);
+      setAnalysisError(null);
+      const res = await rfqsApi.analyzeRfq(rfqId, rfq?.organization_id || undefined);
+      setAnalysis(res);
+      const [updatedRfq, updatedQuotes] = await Promise.all([
+        rfqsApi.getRfq(rfqId),
+        rfqsApi.getRfqQuotes(rfqId),
+      ]);
+      setRfq(updatedRfq);
+      setQuotes(updatedQuotes);
+    } catch (err: any) {
+      setAnalysisError(err.message || "Analiz çalıştırılırken bir hata oluştu.");
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
+  const handleReviewSuccess = (review: ReviewResponse) => {
+    Promise.allSettled([
+      rfqsApi.getRfq(rfqId),
+      rfqsApi.getPurchaseOrders(rfqId),
+      rfqsApi.getAnalysis(rfqId),
+      rfqsApi.getRfqQuotes(rfqId),
+    ]).then(([rfqRes, poRes, analysisRes, quotesRes]) => {
+      if (rfqRes.status === "fulfilled") setRfq(rfqRes.value);
+      if (poRes.status === "fulfilled") setPurchaseOrders(poRes.value);
+      if (analysisRes.status === "fulfilled") setAnalysis(analysisRes.value);
+      if (quotesRes.status === "fulfilled") setQuotes(quotesRes.value);
+    });
   };
 
 
@@ -289,29 +344,6 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
     }
     loadData();
   }, [rfqId]);
-
-  const handleApprove = async () => {
-    if (!analysis) return;
-    try {
-      setIsApproving(true);
-      setApprovalError(null);
-      
-      await rfqsApi.reviewAnalysis(analysis.id, {
-        status: "approved",
-        comment: "Approved via UI",
-        selected_quote_id: displayQuote?.id,
-        acknowledged_policy_violation: warningsCount > 0
-      });
-      
-      // Refresh page data after approval
-      window.location.reload();
-      
-    } catch (err: any) {
-      setApprovalError(err.message || "Approval failed.");
-    } finally {
-      setIsApproving(false);
-    }
-  };
 
   if (isLoading) {
     return (
@@ -402,6 +434,57 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
             </button>
           )}
 
+          {/* Multi-Analysis Action Button */}
+          {rfq.status !== 'cancelled' && (
+            <button
+              onClick={handleRunAnalysis}
+              disabled={isAnalyzing || quotes.length < 2}
+              title={
+                quotes.length < 2
+                  ? "Karşılaştırmalı çoklu analiz için en az 2 tedarikçi teklifi yüklenmelidir."
+                  : analysis
+                  ? "Tüm teklifleri yeniden değerlendir ve TCO/uyum sonuçlarını güncelle"
+                  : "Tüm teklifleri yan yana kıyaslayan yapay zeka analizini başlat"
+              }
+              className={`flex items-center gap-1.5 px-3.5 py-2 rounded text-xs font-semibold transition-colors shadow-sm ${
+                quotes.length < 2
+                  ? "bg-surface border border-border text-text-muted opacity-50 cursor-not-allowed"
+                  : isAnalyzing
+                  ? "bg-primary/20 text-primary border border-primary/40 cursor-wait"
+                  : "bg-primary hover:bg-primary-hover text-white"
+              }`}
+            >
+              {isAnalyzing ? (
+                <>
+                  <Loader2 size={14} className="animate-spin" />
+                  <span>Analiz Ediliyor...</span>
+                </>
+              ) : (
+                <>
+                  <Sparkles size={14} />
+                  <span>
+                    {analysis ? "Analizi Yenile" : "Çoklu Analizi Başlat"}
+                    {quotes.length < 2 && ` (${quotes.length}/2)`}
+                  </span>
+                </>
+              )}
+            </button>
+          )}
+
+          {/* Review & Decision Action */}
+          {analysis && rfq.status !== 'cancelled' && purchaseOrders.filter(p => p.status !== 'cancelled').length === 0 && (
+            <button 
+              onClick={() => {
+                setReviewQuoteId(selectedQuoteId || analysis.recommendation?.recommended_quote_id || quotes[0]?.id || null);
+                setIsReviewOpen(true);
+              }}
+              className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white px-3.5 py-2 rounded text-xs font-semibold transition-colors shadow-sm"
+            >
+              <Check size={14} />
+              <span>Karar Ver & Onayla</span>
+            </button>
+          )}
+
           {/* Archive / Unarchive */}
           {rfq.is_archived ? (
             <button
@@ -447,15 +530,6 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
               Original Document
             </button>
           )}
-          {rfq.status === 'pending_approval' && purchaseOrders.length === 0 && (
-            <button 
-              onClick={() => setIsConfirmOpen(true)}
-              className="flex items-center gap-2 bg-success hover:bg-success/90 text-white px-5 py-2 rounded text-xs font-medium transition-colors shadow-sm"
-            >
-              <Check size={15} />
-              Approve & Create PO
-            </button>
-          )}
 
           {/* Delete RFQ Action */}
           <button
@@ -489,6 +563,39 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
             Kapat
           </button>
         </div>
+      )}
+
+      {/* Analysis Error Banner */}
+      {analysisError && (
+        <div className="p-4 rounded-xl bg-red-500/10 border border-red-500/30 text-red-300 text-xs flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <ShieldAlert size={18} className="text-red-400 shrink-0" />
+            <span>{analysisError}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleRunAnalysis}
+              className="px-2.5 py-1 rounded bg-red-600 hover:bg-red-500 text-white font-medium text-xs transition-colors"
+            >
+              Tekrar Dene
+            </button>
+            <button
+              onClick={() => setAnalysisError(null)}
+              className="text-xs hover:underline text-text-muted"
+            >
+              Kapat
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Stale Analysis Notice Banner */}
+      {analysis && (
+        <StaleNoticeBanner
+          isStale={!!analysis.is_stale}
+          isAnalyzing={isAnalyzing}
+          onRerunAnalysis={handleRunAnalysis}
+        />
       )}
 
       {/* RFQ Requirements Card */}
@@ -543,6 +650,66 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
           </div>
         )}
       </div>
+
+      {/* ── Multi-Analysis Comparison Matrix ──────────────────────────── */}
+      {quotes.length >= 2 ? (
+        <ComparisonMatrix
+          quotes={quotes}
+          rfq={rfq}
+          analysis={analysis}
+          selectedQuoteId={selectedQuoteId}
+          onSelectQuote={setSelectedQuoteId}
+          onOpenReviewModal={(qId) => {
+            setReviewQuoteId(qId || null);
+            setIsReviewOpen(true);
+          }}
+        />
+      ) : quotes.length === 1 ? (
+        <div className="p-5 rounded-xl bg-surface-elevated border border-border shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-amber-500/10 text-amber-400 flex items-center justify-center border border-amber-500/20 shrink-0">
+              <AlertTriangle size={18} />
+            </div>
+            <div>
+              <h3 className="text-xs font-semibold text-text-primary uppercase tracking-wider">
+                Çoklu Karşılaştırma Beklemede (1 / 2 Teklif)
+              </h3>
+              <p className="text-xs text-text-muted mt-0.5">
+                Tedarikçileri yan yana kıyaslamak ve yapay zeka analizini çalıştırmak için en az bir teklif daha eklenmelidir.
+              </p>
+            </div>
+          </div>
+          {rfq.status !== "cancelled" && (
+            <button
+              onClick={() => setIsUploadQuoteOpen(true)}
+              className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-primary hover:bg-primary-hover text-white transition-colors shrink-0"
+            >
+              + İkinci Teklifi Yükle
+            </button>
+          )}
+        </div>
+      ) : (
+        <div className="p-8 rounded-xl bg-surface-elevated border-2 border-dashed border-border text-center space-y-3">
+          <div className="w-12 h-12 rounded-full bg-surface border border-border text-text-muted mx-auto flex items-center justify-center">
+            <UploadCloud size={20} />
+          </div>
+          <div>
+            <h3 className="text-sm font-semibold text-text-primary">Henüz Teklif Eklenmedi</h3>
+            <p className="text-xs text-text-muted mt-1 max-w-sm mx-auto">
+              Bu satın alma talebi için tedarikçilerden gelen teklif belgelerini yükleyerek otomatik veri çıkarımı ve çoklu TCO analizi başlatabilirsiniz.
+            </p>
+          </div>
+          {rfq.status !== "cancelled" && (
+            <button
+              onClick={() => setIsUploadQuoteOpen(true)}
+              className="px-4 py-2 rounded-lg text-xs font-semibold bg-primary hover:bg-primary-hover text-white transition-colors inline-flex items-center gap-1.5"
+            >
+              <Plus size={14} />
+              İlk Teklifi Ekle
+            </button>
+          )}
+        </div>
+      )}
       
       {/* Submitted Quotes Table */}
       {quotes.length > 0 && (
@@ -631,8 +798,20 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
         
-        {/* ── Left Column: Extraction & Calculation ────────────────────────── */}
+        {/* ── Left Column: Extraction, Evidence & Calculation ─────────────── */}
         <div className="lg:col-span-2 flex flex-col gap-6">
+
+          {/* AI Recommendation, Reasoning, Risks, Citations & Hard Rules */}
+          {analysis && (
+            <EvidencePanel
+              analysis={analysis}
+              quotes={quotes}
+              onOpenReviewModal={(qId) => {
+                setReviewQuoteId(qId || null);
+                setIsReviewOpen(true);
+              }}
+            />
+          )}
           
           <div className="bg-surface-elevated border border-border rounded-xl p-6 shadow-sm">
             <div className="flex items-center justify-between mb-4">
@@ -703,15 +882,21 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                     <span>Subtotal:</span>
                     <span>₺ {displayQuote.subtotal?.toLocaleString('en-US') || 0}</span>
                   </div>
-                  {(displayQuote.discount_amount || 0) > 0 && (
+                  {displayQuote.discount_amount != null && displayQuote.discount_amount > 0 && (
                     <div className="flex justify-between w-64 text-text-muted">
                       <span>Discount:</span>
                       <span className="text-success">- ₺ {displayQuote.discount_amount.toLocaleString('en-US')}</span>
                     </div>
                   )}
                   <div className="flex justify-between w-64 text-text-muted border-b border-border pb-2">
-                    <span>VAT ({(displayQuote.vat_rate || 0) * 100}%):</span>
-                    <span>₺ {displayQuote.vat_amount?.toLocaleString('en-US') || 0}</span>
+                    <span>
+                      VAT ({displayQuote.vat_rate != null ? `${(displayQuote.vat_rate * 100).toFixed(0)}%` : "Belirtilmemiş"}):
+                    </span>
+                    <span>
+                      {displayQuote.vat_amount != null
+                        ? `₺ ${displayQuote.vat_amount.toLocaleString('en-US')}`
+                        : "[Eksik Veri]"}
+                    </span>
                   </div>
                   <div className="flex justify-between w-64 font-semibold text-text-primary text-base pt-1">
                     <span>Total Quote:</span>
@@ -740,70 +925,8 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
           </div>
         </div>
 
-        {/* ── Right Column: AI & Policy Guardrails ──────────────────────── */}
+        {/* ── Right Column: Purchase Orders & Dispatch ─────────────────────── */}
         <div className="flex flex-col gap-6">
-          
-          <div className="bg-surface-elevated border border-border rounded-xl p-6 shadow-sm">
-            <h2 className="text-sm font-semibold text-text-primary uppercase tracking-wider mb-4 flex items-center gap-2">
-              <ShieldCheck size={16} className="text-primary" />
-              AI Decision Engine
-            </h2>
-
-            {analysis ? (
-              <>
-                <div className="mb-6">
-                  <div className="text-[10px] uppercase font-bold text-text-muted mb-2 tracking-wider">AI RECOMMENDATION</div>
-                  <div className={`flex items-center gap-2 text-lg font-semibold ${analysis.recommendation?.verification_status === 'verified' ? 'text-success' : 'text-amber-500'}`}>
-                    {analysis.recommendation?.verification_status ? analysis.recommendation.verification_status.toUpperCase() : 'PENDING'}
-                  </div>
-                  {warningsCount > 0 && (
-                    <div className="text-xs text-amber-500 mt-1">Review {warningsCount} warning(s) before approval.</div>
-                  )}
-                </div>
-
-                <div className="mb-6">
-                  <div className="text-[10px] uppercase font-bold text-text-muted mb-2 tracking-wider">Reasoning & Checks</div>
-                  <p className="text-xs text-text-muted mb-4 leading-relaxed">
-                    {analysis.recommendation?.reasoning || 'No AI reasoning provided yet.'}
-                  </p>
-                  
-                  <div className="space-y-3">
-                    {analysis.compliance_checks?.map((check, idx) => (
-                      <div key={idx} className="flex gap-2 items-start">
-                        {check.result === 'pass' ? (
-                          <CheckCircle size={14} className="text-success mt-0.5 shrink-0" />
-                        ) : (
-                          <AlertTriangle size={14} className="text-amber-500 mt-0.5 shrink-0" />
-                        )}
-                        <div className="text-xs text-text-primary">
-                          <span className="font-medium">{check.rule_description}</span>: {check.notes} 
-                          <span className="text-text-muted block mt-0.5">Value: {check.actual_value} (Required: {check.required_value})</span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {analysis.evidence_items?.length > 0 && (
-                  <div>
-                    <div className="text-[10px] uppercase font-bold text-text-muted mb-2 tracking-wider">Evidence Links</div>
-                    <div className="flex flex-wrap gap-2">
-                      {analysis.evidence_items.map((evidence, idx) => (
-                        <button key={idx} className="text-[10px] bg-bg border border-border px-2 py-1.5 rounded hover:bg-surface transition-colors text-text-primary flex items-center gap-1 font-medium" title={evidence.claim}>
-                          <FileText size={10} className="text-primary" /> {evidence.source_reference}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </>
-            ) : (
-              <div className="py-8 text-center text-text-muted text-sm border-2 border-dashed border-border rounded-lg">
-                <AlertTriangle size={24} className="mx-auto mb-2 opacity-50" />
-                <p>No analysis has been generated for this RFQ yet.</p>
-              </div>
-            )}
-          </div>
 
           {purchaseOrders.length > 0 ? (
             <div className="flex flex-col gap-4">
@@ -907,72 +1030,16 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
         </div>
       </div>
 
-      {/* ── Approval Confirmation Modal ─────────────────────────────────── */}
-      {isConfirmOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-bg/80 backdrop-blur-sm p-4">
-          <div className="bg-surface-elevated border border-border rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-            <div className="px-6 py-4 border-b border-border flex items-center justify-between">
-              <h2 className="font-semibold text-text-primary">Approve this recommendation?</h2>
-              <button onClick={() => setIsConfirmOpen(false)} className="text-text-muted hover:text-text-primary transition-colors">
-                <X size={20} />
-              </button>
-            </div>
-            
-            <div className="p-6 flex flex-col gap-5">
-              <div className="bg-bg border border-border rounded-lg p-4 text-sm">
-                <div className="flex justify-between mb-2">
-                  <span className="text-text-muted">Supplier:</span>
-                  <span className="font-medium text-text-primary">{displayQuote?.supplier_name || 'Unknown'}</span>
-                </div>
-                <div className="flex justify-between mb-2">
-                  <span className="text-text-muted">Total Value (TCO):</span>
-                  <span className="font-medium text-text-primary">₺ {displayTCO?.total_tco.toLocaleString('en-US') || displayQuote?.total_price.toLocaleString('en-US')}</span>
-                </div>
-                <div className="flex justify-between mb-2">
-                  <span className="text-text-muted">AI Recommendation:</span>
-                  <span className="font-medium text-text-primary">{analysis?.recommendation?.verification_status || 'N/A'}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-text-muted">Warnings:</span>
-                  <span className={`font-medium ${warningsCount > 0 ? 'text-amber-500' : 'text-success'}`}>{warningsCount} ({warningsCount > 0 ? 'Review Required' : 'All Clear'})</span>
-                </div>
-              </div>
-
-              <div>
-                <div className="text-xs font-semibold text-text-primary mb-2">This action will:</div>
-                <ul className="text-xs text-text-muted space-y-2">
-                  <li className="flex items-center gap-2"><Check size={14} className="text-success" /> create a Purchase Order</li>
-                  <li className="flex items-center gap-2"><Check size={14} className="text-success" /> trigger the configured notification workflow</li>
-                  <li className="flex items-center gap-2"><Check size={14} className="text-success" /> record your approval in the audit log</li>
-                </ul>
-              </div>
-
-              {approvalError && (
-                <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-500 text-xs rounded-md font-medium">
-                  {approvalError}
-                </div>
-              )}
-            </div>
-
-            <div className="px-6 py-4 border-t border-border bg-surface/50 flex justify-end gap-3">
-              <button 
-                onClick={() => setIsConfirmOpen(false)}
-                disabled={isApproving}
-                className="px-4 py-2 text-sm font-medium text-text-muted hover:text-text-primary transition-colors disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button 
-                onClick={handleApprove}
-                disabled={isApproving}
-                className="flex items-center gap-2 bg-success hover:bg-success/90 text-white px-4 py-2 rounded text-sm font-medium transition-colors shadow-sm disabled:opacity-70"
-              >
-                {isApproving && <Loader2 size={14} className="animate-spin" />}
-                {isApproving ? "Processing..." : "Approve & Create PO"}
-              </button>
-            </div>
-          </div>
-        </div>
+      {/* ── Multi-Analysis Review & Decision Modal ───────────────────────── */}
+      {isReviewOpen && analysis && (
+        <ReviewModal
+          isOpen={isReviewOpen}
+          onClose={() => setIsReviewOpen(false)}
+          analysis={analysis}
+          quotes={quotes}
+          initialSelectedQuoteId={reviewQuoteId || selectedQuoteId}
+          onSuccess={handleReviewSuccess}
+        />
       )}
 
       {/* Upload Quote Modal */}

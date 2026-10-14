@@ -723,6 +723,258 @@ async def test_multi_analysis_stale_detection_on_quote_change():
             assert res_latest2.json()["is_stale"] is True
 
 
+# ── Scenario 11b: Updating RFQ rules after analysis marks it stale ────────────
+@pytest.mark.asyncio
+async def test_multi_analysis_stale_detection_on_rfq_rule_update():
+    """11b. Analiz tamamlandıktan sonra RFQ bütçe, teslimat veya kural güncellemesi yapıldığında is_stale=True dönmeli."""
+    async with AsyncSessionLocal() as session:
+        org, sup1, sup2 = await create_org_and_suppliers(session)
+
+        rfq = RFQ(
+            organization_id=org.id,
+            title="RFQ Rule Staleness Test",
+            budget=Decimal("200000.00"),
+            max_delivery_days=14,
+            min_warranty_months=12,
+        )
+        session.add(rfq)
+        await session.flush()
+
+        q1 = Quote(
+            rfq_id=rfq.id,
+            supplier_id=sup1.id,
+            currency="TRY",
+            subtotal=Decimal("50000.00"),
+            total_price=Decimal("60000.00"),
+        )
+        q2 = Quote(
+            rfq_id=rfq.id,
+            supplier_id=sup2.id,
+            currency="TRY",
+            subtotal=Decimal("55000.00"),
+            total_price=Decimal("66000.00"),
+        )
+        session.add_all([q1, q2])
+        await session.commit()
+        rfq_id = str(rfq.id)
+        q1_id = q1.id
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        with patch.object(
+            AgentService,
+            "generate_recommendation",
+            new_callable=AsyncMock
+        ) as mock_agent:
+            from app.models.analysis import Recommendation, VerificationStatus
+            async def fake_gen(analysis_id, organization_id):
+                rec = Recommendation(
+                    analysis_id=analysis_id,
+                    recommended_quote_id=q1_id,
+                    reasoning="Uygun teklif [Kaynak: Politika].",
+                    verification_status=VerificationStatus.PENDING,
+                )
+                session = AsyncSessionLocal()
+                async with session:
+                    session.add(rec)
+                    await session.commit()
+                    await session.refresh(rec)
+                return rec
+            mock_agent.side_effect = fake_gen
+
+            # 1. Run analysis -> initially not stale
+            res1 = await client.post(f"/api/v1/rfqs/{rfq_id}/analyze", json={})
+            assert res1.status_code == 200
+            assert res1.json()["is_stale"] is False
+
+            res_check1 = await client.get(f"/api/v1/rfqs/{rfq_id}/analysis")
+            assert res_check1.status_code == 200
+            assert res_check1.json()["is_stale"] is False
+
+            # 2. Update RFQ rules (e.g. reduce budget, change delivery days)
+            async with AsyncSessionLocal() as session:
+                rfq_db = await session.get(RFQ, uuid.UUID(rfq_id))
+                rfq_db.budget = Decimal("150000.00")
+                rfq_db.max_delivery_days = 7
+                await session.commit()
+
+            # 3. GET analysis must now report is_stale=True
+            res_check2 = await client.get(f"/api/v1/rfqs/{rfq_id}/analysis")
+            assert res_check2.status_code == 200
+            assert res_check2.json()["is_stale"] is True
+
+
+# ── Scenario 11c: Removing a quote after analysis marks it stale ──────────────
+@pytest.mark.asyncio
+async def test_multi_analysis_stale_detection_on_quote_removal():
+    """11c. Analizden sonra bir teklif silindiğinde veya teklif sayısı değiştiğinde is_stale=True dönmeli."""
+    async with AsyncSessionLocal() as session:
+        org, sup1, sup2 = await create_org_and_suppliers(session)
+
+        rfq = RFQ(organization_id=org.id, title="Quote Removal Staleness Test")
+        session.add(rfq)
+        await session.flush()
+
+        q1 = Quote(
+            rfq_id=rfq.id,
+            supplier_id=sup1.id,
+            currency="TRY",
+            subtotal=Decimal("30000.00"),
+            total_price=Decimal("36000.00"),
+        )
+        q2 = Quote(
+            rfq_id=rfq.id,
+            supplier_id=sup2.id,
+            currency="TRY",
+            subtotal=Decimal("32000.00"),
+            total_price=Decimal("38400.00"),
+        )
+        session.add_all([q1, q2])
+        await session.commit()
+        rfq_id = str(rfq.id)
+        q1_id = q1.id
+        q2_id = q2.id
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        with patch.object(
+            AgentService,
+            "generate_recommendation",
+            new_callable=AsyncMock
+        ) as mock_agent:
+            from app.models.analysis import Recommendation, VerificationStatus
+            async def fake_gen(analysis_id, organization_id):
+                rec = Recommendation(
+                    analysis_id=analysis_id,
+                    recommended_quote_id=q1_id,
+                    reasoning="Uygun teklif.",
+                    verification_status=VerificationStatus.PENDING,
+                )
+                session = AsyncSessionLocal()
+                async with session:
+                    session.add(rec)
+                    await session.commit()
+                    await session.refresh(rec)
+                return rec
+            mock_agent.side_effect = fake_gen
+
+            # Run analysis
+            res1 = await client.post(f"/api/v1/rfqs/{rfq_id}/analyze", json={})
+            assert res1.status_code == 200
+            assert res1.json()["is_stale"] is False
+
+            # Delete quote 2
+            async with AsyncSessionLocal() as session:
+                q2_db = await session.get(Quote, q2_id)
+                await session.delete(q2_db)
+                await session.commit()
+
+            # GET analysis must now report is_stale=True
+            res_latest = await client.get(f"/api/v1/rfqs/{rfq_id}/analysis")
+            assert res_latest.status_code == 200
+            assert res_latest.json()["is_stale"] is True
+
+
+# ── Scenario 11d: Updating existing quote after analysis marks it stale ────────
+@pytest.mark.asyncio
+async def test_multi_analysis_stale_detection_on_quote_update():
+    """11d. Analizden sonra mevcut bir teklifin fiyat/teslimat detayları güncellendiğinde is_stale=True dönmeli."""
+    async with AsyncSessionLocal() as session:
+        org, sup1, sup2 = await create_org_and_suppliers(session)
+
+        rfq = RFQ(organization_id=org.id, title="Quote Update Staleness Test")
+        session.add(rfq)
+        await session.flush()
+
+        q1 = Quote(
+            rfq_id=rfq.id,
+            supplier_id=sup1.id,
+            currency="TRY",
+            subtotal=Decimal("40000.00"),
+            total_price=Decimal("48000.00"),
+        )
+        q2 = Quote(
+            rfq_id=rfq.id,
+            supplier_id=sup2.id,
+            currency="TRY",
+            subtotal=Decimal("42000.00"),
+            total_price=Decimal("50400.00"),
+        )
+        session.add_all([q1, q2])
+        await session.commit()
+        rfq_id = str(rfq.id)
+        q1_id = q1.id
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        with patch.object(
+            AgentService,
+            "generate_recommendation",
+            new_callable=AsyncMock
+        ) as mock_agent:
+            from app.models.analysis import Recommendation, VerificationStatus
+            async def fake_gen(analysis_id, organization_id):
+                rec = Recommendation(
+                    analysis_id=analysis_id,
+                    recommended_quote_id=q1_id,
+                    reasoning="Uygun teklif.",
+                    verification_status=VerificationStatus.PENDING,
+                )
+                session = AsyncSessionLocal()
+                async with session:
+                    session.add(rec)
+                    await session.commit()
+                    await session.refresh(rec)
+                return rec
+            mock_agent.side_effect = fake_gen
+
+            # Run analysis
+            res1 = await client.post(f"/api/v1/rfqs/{rfq_id}/analyze", json={})
+            assert res1.status_code == 200
+            assert res1.json()["is_stale"] is False
+
+            # Update existing quote 1
+            async with AsyncSessionLocal() as session:
+                q1_db = await session.get(Quote, q1_id)
+                q1_db.total_price = Decimal("39000.00")
+                await session.commit()
+
+            # GET analysis must now report is_stale=True
+            res_latest = await client.get(f"/api/v1/rfqs/{rfq_id}/analysis")
+            assert res_latest.status_code == 200
+            assert res_latest.json()["is_stale"] is True
+
+
+# ── Scenario 11e: Nullable timestamps & mixed timezone handling safety ─────────
+def test_multi_analysis_stale_nullable_and_timezone_handling():
+    """11e. Nullable timestamp'ler ve aware/naive datetime karşılaştırmaları güvenle çalışmalı."""
+    from datetime import datetime, timezone
+    from app.api.v1.analyses import _is_later
+
+    now_utc = datetime.now(timezone.utc)
+    now_naive = datetime.utcnow()
+
+    # Nullable safety
+    assert _is_later(None, now_utc) is False
+    assert _is_later(now_utc, None) is False
+    assert _is_later(None, None) is False
+
+    # Naive vs aware comparisons do not raise TypeError
+    future_utc = datetime(2030, 1, 1, 12, 0, tzinfo=timezone.utc)
+    past_naive = datetime(2020, 1, 1, 12, 0)
+    assert _is_later(future_utc, past_naive) is True
+    assert _is_later(past_naive, future_utc) is False
+
+    future_naive = datetime(2030, 1, 1, 12, 0)
+    past_utc = datetime(2020, 1, 1, 12, 0, tzinfo=timezone.utc)
+    assert _is_later(future_naive, past_utc) is True
+    assert _is_later(past_utc, future_naive) is False
+
+    # Exact equality produces False
+    assert _is_later(now_utc, now_utc) is False
+
+
+
 # ── Scenario 12: Dynamic RAG query retains RFQ scope & tenant isolation ───────
 @pytest.mark.asyncio
 async def test_multi_analysis_dynamic_rag_query_and_tenant_scoping():
