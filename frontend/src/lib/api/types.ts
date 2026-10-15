@@ -217,3 +217,89 @@ export interface UploadResponse {
   message: string;
 }
 
+// ── Phase 4: Supplier Performance & History Types ───────────────────
+
+export interface OrderSummary {
+  total_orders_count: number;
+  completed_orders_count: number;
+  delivered_orders_count: number;
+  cancelled_orders_count: number;
+  active_orders_count: number;
+  draft_orders_count: number;
+}
+
+export interface DeliveryReliability {
+  is_available: boolean;
+  confidence: "insufficient" | "low" | "high";
+  eligible_orders_count: number;
+  on_time_orders_count: number | null;
+  late_orders_count: number | null;
+  early_orders_count: number | null;
+  on_time_percentage: number | null;
+  average_delay_days: number | null;
+  notes: string | null;
+}
+
+export interface CurrencyFinancialSummary {
+  currency: string;
+  total_spend: number;
+  average_order_value: number;
+  min_order_value: number;
+  max_order_value: number;
+  orders_count: number;
+  final_amount_orders_count: number;
+  quoted_amount_orders_count: number;
+  historical_amount_orders_count: number;
+}
+
+export interface QualityMetrics {
+  is_tracked: boolean;
+  tracked_orders_count: number;
+  total_quality_issues: number | null;
+  total_rejections: number | null;
+  notes: string | null;
+}
+
+export interface SupplierPerformanceResponse {
+  supplier_id: string;
+  supplier_name: string;
+  organization_id: string;
+  order_summary: OrderSummary;
+  delivery_reliability: DeliveryReliability;
+  financial_summary: Record<string, CurrencyFinancialSummary>;
+  quality_metrics: QualityMetrics;
+  evaluated_orders_count: number;
+  confidence_level: "insufficient" | "low" | "high";
+  has_conflicts: boolean;
+  conflict_notes: string | null;
+}
+
+export interface SupplierHistoryItemResponse {
+  id: string;
+  source_type: "purchase_order" | "external_history";
+  source_record_id: string;
+  order_reference: string;
+  order_date: string;
+  expected_delivery_date: string | null;
+  actual_delivery_date: string | null;
+  delay_days: number | null;
+  status: string;
+  amount: number;
+  currency: string;
+  amount_type: "final_po_amount" | "quoted_amount" | "historical_amount";
+  quality_issues: number | null;
+  rejection_count: number | null;
+  has_collision: boolean;
+  collision_note: string | null;
+  notes: string | null;
+  created_at: string;
+}
+
+export interface PaginatedSupplierHistoryResponse {
+  items: SupplierHistoryItemResponse[];
+  total_count: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+

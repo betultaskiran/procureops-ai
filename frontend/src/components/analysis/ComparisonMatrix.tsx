@@ -10,7 +10,8 @@ import {
   ShieldAlert, 
   ArrowRight,
   TrendingUp,
-  FileText
+  FileText,
+  Clock
 } from "lucide-react";
 import { Quote, RFQ, AnalysisResponse } from "@/lib/api/types";
 
@@ -21,6 +22,7 @@ interface ComparisonMatrixProps {
   selectedQuoteId: string | null;
   onSelectQuote: (quoteId: string) => void;
   onOpenReviewModal?: (quoteId?: string) => void;
+  onOpenSupplierDrawer?: (supplierId: string, supplierName: string) => void;
 }
 
 export const ComparisonMatrix: React.FC<ComparisonMatrixProps> = ({
@@ -30,6 +32,7 @@ export const ComparisonMatrix: React.FC<ComparisonMatrixProps> = ({
   selectedQuoteId,
   onSelectQuote,
   onOpenReviewModal,
+  onOpenSupplierDrawer,
 }) => {
   if (!quotes || quotes.length === 0) {
     return null;
@@ -191,7 +194,7 @@ export const ComparisonMatrix: React.FC<ComparisonMatrixProps> = ({
                           </div>
                       )}
 
-                      <div className="mt-2 flex items-center gap-2">
+                      <div className="mt-2 flex items-center gap-1.5 flex-wrap">
                         <button
                           onClick={() => onSelectQuote(q.id)}
                           className={`px-2.5 py-1 rounded text-[11px] font-medium transition-colors ${
@@ -209,6 +212,18 @@ export const ComparisonMatrix: React.FC<ComparisonMatrixProps> = ({
                             className="px-2.5 py-1 rounded text-[11px] font-medium bg-emerald-600/80 hover:bg-emerald-600 text-white transition-colors"
                           >
                             Karar Ver
+                          </button>
+                        )}
+
+                        {onOpenSupplierDrawer && (
+                          <button
+                            type="button"
+                            onClick={() => onOpenSupplierDrawer(q.supplier_id, q.supplier_name || "Tedarikçi")}
+                            className="px-2 py-1 rounded text-[11px] font-medium bg-surface border border-border text-text-secondary hover:text-text-primary hover:border-primary/50 transition-colors flex items-center gap-1"
+                            title="Tedarikçi teslimat güvenilirliği ve geçmiş sipariş karnesini aç"
+                          >
+                            <Clock size={11} className="text-primary" />
+                            <span>Karne</span>
                           </button>
                         )}
                       </div>
@@ -239,6 +254,30 @@ export const ComparisonMatrix: React.FC<ComparisonMatrixProps> = ({
                   </td>
                 );
               })}
+            </tr>
+
+            {/* 1.5 Tedarikçi Geçmişi & Performans Karnesi */}
+            <tr className="hover:bg-surface/30">
+              <td className="p-3.5 font-medium text-text-muted sticky left-0 bg-surface/90 backdrop-blur border-r border-border">
+                <div className="text-text-primary font-medium">Tedarikçi Geçmiş Karnesi</div>
+                <div className="text-[10px] text-text-muted font-normal">Sipariş & teslimat güvenilirliği</div>
+              </td>
+              {quotes.map((q) => (
+                <td key={q.id} className="p-3.5 border-r border-border last:border-r-0 align-top">
+                  {onOpenSupplierDrawer ? (
+                    <button
+                      type="button"
+                      onClick={() => onOpenSupplierDrawer(q.supplier_id, q.supplier_name || "Tedarikçi")}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-surface/60 hover:bg-surface border border-border hover:border-primary/40 text-text-primary transition-all text-left group"
+                    >
+                      <Clock size={13} className="text-primary shrink-0 group-hover:scale-110 transition-transform" />
+                      <span>Geçmişi İncele →</span>
+                    </button>
+                  ) : (
+                    <span className="text-text-muted text-xs">-</span>
+                  )}
+                </td>
+              ))}
             </tr>
 
             {/* 2. Toplam TCO (Total Cost of Ownership) */}

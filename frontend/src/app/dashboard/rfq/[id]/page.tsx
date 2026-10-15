@@ -24,7 +24,8 @@ import {
   Ban,
   Sparkles,
   TrendingUp,
-  RefreshCw
+  RefreshCw,
+  Clock
 } from "lucide-react";
 import { rfqsApi } from "@/lib/api/rfqs";
 import { 
@@ -41,6 +42,7 @@ import { ComparisonMatrix } from "@/components/analysis/ComparisonMatrix";
 import { EvidencePanel } from "@/components/analysis/EvidencePanel";
 import { StaleNoticeBanner } from "@/components/analysis/StaleNoticeBanner";
 import { ReviewModal } from "@/components/analysis/ReviewModal";
+import { SupplierPerformanceDrawer } from "@/components/analysis/SupplierPerformanceDrawer";
 
 export default function RFQDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const router = useRouter();
@@ -48,6 +50,9 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
   const [quoteToDelete, setQuoteToDelete] = useState<Quote | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  // Supplier Performance Drawer state
+  const [drawerSupplier, setDrawerSupplier] = useState<{ id: string; name: string } | null>(null);
   
   // Cancel RFQ states
   const [isCancelRfqOpen, setIsCancelRfqOpen] = useState(false);
@@ -663,6 +668,9 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
             setReviewQuoteId(qId || null);
             setIsReviewOpen(true);
           }}
+          onOpenSupplierDrawer={(suppId, suppName) => {
+            setDrawerSupplier({ id: suppId, name: suppName });
+          }}
         />
       ) : quotes.length === 1 ? (
         <div className="p-5 rounded-xl bg-surface-elevated border border-border shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -756,6 +764,15 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                       </td>
                       <td className="px-4 py-3 text-right">
                         <div className="flex items-center justify-end gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => setDrawerSupplier({ id: q.supplier_id, name: q.supplier_name || 'Tedarikçi' })}
+                            title="Tedarikçi performans karnesi ve geçmiş siparişlerini incele"
+                            className="p-1.5 rounded text-text-muted hover:text-text-primary hover:bg-surface border border-transparent hover:border-border transition-colors"
+                          >
+                            <Clock size={13} />
+                          </button>
+
                           <button 
                             onClick={() => setSelectedQuoteId(q.id)}
                             className={`text-xs font-semibold px-2.5 py-1 rounded transition-colors ${
@@ -1437,6 +1454,14 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
           </div>
         </div>
       )}
+
+      {/* ── Supplier Performance Drawer ── */}
+      <SupplierPerformanceDrawer
+        isOpen={!!drawerSupplier}
+        onClose={() => setDrawerSupplier(null)}
+        supplierId={drawerSupplier?.id || ""}
+        supplierName={drawerSupplier?.name || ""}
+      />
 
     </div>
   );
