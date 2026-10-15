@@ -11,10 +11,13 @@ from app.models.organization import Organization
 from app.models.supplier import Supplier
 from app.models.rfq import RFQ, RFQItem, RFQStatus, QuoteDocument, ParseStatus
 from app.models.quote import Quote, QuoteItem
-from app.models.analysis import Analysis, AnalysisStatus, Approval, ApprovalStatus
+from app.models.analysis import Analysis, AnalysisStatus, Approval, ApprovalStatus, TCOResult
 from app.models.order import PurchaseOrder
+from app.models.user import User, UserRole
+from app.core.security import hash_password, create_access_token
 from app.services.agent.schemas import AgentRecommendationSchema
 from app.services.agent.service import AgentService
+from tests.auth_helper import create_test_auth_context
 
 
 async def create_org_and_suppliers(session):
@@ -29,8 +32,39 @@ async def create_org_and_suppliers(session):
     sup1 = Supplier(name=f"Supplier Alpha {unique_suffix}", organization_id=org.id)
     sup2 = Supplier(name=f"Supplier Beta {unique_suffix}", organization_id=org.id)
     session.add_all([sup1, sup2])
+
+    user = User(
+        organization_id=org.id,
+        email=f"admin_{unique_suffix}@testcorp.com",
+        full_name="Admin Test User",
+        hashed_password=hash_password("Passw0rd123!"),
+        role=UserRole.ADMIN.value,
+        is_active=True,
+    )
+    session.add(user)
     await session.commit()
+    await session.refresh(org)
+    await session.refresh(sup1)
+    await session.refresh(sup2)
+    await session.refresh(user)
+
+    token = create_access_token({"sub": str(user.id), "org_id": str(org.id), "role": "admin"})
+    org.headers = {"Authorization": f"Bearer {token}"}
     return org, sup1, sup2
+
+
+def make_tco_result(analysis_id, quote_id, amount=Decimal("10000.00"), currency="TRY"):
+    return TCOResult(
+        analysis_id=analysis_id,
+        quote_id=quote_id,
+        subtotal=amount,
+        vat_amount=Decimal("0.00"),
+        shipping_cost=Decimal("0.00"),
+        discount_amount=Decimal("0.00"),
+        other_costs=Decimal("0.00"),
+        total_tco=amount,
+        currency=currency,
+    )
 
 
 def get_mock_agent_output(recommended_quote_id: uuid.UUID | None = None):
@@ -101,7 +135,7 @@ async def test_multi_analysis_rfq_rules_fallback_when_omitted():
         q2_id = q2.id
 
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
+    async with AsyncClient(transport=transport, base_url="http://test", headers=org.headers) as client:
         with patch.object(
             AgentService,
             "generate_recommendation",
@@ -199,7 +233,7 @@ async def test_multi_analysis_independent_tco_and_compliance():
         q2_id = str(q2.id)
 
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
+    async with AsyncClient(transport=transport, base_url="http://test", headers=org.headers) as client:
         with patch.object(
             AgentService,
             "generate_recommendation",
@@ -283,7 +317,7 @@ async def test_multi_analysis_missing_financial_data_marked_with_warnings():
         q1_id = str(q1.id)
 
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
+    async with AsyncClient(transport=transport, base_url="http://test", headers=org.headers) as client:
         with patch.object(
             AgentService,
             "generate_recommendation",
@@ -353,7 +387,7 @@ async def test_multi_analysis_currency_mismatch_returns_400():
         rfq_id = str(rfq.id)
 
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
+    async with AsyncClient(transport=transport, base_url="http://test", headers=org.headers) as client:
         res = await client.post(f"/api/v1/rfqs/{rfq_id}/analyze", json={})
         assert res.status_code == 400
         assert "farklı para birimleri" in res.json()["detail"].lower()
@@ -383,7 +417,7 @@ async def test_multi_analysis_fewer_than_two_quotes_returns_400():
         rfq_id = str(rfq.id)
 
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
+    async with AsyncClient(transport=transport, base_url="http://test", headers=org.headers) as client:
         res = await client.post(f"/api/v1/rfqs/{rfq_id}/analyze", json={})
         assert res.status_code == 400
         assert "en az 2 teklif gereklidir" in res.json()["detail"].lower()
@@ -432,7 +466,7 @@ async def test_multi_analysis_low_extraction_confidence_warning():
         q1_id = str(q1.id)
 
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
+    async with AsyncClient(transport=transport, base_url="http://test", headers=org.headers) as client:
         with patch.object(
             AgentService,
             "generate_recommendation",
@@ -492,7 +526,7 @@ async def test_multi_analysis_cancelled_rfq_cannot_be_analyzed_or_reviewed():
         analysis_id = str(analysis.id)
 
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
+    async with AsyncClient(transport=transport, base_url="http://test", headers=org.headers) as client:
         # Analyze attempt on cancelled RFQ
         res_analyze = await client.post(f"/api/v1/rfqs/{rfq_id}/analyze", json={})
         assert res_analyze.status_code == 400
@@ -508,13 +542,12 @@ async def test_multi_analysis_cancelled_rfq_cannot_be_analyzed_or_reviewed():
         assert "cancelled" in detail_review or "iptal" in detail_review
 
 
-# ── Scenario 8: Cross-tenant analysis and review rejected with 403 ────────────
+# ── Scenario 8: Cross-tenant analysis and review rejected with 404 ────────────
 @pytest.mark.asyncio
 async def test_multi_analysis_cross_tenant_rejected_403():
-    """8. Farklı organizasyon kimliği ile gelen analiz ve onay talepleri 403 ile reddedilmeli."""
+    """8. Farklı organizasyon kimliği ile gelen analiz ve onay talepleri 404 ile reddedilmeli."""
     async with AsyncSessionLocal() as session:
         org, sup1, sup2 = await create_org_and_suppliers(session)
-        different_org = str(uuid.uuid4())
 
         rfq = RFQ(organization_id=org.id, title="Tenant RFQ")
         session.add(rfq)
@@ -530,22 +563,20 @@ async def test_multi_analysis_cross_tenant_rejected_403():
         rfq_id = str(rfq.id)
         analysis_id = str(analysis.id)
 
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        # Cross-tenant analyze request
-        res_analyze = await client.post(f"/api/v1/rfqs/{rfq_id}/analyze", json={
-            "organization_id": different_org
-        })
-        assert res_analyze.status_code == 403
-        assert "organizasyona ait olmayan" in res_analyze.json()["detail"]
+    # Foreign tenant auth context
+    foreign_auth = await create_test_auth_context(role=UserRole.ADMIN)
 
-        # Cross-tenant review request
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test", headers=foreign_auth.headers) as client:
+        # Cross-tenant analyze request -> 404
+        res_analyze = await client.post(f"/api/v1/rfqs/{rfq_id}/analyze", json={})
+        assert res_analyze.status_code == 404
+
+        # Cross-tenant review request -> 404
         res_review = await client.post(f"/api/v1/analyses/{analysis_id}/review", json={
-            "status": "approved",
-            "organization_id": different_org
+            "status": "approved"
         })
-        assert res_review.status_code == 403
-        assert "organizasyona ait olmayan" in res_review.json()["detail"]
+        assert res_review.status_code == 404
 
 
 # ── Scenario 9: Repeated approval blocked from creating duplicate PO ──────────
@@ -579,12 +610,16 @@ async def test_multi_analysis_repeated_approval_blocks_duplicate_po():
 
         analysis = Analysis(rfq_id=rfq.id, status=AnalysisStatus.COMPLETED.value)
         session.add(analysis)
+        await session.flush()
+        tco1 = make_tco_result(analysis.id, q1.id, Decimal("10000.00"))
+        tco2 = make_tco_result(analysis.id, q2.id, Decimal("12000.00"))
+        session.add_all([tco1, tco2])
         await session.commit()
         analysis_id = str(analysis.id)
         q1_id = str(q1.id)
 
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
+    async with AsyncClient(transport=transport, base_url="http://test", headers=org.headers) as client:
         # 1st approval -> creates PO
         res1 = await client.post(f"/api/v1/analyses/{analysis_id}/review", json={
             "status": "approved",
@@ -623,7 +658,7 @@ async def test_multi_analysis_concurrency_lock_returns_409():
         rfq_id = str(rfq.id)
 
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
+    async with AsyncClient(transport=transport, base_url="http://test", headers=org.headers) as client:
         res = await client.post(f"/api/v1/rfqs/{rfq_id}/analyze", json={})
         assert res.status_code == 409
         assert "devam eden aktif bir analiz" in res.json()["detail"]
@@ -670,7 +705,7 @@ async def test_multi_analysis_stale_detection_on_quote_change():
         q1_id = q1.id
 
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
+    async with AsyncClient(transport=transport, base_url="http://test", headers=org.headers) as client:
         with patch.object(
             AgentService,
             "generate_recommendation",
@@ -760,7 +795,7 @@ async def test_multi_analysis_stale_detection_on_rfq_rule_update():
         q1_id = q1.id
 
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
+    async with AsyncClient(transport=transport, base_url="http://test", headers=org.headers) as client:
         with patch.object(
             AgentService,
             "generate_recommendation",
@@ -836,7 +871,7 @@ async def test_multi_analysis_stale_detection_on_quote_removal():
         q2_id = q2.id
 
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
+    async with AsyncClient(transport=transport, base_url="http://test", headers=org.headers) as client:
         with patch.object(
             AgentService,
             "generate_recommendation",
@@ -906,7 +941,7 @@ async def test_multi_analysis_stale_detection_on_quote_update():
         q1_id = q1.id
 
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
+    async with AsyncClient(transport=transport, base_url="http://test", headers=org.headers) as client:
         with patch.object(
             AgentService,
             "generate_recommendation",
@@ -1074,12 +1109,16 @@ async def test_multi_analysis_non_compliant_quote_approval_safety():
 
         analysis = Analysis(rfq_id=rfq.id, status=AnalysisStatus.COMPLETED.value)
         session.add(analysis)
+        await session.flush()
+        tco1 = make_tco_result(analysis.id, q_fail.id, Decimal("10000.00"))
+        tco2 = make_tco_result(analysis.id, q_pass.id, Decimal("12000.00"))
+        session.add_all([tco1, tco2])
         await session.commit()
         analysis_id = str(analysis.id)
         fail_id = str(q_fail.id)
 
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
+    async with AsyncClient(transport=transport, base_url="http://test", headers=org.headers) as client:
         # Standard "approved" on non-compliant quote -> 400
         res_fail_std = await client.post(f"/api/v1/analyses/{analysis_id}/review", json={
             "status": "approved",
@@ -1106,3 +1145,240 @@ async def test_multi_analysis_non_compliant_quote_approval_safety():
         assert res_success.status_code == 201
         assert res_success.json()["status"] == "exception_approved"
         assert res_success.json()["acknowledged_policy_violation"] is True
+
+
+# ── Scenario 14: Phase 5.2.1 Analysis Approval Safety (Status & Staleness) ───
+@pytest.mark.asyncio
+async def test_review_analysis_rejects_running_and_failed_states():
+    """14a. RUNNING veya FAILED durumundaki analizler onaylanamaz (400), onay/PO kaydı oluşmamalıdır."""
+    async with AsyncSessionLocal() as session:
+        org, sup1, sup2 = await create_org_and_suppliers(session)
+
+        rfq = RFQ(organization_id=org.id, title="Incomplete Analysis Approval RFQ")
+        session.add(rfq)
+        await session.flush()
+
+        q1 = Quote(rfq_id=rfq.id, supplier_id=sup1.id, currency="TRY", subtotal=Decimal("10000.00"), total_price=Decimal("10000.00"), is_compliant=True)
+        q2 = Quote(rfq_id=rfq.id, supplier_id=sup2.id, currency="TRY", subtotal=Decimal("12000.00"), total_price=Decimal("12000.00"), is_compliant=True)
+        session.add_all([q1, q2])
+        await session.flush()
+
+        # RUNNING analysis
+        analysis_running = Analysis(rfq_id=rfq.id, status=AnalysisStatus.RUNNING.value)
+        # FAILED analysis
+        analysis_failed = Analysis(rfq_id=rfq.id, status=AnalysisStatus.FAILED.value, error_message="LLM timeout")
+        session.add_all([analysis_running, analysis_failed])
+        await session.commit()
+
+        running_id = str(analysis_running.id)
+        failed_id = str(analysis_failed.id)
+        q1_id = str(q1.id)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test", headers=org.headers) as client:
+        # 1. Attempt to approve RUNNING analysis -> 400
+        res_running = await client.post(f"/api/v1/analyses/{running_id}/review", json={
+            "status": "approved",
+            "selected_quote_id": q1_id,
+        })
+        assert res_running.status_code == 400
+        detail_running = res_running.json()["detail"].casefold()
+        assert "completed" in detail_running or "tamamlanmış" in detail_running
+
+        # 2. Attempt to approve FAILED analysis -> 400
+        res_failed = await client.post(f"/api/v1/analyses/{failed_id}/review", json={
+            "status": "approved",
+            "selected_quote_id": q1_id,
+        })
+        assert res_failed.status_code == 400
+        detail_failed = res_failed.json()["detail"].casefold()
+        assert "completed" in detail_failed or "tamamlanmış" in detail_failed
+
+    # 3. Verify in DB that no Approval or PurchaseOrder records were created
+    async with AsyncSessionLocal() as session:
+        approvals = (await session.execute(
+            select(Approval).where(Approval.analysis_id.in_([uuid.UUID(running_id), uuid.UUID(failed_id)]))
+        )).scalars().all()
+        assert len(approvals) == 0
+
+        pos = (await session.execute(
+            select(PurchaseOrder).join(Quote).where(Quote.rfq_id == rfq.id)
+        )).scalars().all()
+        assert len(pos) == 0
+
+
+@pytest.mark.asyncio
+async def test_review_analysis_rejects_stale_analysis_on_quote_change():
+    """14b. Teklifler analizden sonra değiştiğinde (yeni teklif eklendiğinde) onay 400 ile engellenmeli."""
+    async with AsyncSessionLocal() as session:
+        org, sup1, sup2 = await create_org_and_suppliers(session)
+
+        rfq = RFQ(organization_id=org.id, title="Stale Quote Addition RFQ")
+        session.add(rfq)
+        await session.flush()
+
+        q1 = Quote(rfq_id=rfq.id, supplier_id=sup1.id, currency="TRY", subtotal=Decimal("10000.00"), total_price=Decimal("10000.00"), is_compliant=True)
+        q2 = Quote(rfq_id=rfq.id, supplier_id=sup2.id, currency="TRY", subtotal=Decimal("12000.00"), total_price=Decimal("12000.00"), is_compliant=True)
+        session.add_all([q1, q2])
+        await session.flush()
+
+        # Completed analysis that analyzed q1 and q2
+        analysis = Analysis(rfq_id=rfq.id, status=AnalysisStatus.COMPLETED.value)
+        session.add(analysis)
+        await session.flush()
+
+        tco1 = make_tco_result(analysis.id, q1.id, Decimal("10000.00"))
+        tco2 = make_tco_result(analysis.id, q2.id, Decimal("12000.00"))
+        session.add_all([tco1, tco2])
+        await session.commit()
+
+        analysis_id = str(analysis.id)
+        q1_id = str(q1.id)
+        rfq_id = rfq.id
+
+    # Add a 3rd quote to RFQ (making the 2-quote analysis stale)
+    async with AsyncSessionLocal() as session:
+        sup3 = Supplier(name=f"Supplier Gamma {uuid.uuid4().hex[:6]}", organization_id=org.id)
+        session.add(sup3)
+        await session.flush()
+
+        q3 = Quote(rfq_id=rfq_id, supplier_id=sup3.id, currency="TRY", subtotal=Decimal("9000.00"), total_price=Decimal("9000.00"), is_compliant=True)
+        session.add(q3)
+        await session.commit()
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test", headers=org.headers) as client:
+        # Attempt to approve stale analysis
+        res_stale = await client.post(f"/api/v1/analyses/{analysis_id}/review", json={
+            "status": "approved",
+            "selected_quote_id": q1_id,
+        })
+        assert res_stale.status_code == 400
+        detail = res_stale.json()["detail"].casefold()
+        assert "stale" in detail or "güncelliğini yitirmiştir" in detail
+        assert "yeniden çalıştırıp" in detail or "rerun" in detail
+
+    # Verify no Approval or PO was created
+    async with AsyncSessionLocal() as session:
+        approvals = (await session.execute(
+            select(Approval).where(Approval.analysis_id == uuid.UUID(analysis_id))
+        )).scalars().all()
+        assert len(approvals) == 0
+
+        pos = (await session.execute(
+            select(PurchaseOrder).join(Quote).where(Quote.rfq_id == rfq_id)
+        )).scalars().all()
+        assert len(pos) == 0
+
+
+@pytest.mark.asyncio
+async def test_review_analysis_rejects_stale_analysis_on_quote_update():
+    """14c. Teklif detayları analizden sonra güncellendiğinde onay 400 ile engellenmeli."""
+    from datetime import datetime, timezone, timedelta
+
+    async with AsyncSessionLocal() as session:
+        org, sup1, sup2 = await create_org_and_suppliers(session)
+
+        rfq = RFQ(organization_id=org.id, title="Stale Quote Update RFQ")
+        session.add(rfq)
+        await session.flush()
+
+        q1 = Quote(rfq_id=rfq.id, supplier_id=sup1.id, currency="TRY", subtotal=Decimal("10000.00"), total_price=Decimal("10000.00"), is_compliant=True)
+        q2 = Quote(rfq_id=rfq.id, supplier_id=sup2.id, currency="TRY", subtotal=Decimal("12000.00"), total_price=Decimal("12000.00"), is_compliant=True)
+        session.add_all([q1, q2])
+        await session.flush()
+
+        # Analysis created with created_at set in the past
+        past_time = datetime.now(timezone.utc) - timedelta(minutes=10)
+        analysis = Analysis(rfq_id=rfq.id, status=AnalysisStatus.COMPLETED.value)
+        session.add(analysis)
+        await session.flush()
+
+        tco1 = make_tco_result(analysis.id, q1.id, Decimal("10000.00"))
+        tco2 = make_tco_result(analysis.id, q2.id, Decimal("12000.00"))
+        session.add_all([tco1, tco2])
+        await session.commit()
+
+        # Update q1 with a more recent updated_at timestamp
+        q1.total_price = Decimal("10500.00")
+        q1.updated_at = datetime.now(timezone.utc) + timedelta(minutes=5)
+        session.add(q1)
+        await session.commit()
+
+        analysis_id = str(analysis.id)
+        q1_id = str(q1.id)
+        rfq_id = rfq.id
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test", headers=org.headers) as client:
+        res_stale = await client.post(f"/api/v1/analyses/{analysis_id}/review", json={
+            "status": "approved",
+            "selected_quote_id": q1_id,
+        })
+        assert res_stale.status_code == 400
+        detail = res_stale.json()["detail"].casefold()
+        assert "stale" in detail or "güncelliğini yitirmiştir" in detail
+
+    # Verify no Approval or PO was created
+    async with AsyncSessionLocal() as session:
+        approvals = (await session.execute(
+            select(Approval).where(Approval.analysis_id == uuid.UUID(analysis_id))
+        )).scalars().all()
+        assert len(approvals) == 0
+
+
+@pytest.mark.asyncio
+async def test_review_analysis_completed_current_analysis_succeeds_and_creates_po():
+    """14d. Tamamlanmış ve güncel (non-stale) analiz onayı başarılı olmalı ve PO üretmelidir."""
+    async with AsyncSessionLocal() as session:
+        org, sup1, sup2 = await create_org_and_suppliers(session)
+
+        rfq = RFQ(organization_id=org.id, title="Valid Approval RFQ")
+        session.add(rfq)
+        await session.flush()
+
+        q1 = Quote(rfq_id=rfq.id, supplier_id=sup1.id, currency="TRY", subtotal=Decimal("10000.00"), total_price=Decimal("10000.00"), is_compliant=True)
+        q2 = Quote(rfq_id=rfq.id, supplier_id=sup2.id, currency="TRY", subtotal=Decimal("12000.00"), total_price=Decimal("12000.00"), is_compliant=True)
+        session.add_all([q1, q2])
+        await session.flush()
+
+        analysis = Analysis(rfq_id=rfq.id, status=AnalysisStatus.COMPLETED.value)
+        session.add(analysis)
+        await session.flush()
+
+        tco1 = make_tco_result(analysis.id, q1.id, Decimal("10000.00"))
+        tco2 = make_tco_result(analysis.id, q2.id, Decimal("12000.00"))
+        session.add_all([tco1, tco2])
+        await session.commit()
+
+        analysis_id = str(analysis.id)
+        q1_id = str(q1.id)
+        rfq_id = rfq.id
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test", headers=org.headers) as client:
+        res = await client.post(f"/api/v1/analyses/{analysis_id}/review", json={
+            "status": "approved",
+            "selected_quote_id": q1_id,
+            "comment": "Tüm şartlar uygun, sipariş onaylandı.",
+        })
+        assert res.status_code == 201
+        data = res.json()
+        assert data["status"] == "approved"
+        assert data["selected_quote_id"] == q1_id
+
+    # Verify DB state: Approval and PO created, RFQ status updated to approved
+    async with AsyncSessionLocal() as session:
+        approval = (await session.execute(
+            select(Approval).where(Approval.analysis_id == uuid.UUID(analysis_id))
+        )).scalar_one()
+        assert approval.status == "approved"
+
+        po = (await session.execute(
+            select(PurchaseOrder).where(PurchaseOrder.approval_id == approval.id)
+        )).scalar_one()
+        assert po.status == "issued"
+        assert str(po.quote_id) == q1_id
+
+        updated_rfq = await session.get(RFQ, rfq_id)
+        assert updated_rfq.status == RFQStatus.APPROVED.value
