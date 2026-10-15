@@ -17,7 +17,10 @@ Usage anywhere in the codebase:
   print(settings.POSTGRES_HOST)
 """
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+DEV_JWT_SECRET: str = "dev-secret-change-in-production-only-procureops-jwt-secret-key-32chars"
 
 
 class Settings(BaseSettings):
@@ -30,6 +33,7 @@ class Settings(BaseSettings):
     # ── Application ──────────────────────────────────────────────────────────
     APP_NAME: str = "ProcureOps AI"
     APP_VERSION: str = "0.1.0"
+    ENVIRONMENT: str = "development"  # development, staging, production
     DEBUG: bool = False
 
     # ── PostgreSQL ───────────────────────────────────────────────────────────
@@ -64,6 +68,33 @@ class Settings(BaseSettings):
 
     # Maximum upload size in megabytes. Enforce at API level.
     MAX_UPLOAD_SIZE_MB: int = 50
+
+    # ── JWT & Authentication (Phase 5) ───────────────────────────────────────
+    JWT_SECRET_KEY: str = DEV_JWT_SECRET
+    JWT_ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440  # 24 hours
+
+    @model_validator(mode="after")
+    def validate_production_jwt_secret(self) -> "Settings":
+        """
+        Enforce fail-closed security for JWT configuration:
+        In production (when DEBUG is False or ENVIRONMENT is 'production'/'prod'),
+        require a non-default secret with at least 32 characters.
+        """
+        is_production = (not self.DEBUG) or (self.ENVIRONMENT.lower() in ("production", "prod"))
+        if is_production:
+            if self.JWT_SECRET_KEY == DEV_JWT_SECRET:
+                raise ValueError(
+                    "Production configuration error: JWT_SECRET_KEY cannot use the default "
+                    "development secret when DEBUG=False or ENVIRONMENT is production. "
+                    "Configure a unique, high-entropy secret in your environment."
+                )
+            if len(self.JWT_SECRET_KEY) < 32:
+                raise ValueError(
+                    "Production configuration error: JWT_SECRET_KEY must be at least 32 "
+                    "characters long in production."
+                )
+        return self
 
     # ── pydantic-settings config ─────────────────────────────────────────────
     model_config = SettingsConfigDict(
