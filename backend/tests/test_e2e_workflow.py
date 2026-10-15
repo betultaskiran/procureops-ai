@@ -10,12 +10,15 @@ from app.models.organization import Organization
 from app.models.supplier import Supplier
 from app.models.rfq import RFQ, RFQItem
 from app.models.quote import Quote, QuoteItem
+from app.models.user import UserRole
+from tests.auth_helper import create_test_auth_context
 
 
 @pytest.mark.asyncio
 async def test_end_to_end_rfq_and_multi_quote_workflow():
+    auth = await create_test_auth_context(role=UserRole.ADMIN, org_name="E2E Test Org")
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
+    async with AsyncClient(transport=transport, base_url="http://test", headers=auth.headers) as client:
         
         # 1. Create RFQ with two RFQItems and commercial conditions
         rfq_payload = {

@@ -10,11 +10,17 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.auth import (
+    require_authenticated,
+    require_employee_or_above,
+    require_manager_or_above,
+)
 from app.db.session import get_db
 from app.models.analysis import Analysis, Approval, ApprovalStatus
 from app.models.order import PurchaseOrder
 from app.models.quote import Quote
 from app.models.rfq import RFQ, RFQItem, RFQStatus, QuoteDocument
+from app.models.user import User
 
 router = APIRouter(prefix="/api/v1/rfqs", tags=["rfqs"])
 
@@ -158,7 +164,8 @@ async def list_rfqs(
     include_archived: bool = Query(False, description="Include archived RFQs in listing"),
     archived_only: bool = Query(False, description="Return only archived RFQs"),
     organization_id: Optional[uuid.UUID] = Query(None),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_authenticated),
 ) -> PaginatedRFQResponse:
     import math
     from sqlalchemy import func, or_, cast, String
@@ -166,9 +173,8 @@ async def list_rfqs(
 
     effective_limit = page_size or limit or 20
 
-    conditions = []
-    if organization_id:
-        conditions.append(RFQ.organization_id == organization_id)
+    # Tenant isolation: strictly filter by the authenticated user's organization
+    conditions = [RFQ.organization_id == current_user.organization_id]
 
     if status and status != "all":
         conditions.append(RFQ.status == status)
@@ -247,11 +253,12 @@ async def list_rfqs(
 )
 async def get_rfq(
     rfq_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_authenticated),
 ) -> RFQResponse:
     result = await db.execute(
         select(RFQ)
-        .where(RFQ.id == rfq_id)
+        .where(RFQ.id == rfq_id, RFQ.organization_id == current_user.organization_id)
         .options(
             selectinload(RFQ.items),
             selectinload(RFQ.created_by),
@@ -288,10 +295,11 @@ async def delete_rfq(
     rfq_id: uuid.UUID,
     organization_id: Optional[uuid.UUID] = Query(None),
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_manager_or_above),
 ):
     result = await db.execute(
         select(RFQ)
-        .where(RFQ.id == rfq_id)
+        .where(RFQ.id == rfq_id, RFQ.organization_id == current_user.organization_id)
         .options(
             selectinload(RFQ.quotes),
             selectinload(RFQ.quote_documents),
@@ -303,13 +311,6 @@ async def delete_rfq(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"RFQ {rfq_id} bulunamadı",
-        )
-
-    # Multi-tenancy check
-    if organization_id and rfq.organization_id != organization_id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Bu organizasyona ait olmayan RFQ silinemez",
         )
 
     # Business rule verification
@@ -366,7 +367,8 @@ class PurchaseOrderResponse(BaseModel):
 async def cancel_rfq(
     rfq_id: uuid.UUID,
     payload: RFQCancelRequest,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_manager_or_above),
 ) -> RFQResponse:
     from app.models.order import PurchaseOrder
     from app.models.quote import Quote
@@ -381,7 +383,7 @@ async def cancel_rfq(
 
     result = await db.execute(
         select(RFQ)
-        .where(RFQ.id == rfq_id)
+        .where(RFQ.id == rfq_id, RFQ.organization_id == current_user.organization_id)
         .options(
             selectinload(RFQ.items),
             selectinload(RFQ.created_by),
@@ -393,12 +395,6 @@ async def cancel_rfq(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"RFQ {rfq_id} bulunamadı",
-        )
-
-    if payload.organization_id and rfq.organization_id != payload.organization_id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Bu organizasyona ait olmayan RFQ üzerinde işlem yapılamaz",
         )
 
     if rfq.status == RFQStatus.CANCELLED.value:
@@ -432,6 +428,7 @@ async def cancel_rfq(
             db.add(
                 AuditEvent(
                     organization_id=rfq.organization_id,
+                    actor_id=current_user.id,
                     event_type="po_cancelled",
                     entity_type="purchase_order",
                     entity_id=po.id,
@@ -449,6 +446,7 @@ async def cancel_rfq(
     db.add(
         AuditEvent(
             organization_id=rfq.organization_id,
+            actor_id=current_user.id,
             event_type="rfq_cancelled",
             entity_type="rfq",
             entity_id=rfq.id,
@@ -491,13 +489,14 @@ async def cancel_rfq(
 async def archive_rfq(
     rfq_id: uuid.UUID,
     payload: Optional[RFQArchiveRequest] = None,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_employee_or_above),
 ) -> RFQResponse:
     from app.models.audit import AuditEvent
 
     result = await db.execute(
         select(RFQ)
-        .where(RFQ.id == rfq_id)
+        .where(RFQ.id == rfq_id, RFQ.organization_id == current_user.organization_id)
         .options(
             selectinload(RFQ.items),
             selectinload(RFQ.created_by),
@@ -511,13 +510,6 @@ async def archive_rfq(
             detail=f"RFQ {rfq_id} bulunamadı",
         )
 
-    org_id = payload.organization_id if payload else None
-    if org_id and rfq.organization_id != org_id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Bu organizasyona ait olmayan RFQ üzerinde işlem yapılamaz",
-        )
-
     if rfq.is_archived:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -529,6 +521,7 @@ async def archive_rfq(
     db.add(
         AuditEvent(
             organization_id=rfq.organization_id,
+            actor_id=current_user.id,
             event_type="rfq_archived",
             entity_type="rfq",
             entity_id=rfq.id,
@@ -570,13 +563,14 @@ async def archive_rfq(
 async def unarchive_rfq(
     rfq_id: uuid.UUID,
     payload: Optional[RFQArchiveRequest] = None,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_employee_or_above),
 ) -> RFQResponse:
     from app.models.audit import AuditEvent
 
     result = await db.execute(
         select(RFQ)
-        .where(RFQ.id == rfq_id)
+        .where(RFQ.id == rfq_id, RFQ.organization_id == current_user.organization_id)
         .options(
             selectinload(RFQ.items),
             selectinload(RFQ.created_by),
@@ -590,13 +584,6 @@ async def unarchive_rfq(
             detail=f"RFQ {rfq_id} bulunamadı",
         )
 
-    org_id = payload.organization_id if payload else None
-    if org_id and rfq.organization_id != org_id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Bu organizasyona ait olmayan RFQ üzerinde işlem yapılamaz",
-        )
-
     if not rfq.is_archived:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -608,6 +595,7 @@ async def unarchive_rfq(
     db.add(
         AuditEvent(
             organization_id=rfq.organization_id,
+            actor_id=current_user.id,
             event_type="rfq_unarchived",
             entity_type="rfq",
             entity_id=rfq.id,
@@ -648,7 +636,8 @@ async def cancel_rfq_purchase_order(
     rfq_id: uuid.UUID,
     po_id: uuid.UUID,
     payload: POCancelRequest,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_manager_or_above),
 ) -> PurchaseOrderResponse:
     from app.models.order import PurchaseOrder
     from app.models.quote import Quote
@@ -661,17 +650,14 @@ async def cancel_rfq_purchase_order(
             detail="İptal gerekçesi en az 3 karakter olmalıdır.",
         )
 
-    rfq = await db.get(RFQ, rfq_id)
+    rfq_res = await db.execute(
+        select(RFQ).where(RFQ.id == rfq_id, RFQ.organization_id == current_user.organization_id)
+    )
+    rfq = rfq_res.scalar_one_or_none()
     if not rfq:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"RFQ {rfq_id} bulunamadı",
-        )
-
-    if payload.organization_id and rfq.organization_id != payload.organization_id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Bu organizasyona ait olmayan sipariş üzerinde işlem yapılamaz",
         )
 
     po_query = await db.execute(
@@ -702,6 +688,7 @@ async def cancel_rfq_purchase_order(
     db.add(
         AuditEvent(
             organization_id=rfq.organization_id,
+            actor_id=current_user.id,
             event_type="po_cancelled",
             entity_type="purchase_order",
             entity_id=po.id,
@@ -726,7 +713,8 @@ async def cancel_rfq_purchase_order(
 async def cancel_purchase_order_direct(
     po_id: uuid.UUID,
     payload: POCancelRequest,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_manager_or_above),
 ) -> PurchaseOrderResponse:
     from app.models.order import PurchaseOrder
     from app.models.quote import Quote
@@ -742,8 +730,12 @@ async def cancel_purchase_order_direct(
     po_query = await db.execute(
         select(PurchaseOrder)
         .join(PurchaseOrder.quote)
+        .join(Quote.rfq)
         .options(selectinload(PurchaseOrder.quote).selectinload(Quote.rfq))
-        .where(PurchaseOrder.id == po_id)
+        .where(
+            PurchaseOrder.id == po_id,
+            RFQ.organization_id == current_user.organization_id,
+        )
     )
     po = po_query.scalar_one_or_none()
     if not po:
@@ -753,13 +745,7 @@ async def cancel_purchase_order_direct(
         )
 
     rfq = po.quote.rfq if po.quote else None
-    org_id = rfq.organization_id if rfq else None
-
-    if payload.organization_id and org_id and org_id != payload.organization_id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Bu organizasyona ait olmayan sipariş üzerinde işlem yapılamaz",
-        )
+    org_id = current_user.organization_id
 
     if po.status == "cancelled":
         raise HTTPException(
@@ -774,6 +760,7 @@ async def cancel_purchase_order_direct(
     db.add(
         AuditEvent(
             organization_id=org_id,
+            actor_id=current_user.id,
             event_type="po_cancelled",
             entity_type="purchase_order",
             entity_id=po.id,
@@ -797,11 +784,21 @@ async def cancel_purchase_order_direct(
 async def get_rfq_purchase_orders(
     rfq_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_authenticated),
 ) -> list[PurchaseOrderResponse]:
     from sqlalchemy import select
     from sqlalchemy.orm import selectinload
     from app.models.order import PurchaseOrder
     from app.models.quote import Quote
+
+    rfq_check = await db.execute(
+        select(RFQ.id).where(RFQ.id == rfq_id, RFQ.organization_id == current_user.organization_id)
+    )
+    if not rfq_check.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"RFQ {rfq_id} not found"
+        )
     
     result = await db.execute(
         select(PurchaseOrder)
@@ -819,17 +816,12 @@ async def get_rfq_purchase_orders(
 )
 async def create_rfq(
     request: RFQCreateRequest,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_employee_or_above),
 ) -> RFQResponse:
-    from app.models.organization import Organization
-    # Fetch first organization (mock auth)
-    org_result = await db.execute(select(Organization).limit(1))
-    org = org_result.scalars().first()
-    if not org:
-        raise HTTPException(status_code=500, detail="No organization found")
-    
     rfq = RFQ(
-        organization_id=org.id,
+        organization_id=current_user.organization_id,
+        created_by_id=current_user.id,
         title=request.title,
         description=request.description,
         required_quantity=request.required_quantity,
@@ -866,19 +858,17 @@ from app.api.v1.suppliers import SupplierResponse
     summary="List all Suppliers (Alias)",
 )
 async def list_suppliers_alias(
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_authenticated),
 ) -> list[SupplierResponse]:
-    from app.models.organization import Organization
     from app.models.supplier import Supplier
-    
-    org_res = await db.execute(select(Organization).limit(1))
-    org = org_res.scalars().first()
-    if not org:
-        return []
 
     result = await db.execute(
         select(Supplier)
-        .where(Supplier.organization_id == org.id, Supplier.is_active == True)
+        .where(
+            Supplier.organization_id == current_user.organization_id,
+            Supplier.is_active == True,
+        )
         .order_by(Supplier.name.asc())
     )
     suppliers = result.scalars().all()

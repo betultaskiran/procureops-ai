@@ -21,8 +21,10 @@ from app.services.deterministic.schemas import PolicyRules
 from app.services.deterministic.compliance import ComplianceChecker
 from app.services.deterministic.tco import TCOResult
 from app.models.analysis import ComplianceResult
+from app.models.user import UserRole
 from app.services.extraction.pdf_parser import extract_text_from_pdf
 from app.services.rag.service import RAGService
+from tests.auth_helper import create_test_auth_context
 
 
 # ── Test PDF Dosya Yolu ───────────────────────────────────────────────────────
@@ -89,14 +91,16 @@ async def test_all_five_targeted_queries_retrieve_exact_articles():
     4. Teslimat güvenilirliği için minimum skor kaçtır?
     5. Üç iş gününden fazla gecikmenin sonucu nedir?
     """
+    # Önce organizasyonu al
+    async with AsyncSessionLocal() as db:
+        res = await db.execute(select(Organization).limit(1))
+        org = res.scalars().first()
+        assert org is not None
+        org_id = org.id
+
+    auth = await create_test_auth_context(role=UserRole.ADMIN, org_id=org_id)
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        # Önce organizasyonu al
-        async with AsyncSessionLocal() as db:
-            res = await db.execute(select(Organization).limit(1))
-            org = res.scalars().first()
-            assert org is not None
-            org_id = org.id
+    async with AsyncClient(transport=transport, base_url="http://test", headers=auth.headers) as client:
 
         # Soru 1: 250.000 TL onay yetkisi
         q1_res = await client.post(
@@ -155,12 +159,12 @@ async def test_tenant_isolation_on_policy_search():
     Farklı organizasyonun ID'si verildiğinde mevcut organizasyonun verisinin
     kesinlikle gelmediğini doğrular (Multi-tenancy isolation).
     """
+    auth = await create_test_auth_context(role=UserRole.ADMIN)
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        fake_org_id = uuid.uuid4()
+    async with AsyncClient(transport=transport, base_url="http://test", headers=auth.headers) as client:
         res = await client.post(
             "/api/v1/policies/search",
-            json={"query": "ISO 9001 sertifikası", "top_k": 3, "organization_id": str(fake_org_id)}
+            json={"query": "ISO 9001 sertifikası", "top_k": 3}
         )
         assert res.status_code == 200
         data = res.json()
@@ -173,8 +177,9 @@ async def test_policy_deletion_clears_qdrant_vectors():
     """
     Yeni yüklenen bir belgenin silindiğinde Qdrant'tan da temizlendiğini doğrular.
     """
+    auth = await create_test_auth_context(role=UserRole.ADMIN)
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
+    async with AsyncClient(transport=transport, base_url="http://test", headers=auth.headers) as client:
         # Benzersiz token ile geçici bir metin belgesi yükle
         unique_token = f"TEST_TOKEN_{uuid.uuid4().hex[:8]}"
         temp_text = f"GEÇİCİ POLİTİKA {unique_token}: Tüm ofis harcamaları için Genel Müdür onayı şarttır."
@@ -278,13 +283,16 @@ async def test_sla_and_multi_document_retrieval_with_source_cards():
     zengin kaynak kartı metadata'ları (başlık, madde başlığı, sayfa numarası, dosya linki)
     ile doğru şekilde döndüğünü ve çoklu belge retrieval'ını doğrular.
     """
+    # Önce organizasyonu al
+    async with AsyncSessionLocal() as db:
+        res = await db.execute(select(Organization).limit(1))
+        org = res.scalars().first()
+        assert org is not None
+        org_id = org.id
+
+    auth = await create_test_auth_context(role=UserRole.ADMIN, org_id=org_id)
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        async with AsyncSessionLocal() as db:
-            res = await db.execute(select(Organization).limit(1))
-            org = res.scalars().first()
-            assert org is not None
-            org_id = org.id
+    async with AsyncClient(transport=transport, base_url="http://test", headers=auth.headers) as client:
 
         # 1. SLA Garanti Maddesi
         res_warranty = await client.post(
@@ -334,15 +342,19 @@ async def test_policy_file_streaming_endpoint():
     - Geçerli ID ile dosya indirilebilir veya inline görüntülenebilir (HTTP 200, PDF).
     - Geçersiz ID ile açık ve net HTTP 404 hatası döner.
     """
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        # Mevcut bir PDF politikasını bul
-        async with AsyncSessionLocal() as db:
-            res = await db.execute(select(PolicyDocument).where(PolicyDocument.file_name.ilike("%.pdf")).limit(1))
-            policy = res.scalars().first()
-            assert policy is not None
-            valid_id = policy.id
+    # Mevcut bir PDF politikasını bul
+    async with AsyncSessionLocal() as db:
+        res = await db.execute(select(PolicyDocument).where(PolicyDocument.file_name.ilike("%.pdf")).limit(1))
+        policy = res.scalars().first()
+        assert policy is not None
+        valid_id = policy.id
+        org_id = policy.organization_id
 
+    auth = await create_test_auth_context(role=UserRole.ADMIN, org_id=org_id)
+    foreign_auth = await create_test_auth_context(role=UserRole.ADMIN)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test", headers=auth.headers) as client:
         # 1. Başarılı dosya akışı
         file_res = await client.get(f"/api/v1/policies/{valid_id}/file")
         assert file_res.status_code == 200
@@ -356,11 +368,11 @@ async def test_policy_file_streaming_endpoint():
         assert err_res.status_code == 404
         assert "bulunamadı" in err_res.json()["detail"].lower()
 
-        # 3. Yanlış organizasyon ID ile yetki reddi (HTTP 403)
-        fake_org = uuid.uuid4()
-        forbidden_res = await client.get(f"/api/v1/policies/{valid_id}/file?organization_id={fake_org}")
-        assert forbidden_res.status_code == 403
-        assert "yetkiniz" in forbidden_res.json()["detail"].lower()
+    # 3. Yanlış organizasyon ID ile yetki reddi (non-disclosing HTTP 404)
+    async with AsyncClient(transport=transport, base_url="http://test", headers=foreign_auth.headers) as foreign_client:
+        forbidden_res = await foreign_client.get(f"/api/v1/policies/{valid_id}/file")
+        assert forbidden_res.status_code == 404
+        assert "bulunamadı" in forbidden_res.json()["detail"].lower()
 
 
 @pytest.mark.asyncio
@@ -374,13 +386,16 @@ async def test_six_critical_queries_and_negative_retrieval():
     5. ISO 9001 sertifikası olmayan bir BT donanım tedarikçisine ne olur? (Elenir, Yönetmelik)
     6. Belgelerde bulunmayan bir ödeme/teminat kuralı sorulduğunda sistem ne yapar? (Yeterli kanıt bulunamadı, 0 hit, halüsinasyonsuz)
     """
+    # Önce organizasyonu al
+    async with AsyncSessionLocal() as db:
+        res = await db.execute(select(Organization).limit(1))
+        org = res.scalars().first()
+        assert org is not None
+        org_id = str(org.id)
+
+    auth = await create_test_auth_context(role=UserRole.ADMIN, org_id=org.id)
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        async with AsyncSessionLocal() as db:
-            res = await db.execute(select(Organization).limit(1))
-            org = res.scalars().first()
-            assert org is not None
-            org_id = str(org.id)
+    async with AsyncClient(transport=transport, base_url="http://test", headers=auth.headers) as client:
 
         # 1. Standart dizüstü bilgisayar garanti süresi
         r1 = await client.post("/api/v1/policies/search", json={
@@ -479,13 +494,16 @@ async def test_topical_grounding_alternative_and_negative_queries():
     - Alternatif pozitiflerde eş anlamlılar (laptop, 250 bin, servis, takvim günü vb.) üzerinden doğru maddeler çekilmeli.
     - Negatif sorgularda konusal uyum filtresi devreye girerek ilgisiz politika maddeleri elenmeli (0 hit ve negatif context).
     """
+    # Önce organizasyonu al
+    async with AsyncSessionLocal() as db:
+        res = await db.execute(select(Organization).limit(1))
+        org = res.scalars().first()
+        assert org is not None
+        org_id = str(org.id)
+
+    auth = await create_test_auth_context(role=UserRole.ADMIN, org_id=org.id)
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        async with AsyncSessionLocal() as db:
-            res = await db.execute(select(Organization).limit(1))
-            org = res.scalars().first()
-            assert org is not None
-            org_id = str(org.id)
+    async with AsyncClient(transport=transport, base_url="http://test", headers=auth.headers) as client:
 
         # 1. ALT-1: Laptoplarda garanti kaç yıl?
         r1 = await client.post("/api/v1/policies/search", json={
@@ -614,13 +632,16 @@ async def test_composite_multi_intent_query_retrieves_both_articles():
     4. Negatif sorgu: Banka teminat mektubu oranı ve ödeme vadesi -> 0 hit.
     5. Negatif sorgu: Yurt dışı otel ve yemek harcırahı -> 0 hit.
     """
+    # Önce organizasyonu al
+    async with AsyncSessionLocal() as db:
+        res = await db.execute(select(Organization).limit(1))
+        org = res.scalars().first()
+        assert org is not None
+        org_id = str(org.id)
+
+    auth = await create_test_auth_context(role=UserRole.ADMIN, org_id=org.id)
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        async with AsyncSessionLocal() as db:
-            res = await db.execute(select(Organization).limit(1))
-            org = res.scalars().first()
-            assert org is not None
-            org_id = str(org.id)
+    async with AsyncClient(transport=transport, base_url="http://test", headers=auth.headers) as client:
 
         # 1. Tekil sorgu: Dizüstü garanti süresi
         r1 = await client.post("/api/v1/policies/search", json={

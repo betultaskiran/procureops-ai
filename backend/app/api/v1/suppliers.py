@@ -1,14 +1,22 @@
+"""
+app/api/v1/suppliers.py
+
+Supplier management, performance intelligence, and order history endpoints.
+Fully scoped to the authenticated tenant organization with RBAC enforcement.
+"""
+
 import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.auth import require_authenticated, require_employee_or_above
 from app.db.session import get_db
-from app.models.organization import Organization
 from app.models.supplier import Supplier
+from app.models.user import User
 from app.services.supplier.performance import SupplierPerformanceService
 from app.services.supplier.schemas import (
     PaginatedSupplierHistoryResponse,
@@ -41,31 +49,22 @@ class SupplierResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-async def _get_current_organization(db: AsyncSession) -> Organization:
-    """Mock auth / default organization lookup."""
-    result = await db.execute(select(Organization).limit(1))
-    org = result.scalars().first()
-    if not org:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="No organization found in database"
-        )
-    return org
-
-
 @router.get(
     "",
     response_model=list[SupplierResponse],
     summary="List all suppliers",
-    description="Fetch all active suppliers belonging to the current organization."
+    description="Fetch all active suppliers belonging to the authenticated user's organization."
 )
 async def list_suppliers(
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_authenticated),
 ) -> list[SupplierResponse]:
-    org = await _get_current_organization(db)
     result = await db.execute(
         select(Supplier)
-        .where(Supplier.organization_id == org.id, Supplier.is_active == True)
+        .where(
+            Supplier.organization_id == current_user.organization_id,
+            Supplier.is_active == True,
+        )
         .order_by(Supplier.name.asc())
     )
     suppliers = result.scalars().all()
@@ -77,18 +76,19 @@ async def list_suppliers(
     response_model=SupplierResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Create a new supplier",
-    description="Creates a new supplier record for the organization with duplicate detection."
+    description="Creates a new supplier record for the user's organization with duplicate detection."
 )
 async def create_supplier(
     request: SupplierCreateRequest,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_employee_or_above),
 ) -> SupplierResponse:
-    org = await _get_current_organization(db)
+    org_id = current_user.organization_id
     trimmed_name = request.name.strip()
 
     # Duplicate check: case-insensitive name match within the same organization
     duplicate_query = select(Supplier).where(
-        Supplier.organization_id == org.id,
+        Supplier.organization_id == org_id,
         func.lower(func.trim(Supplier.name)) == func.lower(trimmed_name),
     )
     existing_result = await db.execute(duplicate_query)
@@ -104,7 +104,7 @@ async def create_supplier(
     if request.email and request.email.strip():
         trimmed_email = request.email.strip()
         email_query = select(Supplier).where(
-            Supplier.organization_id == org.id,
+            Supplier.organization_id == org_id,
             func.lower(func.trim(Supplier.email)) == func.lower(trimmed_email),
         )
         email_result = await db.execute(email_query)
@@ -115,7 +115,7 @@ async def create_supplier(
             )
 
     supplier = Supplier(
-        organization_id=org.id,
+        organization_id=org_id,
         name=trimmed_name,
         email=request.email.strip() if request.email else None,
         phone=request.phone.strip() if request.phone else None,
@@ -137,23 +137,14 @@ async def create_supplier(
 )
 async def get_supplier_performance(
     supplier_id: uuid.UUID,
-    organization_id: uuid.UUID | None = Query(None, description="Optional tenant organization ID"),
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_authenticated),
 ) -> SupplierPerformanceResponse:
-    org = await _get_current_organization(db)
-
-    # Multi-tenancy isolation: if client explicitly supplies a different organization_id, reject with 404
-    if organization_id is not None and organization_id != org.id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Tedarikçi ({supplier_id}) bulunamadı",
-        )
-
-    # Scoped supplier query
+    # Scoped supplier query: non-disclosing 404 for cross-tenant suppliers
     result = await db.execute(
         select(Supplier).where(
             Supplier.id == supplier_id,
-            Supplier.organization_id == org.id,
+            Supplier.organization_id == current_user.organization_id,
         )
     )
     supplier = result.scalar_one_or_none()
@@ -177,23 +168,14 @@ async def get_supplier_history(
     supplier_id: uuid.UUID,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     page_size: int = Query(20, ge=1, le=100, description="Items per page (max 100)"),
-    organization_id: uuid.UUID | None = Query(None, description="Optional tenant organization ID"),
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_authenticated),
 ) -> PaginatedSupplierHistoryResponse:
-    org = await _get_current_organization(db)
-
-    # Multi-tenancy isolation: if client explicitly supplies a different organization_id, reject with 404
-    if organization_id is not None and organization_id != org.id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Tedarikçi ({supplier_id}) bulunamadı",
-        )
-
-    # Scoped supplier query
+    # Scoped supplier query: non-disclosing 404 for cross-tenant suppliers
     result = await db.execute(
         select(Supplier).where(
             Supplier.id == supplier_id,
-            Supplier.organization_id == org.id,
+            Supplier.organization_id == current_user.organization_id,
         )
     )
     supplier = result.scalar_one_or_none()
@@ -205,4 +187,3 @@ async def get_supplier_history(
 
     service = SupplierPerformanceService(db=db)
     return await service.get_supplier_history(supplier, page=page, page_size=page_size)
-

@@ -18,8 +18,12 @@ async def setup_org():
         await db.delete(org)
         await db.commit()
 
+from tests.auth_helper import create_test_auth_context
+from app.models.user import UserRole
+
 @pytest.mark.asyncio
 async def test_create_and_read_rfq_with_items(setup_org):
+    auth = await create_test_auth_context(role=UserRole.ADMIN, org_id=setup_org.id)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         # Create RFQ
         req_data = {
@@ -42,7 +46,7 @@ async def test_create_and_read_rfq_with_items(setup_org):
                 }
             ]
         }
-        response = await ac.post("/api/v1/rfqs", json=req_data)
+        response = await ac.post("/api/v1/rfqs", json=req_data, headers=auth.headers)
         assert response.status_code == 201
         data = response.json()
         assert data["title"] == "Test RFQ with Items"
@@ -52,7 +56,7 @@ async def test_create_and_read_rfq_with_items(setup_org):
         rfq_id = data["id"]
 
         # Read RFQ back
-        get_resp = await ac.get(f"/api/v1/rfqs/{rfq_id}")
+        get_resp = await ac.get(f"/api/v1/rfqs/{rfq_id}", headers=auth.headers)
         assert get_resp.status_code == 200
         get_data = get_resp.json()
         assert get_data["id"] == rfq_id

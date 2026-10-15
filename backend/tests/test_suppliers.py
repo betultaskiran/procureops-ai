@@ -11,8 +11,13 @@ from app.models.rfq import RFQ
 from app.models.quote import Quote
 
 
+from tests.auth_helper import create_test_auth_context
+from app.models.user import UserRole
+
+
 @pytest.mark.asyncio
 async def test_create_and_list_suppliers():
+    auth = await create_test_auth_context(role=UserRole.ADMIN, org_name="Test Supplier Org")
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         unique_name = f"Test Supplier {uuid.uuid4().hex[:6]}"
@@ -25,7 +30,7 @@ async def test_create_and_list_suppliers():
             "city": "Istanbul",
             "country": "Turkey"
         }
-        res = await client.post("/api/v1/suppliers", json=payload)
+        res = await client.post("/api/v1/suppliers", json=payload, headers=auth.headers)
         assert res.status_code == 201, res.text
         data = res.json()
         assert data["name"] == unique_name
@@ -34,12 +39,12 @@ async def test_create_and_list_suppliers():
         supplier_id = data["id"]
 
         # 2. Duplicate Detection
-        dup_res = await client.post("/api/v1/suppliers", json={"name": unique_name.lower()})
+        dup_res = await client.post("/api/v1/suppliers", json={"name": unique_name.lower()}, headers=auth.headers)
         assert dup_res.status_code == 409
         assert "already exists" in dup_res.json()["detail"]
 
         # 3. List Suppliers
-        list_res = await client.get("/api/v1/suppliers")
+        list_res = await client.get("/api/v1/suppliers", headers=auth.headers)
         assert list_res.status_code == 200
         suppliers = list_res.json()
         assert any(s["id"] == supplier_id for s in suppliers)
@@ -47,19 +52,20 @@ async def test_create_and_list_suppliers():
 
 @pytest.mark.asyncio
 async def test_rfq_quote_scoping_and_not_found():
+    auth = await create_test_auth_context(role=UserRole.ADMIN, org_name="Test Scope Org")
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         # Create RFQ 1 and RFQ 2
-        rfq1_res = await client.post("/api/v1/rfqs", json={"title": "RFQ Scope Test 1"})
+        rfq1_res = await client.post("/api/v1/rfqs", json={"title": "RFQ Scope Test 1"}, headers=auth.headers)
         assert rfq1_res.status_code == 201
         rfq1_id = rfq1_res.json()["id"]
 
-        rfq2_res = await client.post("/api/v1/rfqs", json={"title": "RFQ Scope Test 2"})
+        rfq2_res = await client.post("/api/v1/rfqs", json={"title": "RFQ Scope Test 2"}, headers=auth.headers)
         assert rfq2_res.status_code == 201
         rfq2_id = rfq2_res.json()["id"]
 
         # Create a Supplier
-        sup_res = await client.post("/api/v1/suppliers", json={"name": f"Supplier {uuid.uuid4().hex[:6]}"})
+        sup_res = await client.post("/api/v1/suppliers", json={"name": f"Supplier {uuid.uuid4().hex[:6]}"}, headers=auth.headers)
         assert sup_res.status_code == 201
         supplier_id = sup_res.json()["id"]
 
@@ -78,11 +84,11 @@ async def test_rfq_quote_scoping_and_not_found():
             quote_id = str(quote.id)
 
         # Correct RFQ -> Quote found
-        get_res = await client.get(f"/api/v1/rfqs/{rfq1_id}/quotes/{quote_id}")
+        get_res = await client.get(f"/api/v1/rfqs/{rfq1_id}/quotes/{quote_id}", headers=auth.headers)
         assert get_res.status_code == 200
         assert get_res.json()["id"] == quote_id
 
         # Wrong RFQ -> Quote NOT found (404)
-        wrong_res = await client.get(f"/api/v1/rfqs/{rfq2_id}/quotes/{quote_id}")
+        wrong_res = await client.get(f"/api/v1/rfqs/{rfq2_id}/quotes/{quote_id}", headers=auth.headers)
         assert wrong_res.status_code == 404
         assert "not found under RFQ" in wrong_res.json()["detail"]

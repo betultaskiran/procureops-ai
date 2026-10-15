@@ -14,10 +14,12 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.auth import require_admin, require_authenticated
 from app.core.config import settings
 from app.db.session import get_db
 from app.models.organization import Organization
 from app.models.policy_document import DocumentType, PolicyDocument
+from app.models.user import User
 from app.services.extraction.pdf_parser import PDFParseError, extract_text_from_pdf
 from app.services.rag.service import RAGService
 
@@ -75,16 +77,6 @@ class PolicySearchResponse(BaseModel):
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
-async def _get_default_org_id(db: AsyncSession) -> uuid.UUID:
-    res = await db.execute(select(Organization).limit(1))
-    org = res.scalars().first()
-    if not org:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="No organization found. Please seed organizations first."
-        )
-    return org.id
-
 
 def _extract_text_from_file(file_path: Path, filename: str) -> str:
     suffix = file_path.suffix.lower()
@@ -119,17 +111,14 @@ def _to_response(p: PolicyDocument) -> PolicyDocumentResponse:
 
 @router.get("", response_model=List[PolicyDocumentResponse], summary="List policy documents")
 async def list_policies(
-    organization_id: Optional[uuid.UUID] = Query(None),
     is_active: Optional[bool] = Query(None),
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_authenticated),
 ):
     """
     Organizasyona ait politika belgelerini listeler.
     """
-    if not organization_id:
-        organization_id = await _get_default_org_id(db)
-
-    query = select(PolicyDocument).where(PolicyDocument.organization_id == organization_id)
+    query = select(PolicyDocument).where(PolicyDocument.organization_id == current_user.organization_id)
     if is_active is not None:
         query = query.where(PolicyDocument.is_active == is_active)
 
@@ -137,27 +126,7 @@ async def list_policies(
     result = await db.execute(query)
     policies = result.scalars().all()
 
-    # Convert timestamps to string if needed
-    response = []
-    for p in policies:
-        p_dict = {
-            "id": p.id,
-            "organization_id": p.organization_id,
-            "title": p.title,
-            "file_name": p.file_name,
-            "file_path": p.file_path,
-            "document_type": p.document_type,
-            "is_active": p.is_active,
-            "is_chunked": p.is_chunked,
-            "chunk_count": p.chunk_count,
-            "qdrant_collection": p.qdrant_collection,
-            "processing_error": p.processing_error,
-            "created_at": p.created_at.isoformat() if p.created_at else None,
-            "updated_at": p.updated_at.isoformat() if p.updated_at else None,
-        }
-        response.append(PolicyDocumentResponse(**p_dict))
-
-    return response
+    return [_to_response(p) for p in policies]
 
 
 @router.post("/upload", response_model=PolicyDocumentResponse, status_code=status.HTTP_201_CREATED, summary="Upload & Ingest Policy Document")
@@ -165,18 +134,17 @@ async def upload_policy(
     file: UploadFile = File(..., description="Policy document file (PDF, TXT, MD)"),
     title: str = Form(..., description="Human-readable title for the policy document"),
     document_type: str = Form("procurement_policy", description="Type of document (e.g. procurement_policy, sla, code_of_conduct)"),
-    organization_id: Optional[uuid.UUID] = Form(None),
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_admin),
 ):
     """
-    Yeni politika belgesi yükler:
+    Yeni politika belgesi yükler (Sadece Admin):
     1. Dosyayı diske kaydeder.
     2. Metni çıkarır (PDF / TXT / MD).
     3. Hata yoksa chunk'layıp Qdrant'a vektör olarak yazar.
     4. Hata durumunda hatayı DB'ye işler (is_chunked=False, processing_error=hata).
     """
-    if not organization_id:
-        organization_id = await _get_default_org_id(db)
+    organization_id = current_user.organization_id
 
     # Dosya tipi kontrolü
     suffix = Path(file.filename or "").suffix.lower()
@@ -286,11 +254,18 @@ async def upload_policy(
 async def delete_policy(
     policy_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_admin),
 ):
     """
-    Politika belgesini veritabanından, diskten ve Qdrant vektör tabanından tamamen siler.
+    Politika belgesini veritabanından, diskten ve Qdrant vektör tabanından tamamen siler (Sadece Admin).
     """
-    policy = await db.get(PolicyDocument, policy_id)
+    result = await db.execute(
+        select(PolicyDocument).where(
+            PolicyDocument.id == policy_id,
+            PolicyDocument.organization_id == current_user.organization_id,
+        )
+    )
+    policy = result.scalar_one_or_none()
     if not policy:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -327,11 +302,18 @@ async def delete_policy(
 async def reindex_policy(
     policy_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_admin),
 ):
     """
-    Mevcut politika belgesini yeniden parse eder, chunk'lar ve Qdrant vektör tabanını günceller.
+    Mevcut politika belgesini yeniden parse eder, chunk'lar ve Qdrant vektör tabanını günceller (Sadece Admin).
     """
-    policy = await db.get(PolicyDocument, policy_id)
+    result = await db.execute(
+        select(PolicyDocument).where(
+            PolicyDocument.id == policy_id,
+            PolicyDocument.organization_id == current_user.organization_id,
+        )
+    )
+    policy = result.scalar_one_or_none()
     if not policy:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -393,25 +375,25 @@ async def reindex_policy(
 @router.get("/{policy_id}/file", summary="Stream or view the original policy document file")
 async def get_policy_file(
     policy_id: uuid.UUID,
-    organization_id: Optional[uuid.UUID] = Query(None),
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_authenticated),
 ):
     """
     Orijinal politika belgesini görüntüler veya indirir.
     PDF dosyaları tarayıcıda doğrudan (inline) açılacak şekilde sunulur.
     Organizasyon yetkilendirmesi kontrol edilir.
     """
-    policy = await db.get(PolicyDocument, policy_id)
+    result = await db.execute(
+        select(PolicyDocument).where(
+            PolicyDocument.id == policy_id,
+            PolicyDocument.organization_id == current_user.organization_id,
+        )
+    )
+    policy = result.scalar_one_or_none()
     if not policy:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Politika belgesi bulunamadı veya silinmiş."
-        )
-
-    if organization_id and policy.organization_id != organization_id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Bu belgeye erişim yetkiniz bulunmamaktadır."
         )
 
     file_path = Path(policy.file_path)
@@ -442,16 +424,15 @@ async def get_policy_file(
 async def test_search_policies(
     request: PolicySearchRequest,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_authenticated),
 ):
     """
     RAG entegrasyonunu ve anlamsal aramayı test etmek için endpoint.
-    - Sadece ilgili organizasyonun aktif belgelerinden sonuç getirir.
+    - Sadece kullanıcının organizasyonunun aktif belgelerinden sonuç getirir.
     - Silinmiş belgeleri dışlar.
     - Doğrudan maddeleri (article chunks) önceliklendirir.
     """
-    org_id = request.organization_id
-    if not org_id:
-        org_id = await _get_default_org_id(db)
+    org_id = current_user.organization_id
 
     # 1. DB'den ilgili organizasyonun aktif belgelerini al (Silinmiş/inaktif belgeleri engelle)
     active_docs_res = await db.execute(

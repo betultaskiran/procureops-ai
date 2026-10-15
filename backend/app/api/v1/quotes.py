@@ -43,10 +43,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.auth import require_authenticated, require_employee_or_above
 from app.core.config import settings
 from app.db.session import get_db
 from app.models.quote import Quote, QuoteItem
 from app.models.rfq import FileType, ParseStatus, QuoteDocument, RFQ
+from app.models.user import User
 from app.services.extraction.extractor import QuoteExtractor
 from app.services.llm import get_llm_provider
 
@@ -147,12 +149,16 @@ async def upload_quote_document(
     supplier_id: uuid.UUID = Form(..., description="Supplier UUID from the suppliers table"),
     file: UploadFile = File(..., description="PDF or Excel quote document"),
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_employee_or_above),
 ) -> UploadResponse:
     """
     PDF yükle → extraction çalıştır → Quote kaydı oluştur.
     """
     # ── RFQ kontrolü ──────────────────────────────────────────────────────────
-    rfq = await db.get(RFQ, rfq_id)
+    rfq_res = await db.execute(
+        select(RFQ).where(RFQ.id == rfq_id, RFQ.organization_id == current_user.organization_id)
+    )
+    rfq = rfq_res.scalar_one_or_none()
     if not rfq:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -161,16 +167,18 @@ async def upload_quote_document(
 
     # ── Supplier kontrolü & Organization Doğrulaması ──────────────────────────
     from app.models.supplier import Supplier
-    supplier = await db.get(Supplier, supplier_id)
-    if not supplier or not supplier.is_active:
+    supplier_res = await db.execute(
+        select(Supplier).where(
+            Supplier.id == supplier_id,
+            Supplier.organization_id == current_user.organization_id,
+            Supplier.is_active == True,
+        )
+    )
+    supplier = supplier_res.scalar_one_or_none()
+    if not supplier:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Active supplier {supplier_id} not found",
-        )
-    if supplier.organization_id != rfq.organization_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Supplier does not belong to the same organization as the RFQ",
         )
 
     # ── Dosya boyutu kontrolü ──────────────────────────────────────────────────
@@ -209,6 +217,7 @@ async def upload_quote_document(
     quote_document = QuoteDocument(
         rfq_id=rfq_id,
         supplier_id=supplier_id,
+        uploaded_by_id=current_user.id,
         file_name=storage_filename,
         file_path=str(storage_path),
         file_type=file_type,
@@ -338,8 +347,18 @@ async def _compute_quote_can_delete(quote_id: uuid.UUID, db: AsyncSession) -> tu
 async def list_quotes(
     rfq_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_authenticated),
 ) -> list[QuoteResponse]:
     """Bir RFQ'ya ait tüm structured quote'ları döndür."""
+    rfq_check = await db.execute(
+        select(RFQ.id).where(RFQ.id == rfq_id, RFQ.organization_id == current_user.organization_id)
+    )
+    if not rfq_check.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"RFQ {rfq_id} not found",
+        )
+
     result = await db.execute(
         select(Quote)
         .where(Quote.rfq_id == rfq_id)
@@ -372,11 +391,13 @@ async def list_quotes(
 async def get_quote(
     quote_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_authenticated),
 ) -> QuoteResponse:
     """Tek bir quote ve tüm kalemlerini döndür."""
     result = await db.execute(
         select(Quote)
-        .where(Quote.id == quote_id)
+        .join(Quote.rfq)
+        .where(Quote.id == quote_id, RFQ.organization_id == current_user.organization_id)
         .options(
             selectinload(Quote.items),
             selectinload(Quote.supplier),
@@ -406,11 +427,17 @@ async def get_rfq_quote(
     rfq_id: uuid.UUID,
     quote_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_authenticated),
 ) -> QuoteResponse:
     """Belirli bir RFQ altındaki tek bir quote'u ve kalemlerini doğrula ve döndür."""
     result = await db.execute(
         select(Quote)
-        .where(Quote.id == quote_id, Quote.rfq_id == rfq_id)
+        .join(Quote.rfq)
+        .where(
+            Quote.id == quote_id,
+            Quote.rfq_id == rfq_id,
+            RFQ.organization_id == current_user.organization_id,
+        )
         .options(
             selectinload(Quote.items),
             selectinload(Quote.supplier),
@@ -446,12 +473,17 @@ async def delete_quote(
     rfq_id: uuid.UUID | None = None,
     organization_id: Optional[uuid.UUID] = Query(None),
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_employee_or_above),
 ):
     """
     Tedarikçi teklifini güvenli bir şekilde siler.
     PO veya onaylanmış bir analizde yer alan tekliflerin silinmesi engellenir.
     """
-    query = select(Quote).where(Quote.id == quote_id)
+    query = (
+        select(Quote)
+        .join(Quote.rfq)
+        .where(Quote.id == quote_id, RFQ.organization_id == current_user.organization_id)
+    )
     if rfq_id:
         query = query.where(Quote.rfq_id == rfq_id)
     result = await db.execute(query)
@@ -467,13 +499,6 @@ async def delete_quote(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Teklife bağlı RFQ ({quote.rfq_id}) bulunamadı",
-        )
-
-    # Multi-tenancy check
-    if organization_id and rfq.organization_id != organization_id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Bu organizasyona ait olmayan teklif silinemez",
         )
 
     # Deletion rules check

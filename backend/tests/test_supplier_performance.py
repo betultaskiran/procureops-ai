@@ -14,7 +14,9 @@ from app.models.rfq import RFQ, RFQStatus
 from app.models.quote import Quote
 from app.models.analysis import Analysis, AnalysisStatus, Approval, ApprovalStatus
 from app.models.order import PurchaseOrder, PurchaseOrderStatus
+from app.models.user import UserRole
 from app.services.supplier.performance import SupplierPerformanceService
+from tests.auth_helper import create_test_auth_context
 
 
 async def create_base_test_data(session):
@@ -601,26 +603,29 @@ async def test_cross_tenant_access_returns_404():
         foreign_sup_id = sup2.id
         foreign_org_id = org2.id
 
+    auth1 = await create_test_auth_context(role=UserRole.ADMIN, org_id=org1.id)
+
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         # 1. Varsayılan kullanıcı (Org 1) yabancı organizasyonun tedarikçisini sorguluyor
-        res_perf = await client.get(f"/api/v1/suppliers/{foreign_sup_id}/performance")
+        res_perf = await client.get(f"/api/v1/suppliers/{foreign_sup_id}/performance", headers=auth1.headers)
         assert res_perf.status_code == 404
         assert "bulunamadı" in res_perf.json()["detail"]
 
         # 2. Query param ile yabancı organization_id gönderilerek bypass deneniyor
         res_perf_param = await client.get(
-            f"/api/v1/suppliers/{foreign_sup_id}/performance?organization_id={foreign_org_id}"
+            f"/api/v1/suppliers/{foreign_sup_id}/performance?organization_id={foreign_org_id}",
+            headers=auth1.headers,
         )
         assert res_perf_param.status_code == 404
 
         # 3. History endpoint için de 404 dönmeli
-        res_hist = await client.get(f"/api/v1/suppliers/{foreign_sup_id}/history")
+        res_hist = await client.get(f"/api/v1/suppliers/{foreign_sup_id}/history", headers=auth1.headers)
         assert res_hist.status_code == 404
 
         # 4. Olmayan UUID için de 404 dönmeli
         fake_id = uuid.uuid4()
-        res_fake = await client.get(f"/api/v1/suppliers/{fake_id}/performance")
+        res_fake = await client.get(f"/api/v1/suppliers/{fake_id}/performance", headers=auth1.headers)
         assert res_fake.status_code == 404
 
 
@@ -644,10 +649,12 @@ async def test_pagination_boundaries_and_sorting_in_history_api():
             session.add(hist)
         await session.commit()
 
+    auth = await create_test_auth_context(role=UserRole.ADMIN, org_id=org.id)
+
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         # 1. Sayfa 1 (page_size = 2) -> 2 kayıt dönmeli, total_count = 5, total_pages = 3
-        res_p1 = await client.get(f"/api/v1/suppliers/{supplier.id}/history?page=1&page_size=2")
+        res_p1 = await client.get(f"/api/v1/suppliers/{supplier.id}/history?page=1&page_size=2", headers=auth.headers)
         assert res_p1.status_code == 200
         data_p1 = res_p1.json()
         assert data_p1["total_count"] == 5
@@ -661,24 +668,24 @@ async def test_pagination_boundaries_and_sorting_in_history_api():
         assert data_p1["items"][1]["order_reference"] == "ORD-PAGE-3"
 
         # 2. Sayfa 3 (page_size = 2) -> Son 1 kayıt dönmeli
-        res_p3 = await client.get(f"/api/v1/suppliers/{supplier.id}/history?page=3&page_size=2")
+        res_p3 = await client.get(f"/api/v1/suppliers/{supplier.id}/history?page=3&page_size=2", headers=auth.headers)
         assert res_p3.status_code == 200
         data_p3 = res_p3.json()
         assert len(data_p3["items"]) == 1
         assert data_p3["items"][0]["order_reference"] == "ORD-PAGE-0"
 
         # 3. Sayfa 4 (sınır aşımı) -> 0 kayıt, total_pages = 3
-        res_p4 = await client.get(f"/api/v1/suppliers/{supplier.id}/history?page=4&page_size=2")
+        res_p4 = await client.get(f"/api/v1/suppliers/{supplier.id}/history?page=4&page_size=2", headers=auth.headers)
         assert res_p4.status_code == 200
         data_p4 = res_p4.json()
         assert len(data_p4["items"]) == 0
         assert data_p4["total_pages"] == 3
 
         # 4. Geçersiz sayfalama parametreleri (FastAPI 422 Unprocessable Entity)
-        res_invalid_page = await client.get(f"/api/v1/suppliers/{supplier.id}/history?page=0")
+        res_invalid_page = await client.get(f"/api/v1/suppliers/{supplier.id}/history?page=0", headers=auth.headers)
         assert res_invalid_page.status_code == 422
 
-        res_invalid_size = await client.get(f"/api/v1/suppliers/{supplier.id}/history?page_size=101")
+        res_invalid_size = await client.get(f"/api/v1/suppliers/{supplier.id}/history?page_size=101", headers=auth.headers)
         assert res_invalid_size.status_code == 422
 
 

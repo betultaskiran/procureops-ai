@@ -13,14 +13,17 @@ from app.models.rfq import RFQ, RFQItem, RFQStatus, QuoteDocument
 from app.models.quote import Quote, QuoteItem
 from app.models.analysis import Analysis, Approval, ApprovalStatus, Recommendation
 from app.models.order import PurchaseOrder
+from app.models.user import UserRole
 from app.core.config import settings
+from tests.auth_helper import create_test_auth_context
 
 
 @pytest.mark.asyncio
 async def test_draft_rfq_deletion_success():
     """1. Silinmesi uygun bir taslak RFQ başarıyla silinebilmeli (200) ve ardından 404 dönmeli."""
+    auth = await create_test_auth_context(role=UserRole.ADMIN)
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
+    async with AsyncClient(transport=transport, base_url="http://test", headers=auth.headers) as client:
         # Create draft RFQ
         create_res = await client.post("/api/v1/rfqs", json={
             "title": f"Draft RFQ To Delete {uuid.uuid4().hex[:6]}",
@@ -51,8 +54,9 @@ async def test_draft_rfq_deletion_success():
 @pytest.mark.asyncio
 async def test_rfq_with_unapproved_quotes_and_files_cascade_deletion():
     """2. İlişkili teklif ve disk belgeleri olan RFQ silindiğinde cascade temizlik doğru uygulanmalı."""
+    auth = await create_test_auth_context(role=UserRole.ADMIN)
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
+    async with AsyncClient(transport=transport, base_url="http://test", headers=auth.headers) as client:
         # Create RFQ
         rfq_res = await client.post("/api/v1/rfqs", json={
             "title": f"RFQ With Quotes {uuid.uuid4().hex[:6]}",
@@ -146,8 +150,9 @@ async def test_rfq_with_unapproved_quotes_and_files_cascade_deletion():
 @pytest.mark.asyncio
 async def test_rfq_deletion_blocked_when_po_or_approved():
     """3. PO oluşturulmuş veya onaylanmış RFQ silinemez (400 Bad Request)."""
+    auth = await create_test_auth_context(role=UserRole.ADMIN)
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
+    async with AsyncClient(transport=transport, base_url="http://test", headers=auth.headers) as client:
         # Create RFQ
         rfq_res = await client.post("/api/v1/rfqs", json={
             "title": f"Approved RFQ {uuid.uuid4().hex[:6]}",
@@ -219,8 +224,9 @@ async def test_rfq_deletion_blocked_when_po_or_approved():
 @pytest.mark.asyncio
 async def test_unapproved_quote_deletion_success():
     """4. Silinmesi uygun bir teklif silinebilmeli (200), kalan teklifler korunmalı ve RFQ durumu güncellenmeli."""
+    auth = await create_test_auth_context(role=UserRole.ADMIN)
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
+    async with AsyncClient(transport=transport, base_url="http://test", headers=auth.headers) as client:
         rfq_res = await client.post("/api/v1/rfqs", json={
             "title": f"Quote Lifecycle RFQ {uuid.uuid4().hex[:6]}",
             "items": [{"description": "Laptops", "quantity": 5}]
@@ -282,8 +288,9 @@ async def test_unapproved_quote_deletion_success():
 @pytest.mark.asyncio
 async def test_quote_deletion_blocked_when_used_in_po_or_approved_decision():
     """5. Analizde onaylanmış veya PO'ya bağlanmış teklif silinemez (400 Bad Request)."""
+    auth = await create_test_auth_context(role=UserRole.ADMIN)
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
+    async with AsyncClient(transport=transport, base_url="http://test", headers=auth.headers) as client:
         rfq_res = await client.post("/api/v1/rfqs", json={"title": "PO Quote Protect Test"})
         rfq_id = uuid.UUID(rfq_res.json()["id"])
 
@@ -338,9 +345,11 @@ async def test_quote_deletion_blocked_when_used_in_po_or_approved_decision():
 
 @pytest.mark.asyncio
 async def test_unauthorized_tenant_deletion_attempt():
-    """6. Yetkisiz organizasyon ID ile silme isteği 403 Forbidden dönmeli."""
+    """6. Yetkisiz organizasyon ID ile silme isteği 404 Not Found dönmeli."""
+    auth = await create_test_auth_context(role=UserRole.ADMIN)
+    foreign_auth = await create_test_auth_context(role=UserRole.ADMIN)
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
+    async with AsyncClient(transport=transport, base_url="http://test", headers=auth.headers) as client:
         rfq_res = await client.post("/api/v1/rfqs", json={"title": "Tenant Auth RFQ"})
         rfq_id = rfq_res.json()["id"]
 
@@ -358,22 +367,21 @@ async def test_unauthorized_tenant_deletion_attempt():
             await session.commit()
             quote_id = quote.id
 
-        different_org = uuid.uuid4()
+    # Foreign tenant client -> 404 non-disclosing
+    async with AsyncClient(transport=transport, base_url="http://test", headers=foreign_auth.headers) as foreign_client:
+        del_rfq_unauth = await foreign_client.delete(f"/api/v1/rfqs/{rfq_id}")
+        assert del_rfq_unauth.status_code == 404
 
-        # Delete RFQ with mismatched organization_id -> 403
-        del_rfq_unauth = await client.delete(f"/api/v1/rfqs/{rfq_id}?organization_id={different_org}")
-        assert del_rfq_unauth.status_code == 403
-
-        # Delete Quote with mismatched organization_id -> 403
-        del_q_unauth = await client.delete(f"/api/v1/rfqs/{rfq_id}/quotes/{quote_id}?organization_id={different_org}")
-        assert del_q_unauth.status_code == 403
+        del_q_unauth = await foreign_client.delete(f"/api/v1/rfqs/{rfq_id}/quotes/{quote_id}")
+        assert del_q_unauth.status_code == 404
 
 
 @pytest.mark.asyncio
 async def test_repeated_deletion_attempt_returns_404():
     """7. Tekrarlı silme isteği veri tutarsızlığı oluşturmamalı, 404 dönmeli."""
+    auth = await create_test_auth_context(role=UserRole.ADMIN)
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
+    async with AsyncClient(transport=transport, base_url="http://test", headers=auth.headers) as client:
         # Create draft RFQ
         rfq_res = await client.post("/api/v1/rfqs", json={"title": "Idempotent Delete RFQ"})
         rfq_id = rfq_res.json()["id"]
@@ -390,8 +398,9 @@ async def test_repeated_deletion_attempt_returns_404():
 @pytest.mark.asyncio
 async def test_rfq_list_reflects_metadata_and_updates_after_deletion():
     """8. RFQ listesi can_delete, quotes_count ve has_po alanlarını taşımalı, silme sonrası güncellenmeli."""
+    auth = await create_test_auth_context(role=UserRole.ADMIN)
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
+    async with AsyncClient(transport=transport, base_url="http://test", headers=auth.headers) as client:
         # Create a unique RFQ
         title = f"List Update Test {uuid.uuid4().hex[:6]}"
         rfq_res = await client.post("/api/v1/rfqs", json={"title": title})
@@ -423,8 +432,9 @@ async def test_rfq_list_reflects_metadata_and_updates_after_deletion():
 @pytest.mark.asyncio
 async def test_po_cancellation_preserves_records_and_logs_audit():
     """9. PO iptali finansal kaydı ve teklifi silmemeli, statüyü 'cancelled' yapmalı ve AuditEvent oluşturmalı."""
+    auth = await create_test_auth_context(role=UserRole.ADMIN)
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
+    async with AsyncClient(transport=transport, base_url="http://test", headers=auth.headers) as client:
         # 1. Setup RFQ, Quote, Approval, PO
         rfq_res = await client.post("/api/v1/rfqs", json={"title": f"PO Cancel Test RFQ {uuid.uuid4().hex[:6]}"})
         rfq_id = uuid.UUID(rfq_res.json()["id"])
@@ -515,8 +525,9 @@ async def test_po_cancellation_preserves_records_and_logs_audit():
 @pytest.mark.asyncio
 async def test_rfq_cancellation_flow_with_active_pos():
     """10. Aktif PO'su olan RFQ iptal edilirken aktif PO koruması ve toplu iptal akışı doğrulanmalı."""
+    auth = await create_test_auth_context(role=UserRole.ADMIN)
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
+    async with AsyncClient(transport=transport, base_url="http://test", headers=auth.headers) as client:
         rfq_res = await client.post("/api/v1/rfqs", json={"title": f"RFQ Cancel Flow {uuid.uuid4().hex[:6]}"})
         rfq_id = uuid.UUID(rfq_res.json()["id"])
 
@@ -590,8 +601,9 @@ async def test_rfq_cancellation_flow_with_active_pos():
 @pytest.mark.asyncio
 async def test_rfq_archive_and_unarchive_flow():
     """11. RFQ arşivleme ve arşivden çıkarma, aktif liste filtrelemesi ve audit kaydı doğrulanmalı."""
+    auth = await create_test_auth_context(role=UserRole.ADMIN)
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
+    async with AsyncClient(transport=transport, base_url="http://test", headers=auth.headers) as client:
         unique_title = f"Archive Flow RFQ {uuid.uuid4().hex[:6]}"
         rfq_res = await client.post("/api/v1/rfqs", json={"title": unique_title})
         rfq_id = rfq_res.json()["id"]
@@ -638,8 +650,10 @@ async def test_rfq_archive_and_unarchive_flow():
 @pytest.mark.asyncio
 async def test_cancellation_validation_and_multi_tenant_protection():
     """12. İptal işlemlerinde gerekçe validasyonu (min 3 karakter) ve tenant izolasyonu doğrulanmalı."""
+    auth = await create_test_auth_context(role=UserRole.ADMIN)
+    foreign_auth = await create_test_auth_context(role=UserRole.ADMIN)
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
+    async with AsyncClient(transport=transport, base_url="http://test", headers=auth.headers) as client:
         rfq_res = await client.post("/api/v1/rfqs", json={"title": f"Tenant Check RFQ {uuid.uuid4().hex[:6]}"})
         rfq_id = rfq_res.json()["id"]
 
@@ -648,12 +662,12 @@ async def test_cancellation_validation_and_multi_tenant_protection():
         assert empty_reason_res.status_code == 400
         assert "en az 3 karakter" in empty_reason_res.json()["detail"]
 
-        # Different tenant org ID -> 403
-        fake_org = str(uuid.uuid4())
-        diff_tenant_res = await client.post(
+    # Foreign tenant client -> 404 (non-disclosing)
+    async with AsyncClient(transport=transport, base_url="http://test", headers=foreign_auth.headers) as foreign_client:
+        diff_tenant_res = await foreign_client.post(
             f"/api/v1/rfqs/{rfq_id}/cancel",
-            json={"reason": "Geçerli gerekçe", "organization_id": fake_org}
+            json={"reason": "Geçerli gerekçe"}
         )
-        assert diff_tenant_res.status_code == 403
-        assert "Bu organizasyona ait olmayan" in diff_tenant_res.json()["detail"]
+        assert diff_tenant_res.status_code == 404
+        assert "bulunamadı" in diff_tenant_res.json()["detail"].lower()
 

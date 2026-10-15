@@ -94,28 +94,32 @@ procureops-ai/
 
 ---
 
-## Development Phases
+## Development Phases & Roadmap Audit
 
-| Phase | Description | Status |
-|-------|-------------|--------|
-| 0 | Product & Architecture | ✅ Complete |
-| 1 | Development Foundation | ✅ Complete |
-| 2 | Domain Model | ✅ Complete |
-| 3 | Quote Ingestion & Extraction | ✅ Complete |
-| 4 | TCO Calculator & Hard Rules | ✅ Complete |
-| 5 | Policy Knowledge Base (RAG) | ✅ Complete |
-| 6 | Agentic AI Reasoning | ⏳ Next |
-| 7 | BM25, Hybrid Search & Reranking | — |
-| 8 | Supplier Memory (SQL) | — |
-| 9 | Verification & Evidence | — |
-| 10 | Frontend API Integration | — |
-| 11 | Frontend UI / UX | — |
-| 12 | Authentication & Authorization | — |
-| 13 | Background Jobs & Production AI | — |
-| 14 | AI Evaluation | — |
-| 15 | Security | — |
-| 16 | Reports & Final Workflow | — |
-| 17 | Testing & Deployment | — |
+The following table reflects the actual implementation state verified by the codebase, endpoints, database schema, and test suite.
+
+| Phase | Milestone / Domain | Implementation Scope & Evidence | Status |
+|-------|--------------------|---------------------------------|--------|
+| **Phase 0** | **Product & Architecture** | System design, ADRs (`DECISIONS.md`), architecture specifications (`ARCHITECTURE.md`). | ✅ Complete |
+| **Phase 1** | **Development Foundation** | FastAPI + Next.js + PostgreSQL + Qdrant + Redis containerization (`docker-compose.yml`, health endpoints). | ✅ Complete |
+| **Phase 2** | **Domain Models & Multi-Analysis** | SQLAlchemy models (`models/`), multi-quote analysis safety, fallback rules, staleness detection (`analyses.py`, `test_multi_analysis.py`). | ✅ Complete |
+| **Phase 3** | **Quote Ingestion & Multi-Analysis Matrix** | PDF quote upload, structured LLM extraction, side-by-side comparison matrix, stale analysis banner (`ComparisonMatrix.tsx`, `quote_documents`, `test_rfq_quote_lifecycle.py`). | ✅ Complete |
+| **Phase 4A** | **Supplier History Data Foundation** | Delivery fields on PO (`expected_delivery_date`, `actual_delivery_date`, `final_amount`, `delivery_notes`), `SupplierHistory` PO link (`models/order.py`, `models/supplier.py`, `test_supplier_history_foundation.py`). | ✅ Complete |
+| **Phase 4B** | **Supplier Performance Engine & APIs** | `SupplierPerformanceService`, delivery reliability %, currency-isolated financials, quality metrics, collision detection (`/api/v1/suppliers/{id}/performance`, `history`, `test_supplier_performance.py`). | ✅ Complete |
+| **Phase 4C** | **Supplier Performance UI & Drawer** | Accessible slide-over drawer (`SupplierPerformanceDrawer.tsx`), matrix triggers, focus trap, request identity guards, zero-page safety (`frontend/tests/supplier-drawer.test.mjs`). | ✅ Complete |
+| **Phase 5** | **Authentication, RBAC & Team Management** | Real JWT auth, password hashing, role enforcement (`admin`, `manager`, `employee`, `viewer`), tenant isolation middleware, and `/dashboard/team` member management page. *(Currently mock auth / team page 404)* | ⏳ **Next Phase** |
+| **Core AI** | **Deterministic TCO & Hard Rules** | Deterministic VAT, shipping, discount calculation (`tco.py`), hard rules evaluation (`compliance.py`, `orchestrator.py`, `test_multi_analysis.py`). | ✅ Complete |
+| **Core AI** | **Policy Knowledge Base (RAG & Hybrid Search)** | Dense + BM25 sparse hybrid retrieval with Reciprocal Rank Fusion (RRF), topical grounding, PDF chunking (`rag/service.py`, `test_policy_rag.py` 10 tests). | ✅ Complete |
+| **Core AI** | **Agentic Reasoning & Evidence Verification** | LLM trade-off synthesis, single-agent verification layer, evidence grounding cards (`agent/service.py`, `verification.py`, `EvidencePanel.tsx`). | ✅ Complete |
+| **Workflow** | **Human Review, Approval & Idempotent PO** | Standard vs Exception approval (`acknowledged_policy_violation`), duplicate PO blocking, cancellation flow (`ReviewModal.tsx`, `order.py`, `email.py`). | ✅ Complete |
+| **Phase 6** | **Background Jobs & Async Workers** | Celery / ARQ / Redis async worker daemon for background PDF ingestion and async email delivery. *(Redis active; async job runner pending)* | ⏳ Partial |
+| **Phase 7** | **AI Evaluation & Quality Observability** | Automated benchmark dataset for extraction and policy retrieval precision, prompt regression testing, cost/token tracking. *(16-query RAG tests complete; full eval harness pending)* | ⏳ Partial |
+| **Phase 8** | **Security Hardening & Audit Compliance** | Rate limiting, OWASP sanitization, file upload scanning, row-level tenant security, tamper-proof audit export (`models/audit.py` present). | ⏳ Partial |
+| **Phase 9** | **Production CI/CD & Deployment** | GitHub Actions pipeline, production Docker/K8s manifests, automated migrations, SSL/TLS termination. | ⏳ Pending |
+
+> [!IMPORTANT]
+> **Audit Finding on Team Management & Authentication:**
+> The frontend sidebar links to `/dashboard/team`, but the route does not exist (returns 404). Furthermore, backend endpoints currently use mock organization lookup (`select(Organization).limit(1)`). Phase 5 is designated as the immediate next phase to implement real authentication, tenant-scoped RBAC, and team member management.
 
 ---
 
