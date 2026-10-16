@@ -50,13 +50,19 @@ export default function LandingPage() {
             <Link href="#workflow" className="hover:text-primary transition-colors">How it Works</Link>
           </div>
 
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
             <ThemeToggle />
             <Link 
-              href="/dashboard"
-              className="bg-primary hover:bg-primary-hover text-white px-5 py-2 rounded font-medium transition-colors text-sm shadow-sm"
+              href="/login"
+              className="text-text-muted hover:text-text-primary px-3 py-2 rounded font-medium transition-colors text-sm"
             >
-              Go to App
+              Giriş Yap
+            </Link>
+            <Link 
+              href="/dashboard"
+              className="bg-primary hover:bg-primary-hover text-white px-4 py-2 rounded font-medium transition-colors text-sm shadow-sm"
+            >
+              Dashboard
             </Link>
           </div>
         </div>
@@ -82,19 +88,19 @@ export default function LandingPage() {
               
               <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 mb-12">
                 <Link 
-                  href="/dashboard"
-                  className="flex items-center justify-center gap-2 bg-primary hover:bg-primary-hover text-white px-6 py-3 rounded text-sm font-medium transition-all shadow-sm group w-full sm:w-auto"
+                  href="/register"
+                  className="flex items-center justify-center gap-2 bg-primary hover:bg-primary-hover text-white px-6 py-3 rounded-xl text-sm font-semibold transition-all shadow-sm group w-full sm:w-auto"
                 >
-                  Get Started
+                  Ücretsiz Başla
                   <ArrowRight size={16} className="group-hover:translate-x-1 transition-transform" />
                 </Link>
                 
-                <button 
-                  className="flex items-center justify-center gap-2 bg-transparent border border-border hover:bg-surface-elevated text-text-primary px-6 py-3 rounded text-sm font-medium transition-all w-full sm:w-auto"
+                <Link 
+                  href="/login"
+                  className="flex items-center justify-center gap-2 bg-surface border border-border hover:bg-surface-elevated text-text-primary px-6 py-3 rounded-xl text-sm font-semibold transition-all w-full sm:w-auto"
                 >
-                  <Play size={16} className="text-text-muted" />
-                  Watch Demo
-                </button>
+                  Giriş Yap
+                </Link>
               </div>
 
               {/* Technical Metrics */}

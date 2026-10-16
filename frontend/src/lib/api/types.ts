@@ -303,3 +303,72 @@ export interface PaginatedSupplierHistoryResponse {
   total_pages: number;
 }
 
+// ── Team Management & Auth Types ─────────────────────────────────────────────
+
+export type UserRole = "admin" | "manager" | "employee" | "viewer";
+
+export interface OrganizationResponse {
+  id: string;
+  name: string;
+  slug: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at?: string | null;
+}
+
+export interface UserResponse {
+  id: string;
+  organization_id: string;
+  email: string;
+  full_name: string;
+  role: UserRole;
+  is_active: boolean;
+  created_at: string;
+  updated_at?: string | null;
+  organization?: OrganizationResponse | null;
+}
+
+export interface TokenResponse {
+  access_token: string;
+  token_type: string;
+  user: UserResponse;
+}
+
+export interface RegisterRequest {
+  company_name: string;
+  full_name: string;
+  email: string;
+  password: string;
+}
+
+export interface LoginRequest {
+  email: string;
+  password: string;
+}
+
+export type AuthMeResponse = UserResponse;
+
+export interface TeamMember {
+  id: string;
+  organization_id: string;
+  email: string;
+  full_name: string;
+  role: UserRole;
+  is_active: boolean;
+  created_at: string;
+  updated_at?: string | null;
+}
+
+export interface CreateTeamMemberInput {
+  full_name: string;
+  email: string;
+  role: UserRole;
+  password: string;
+}
+
+export interface UpdateMemberRoleInput {
+  role: UserRole;
+}
+
+
+
