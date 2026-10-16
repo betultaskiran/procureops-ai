@@ -59,6 +59,7 @@ class SupplierPerformanceService:
             .options(
                 selectinload(PurchaseOrder.quote),
                 selectinload(PurchaseOrder.supplier_history_entry),
+                selectinload(PurchaseOrder.quality_issues),
             )
         )
         po_res = await self.db.execute(po_query)
@@ -306,10 +307,19 @@ class SupplierPerformanceService:
         # Canlı PO'lar ile bağlı SupplierHistory kayıtları
         for po in pos:
             sh = linked_histories.get(po.id) or po.supplier_history_entry
-            if sh is not None:
+            active_issues = [
+                q for q in (po.quality_issues or [])
+                if getattr(q, "status", "open") != "dismissed"
+            ]
+            po_has_issues = bool(active_issues)
+            if po_has_issues or sh is not None:
                 tracked_records_count += 1
-                total_issues += sh.quality_issues
-                total_rejections += sh.rejection_count
+                if po_has_issues:
+                    total_issues += len(active_issues)
+                    total_rejections += sum(q.rejection_count for q in active_issues)
+                elif sh is not None:
+                    total_issues += sh.quality_issues
+                    total_rejections += sh.rejection_count
 
         # Harici kayıtlar
         for sh in external_histories:
@@ -398,6 +408,16 @@ class SupplierPerformanceService:
 
             currency = po.quote.currency if po.quote else "TRY"
 
+            if po.quality_issues:
+                po_q_issues = len(po.quality_issues)
+                po_rejections = sum(q.rejection_count for q in po.quality_issues)
+            elif sh is not None:
+                po_q_issues = sh.quality_issues
+                po_rejections = sh.rejection_count
+            else:
+                po_q_issues = None
+                po_rejections = None
+
             unified_items.append(
                 SupplierHistoryItemResponse(
                     id=po.id,
@@ -412,8 +432,8 @@ class SupplierPerformanceService:
                     amount=amt.quantize(Decimal("0.01")),
                     currency=currency,
                     amount_type=amt_type,
-                    quality_issues=sh.quality_issues if sh else None,
-                    rejection_count=sh.rejection_count if sh else None,
+                    quality_issues=po_q_issues,
+                    rejection_count=po_rejections,
                     has_collision=False,
                     collision_note=None,
                     notes=po.delivery_notes or (sh.notes if sh else None),

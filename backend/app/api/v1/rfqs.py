@@ -681,6 +681,12 @@ async def cancel_rfq_purchase_order(
             detail="Satın Alma Siparişi zaten iptal edilmiş durumda.",
         )
 
+    if po.status == "completed":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Tamamlanmış (completed) Satın Alma Siparişi iptal edilemez.",
+        )
+
     po.status = "cancelled"
     po.cancellation_reason = payload.reason.strip()
     po.cancelled_at = datetime.now(timezone.utc)
@@ -751,6 +757,12 @@ async def cancel_purchase_order_direct(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Satın Alma Siparişi zaten iptal edilmiş durumda.",
+        )
+
+    if po.status == "completed":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Tamamlanmış (completed) Satın Alma Siparişi iptal edilemez.",
         )
 
     po.status = "cancelled"

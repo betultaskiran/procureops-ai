@@ -25,9 +25,15 @@ import {
   Sparkles,
   TrendingUp,
   RefreshCw,
-  Clock
+  Clock,
+  Truck,
+  PackageCheck,
+  AlertCircle,
+  Calendar,
+  DollarSign
 } from "lucide-react";
 import { rfqsApi } from "@/lib/api/rfqs";
+import { ordersApi } from "@/lib/api/orders";
 import { 
   RFQ, 
   Quote, 
@@ -36,6 +42,7 @@ import {
   ComplianceCheckResponse, 
   EvidenceItemResponse, 
   PurchaseOrderResponse,
+  POQualityIssueResponse,
   ReviewResponse 
 } from "@/lib/api/types";
 import { ComparisonMatrix } from "@/components/analysis/ComparisonMatrix";
@@ -66,6 +73,33 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
   const [poCancelReason, setPoCancelReason] = useState("");
   const [isCancellingPo, setIsCancellingPo] = useState(false);
   const [cancelPoError, setCancelPoError] = useState<string | null>(null);
+
+  // Deliver PO states
+  const [poToDeliver, setPoToDeliver] = useState<PurchaseOrderResponse | null>(null);
+  const [deliverDate, setDeliverDate] = useState("");
+  const [deliverNotes, setDeliverNotes] = useState("");
+  const [isDeliveringPo, setIsDeliveringPo] = useState(false);
+  const [deliverPoError, setDeliverPoError] = useState<string | null>(null);
+
+  // Complete PO states
+  const [poToComplete, setPoToComplete] = useState<PurchaseOrderResponse | null>(null);
+  const [finalAmount, setFinalAmount] = useState<string>("");
+  const [completionNotes, setCompletionNotes] = useState("");
+  const [isCompletingPo, setIsCompletingPo] = useState(false);
+  const [completePoError, setCompletePoError] = useState<string | null>(null);
+
+  // Quality Issue states
+  const [poForQuality, setPoForQuality] = useState<PurchaseOrderResponse | null>(null);
+  const [qualityIssueType, setQualityIssueType] = useState("defect");
+  const [qualitySeverity, setQualitySeverity] = useState("medium");
+  const [qualityRejectionCount, setQualityRejectionCount] = useState<number>(0);
+  const [qualityDescription, setQualityDescription] = useState("");
+  const [isSavingQuality, setIsSavingQuality] = useState(false);
+  const [qualityError, setQualityError] = useState<string | null>(null);
+
+  // Quality Issues loaded for POs
+  const [poQualityIssuesMap, setPoQualityIssuesMap] = useState<Record<string, POQualityIssueResponse[]>>({});
+  const [expandedPoQuality, setExpandedPoQuality] = useState<Record<string, boolean>>({});
 
   // Archive state
   const [isArchiving, setIsArchiving] = useState(false);
@@ -182,6 +216,100 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
       setCancelPoError(err.message || "Sipariş iptal edilirken bir hata oluştu.");
     } finally {
       setIsCancellingPo(false);
+    }
+  };
+
+  const fetchQualityIssuesForPos = async (pos: PurchaseOrderResponse[]) => {
+    try {
+      const issuesMap: Record<string, POQualityIssueResponse[]> = {};
+      await Promise.all(
+        pos.map(async (po) => {
+          try {
+            const issues = await ordersApi.getQualityIssues(po.id);
+            issuesMap[po.id] = issues;
+          } catch {
+            issuesMap[po.id] = [];
+          }
+        })
+      );
+      setPoQualityIssuesMap(issuesMap);
+    } catch (e) {
+      console.error("Failed to load quality issues for orders", e);
+    }
+  };
+
+  const handleDeliverPo = async () => {
+    if (!poToDeliver) return;
+    try {
+      setIsDeliveringPo(true);
+      setDeliverPoError(null);
+      await ordersApi.deliverOrder(poToDeliver.id, {
+        actual_delivery_date: deliverDate || undefined,
+        delivery_notes: deliverNotes.trim() || undefined,
+      });
+      const updatedPos = await rfqsApi.getPurchaseOrders(rfqId);
+      setPurchaseOrders(updatedPos);
+      await fetchQualityIssuesForPos(updatedPos);
+      setPoToDeliver(null);
+      setDeliverDate("");
+      setDeliverNotes("");
+    } catch (err: any) {
+      setDeliverPoError(err.message || "Sipariş teslim alınırken bir hata oluştu.");
+    } finally {
+      setIsDeliveringPo(false);
+    }
+  };
+
+  const handleCompletePo = async () => {
+    if (!poToComplete) return;
+    try {
+      setIsCompletingPo(true);
+      setCompletePoError(null);
+      const parsedAmount = finalAmount !== "" ? parseFloat(finalAmount) : undefined;
+      await ordersApi.completeOrder(poToComplete.id, {
+        final_amount: parsedAmount,
+        completion_notes: completionNotes.trim() || undefined,
+      });
+      const updatedPos = await rfqsApi.getPurchaseOrders(rfqId);
+      setPurchaseOrders(updatedPos);
+      await fetchQualityIssuesForPos(updatedPos);
+      setPoToComplete(null);
+      setFinalAmount("");
+      setCompletionNotes("");
+    } catch (err: any) {
+      setCompletePoError(err.message || "Sipariş tamamlanırken bir hata oluştu.");
+    } finally {
+      setIsCompletingPo(false);
+    }
+  };
+
+  const handleSaveQualityIssue = async () => {
+    if (!poForQuality) return;
+    if (!qualityDescription.trim() || qualityDescription.trim().length < 3) {
+      setQualityError("Lütfen en az 3 karakterlik bir açıklama girin.");
+      return;
+    }
+    try {
+      setIsSavingQuality(true);
+      setQualityError(null);
+      await ordersApi.addQualityIssue(poForQuality.id, {
+        issue_type: qualityIssueType,
+        severity: qualitySeverity,
+        description: qualityDescription.trim(),
+        rejection_count: Number(qualityRejectionCount) || 0,
+      });
+      const updatedPos = await rfqsApi.getPurchaseOrders(rfqId);
+      setPurchaseOrders(updatedPos);
+      await fetchQualityIssuesForPos(updatedPos);
+      setPoForQuality(null);
+      setQualityDescription("");
+      setQualityRejectionCount(0);
+      setQualityIssueType("defect");
+      setQualitySeverity("medium");
+    } catch (err: any) {
+      setQualityError(err.message || "Kalite kaydı eklenirken bir hata oluştu.");
+    } finally {
+      setIsSavingQuality(false);
     }
   };
 
@@ -305,7 +433,10 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
       rfqsApi.getRfqQuotes(rfqId),
     ]).then(([rfqRes, poRes, analysisRes, quotesRes]) => {
       if (rfqRes.status === "fulfilled") setRfq(rfqRes.value);
-      if (poRes.status === "fulfilled") setPurchaseOrders(poRes.value);
+      if (poRes.status === "fulfilled") {
+        setPurchaseOrders(poRes.value);
+        fetchQualityIssuesForPos(poRes.value);
+      }
       if (analysisRes.status === "fulfilled") setAnalysis(analysisRes.value);
       if (quotesRes.status === "fulfilled") setQuotes(quotesRes.value);
     });
@@ -339,6 +470,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
 
         if (poRes.status === 'fulfilled') {
           setPurchaseOrders(poRes.value);
+          fetchQualityIssuesForPos(poRes.value);
         }
 
       } catch (err: any) {
@@ -949,77 +1081,255 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
             <div className="flex flex-col gap-4">
               {purchaseOrders.map(po => {
                 const isPoCancelled = po.status === 'cancelled';
+                const isDelivered = po.status === 'delivered';
+                const isCompleted = po.status === 'completed';
+                const isIssued = po.status === 'issued';
+                const issues = poQualityIssuesMap[po.id] || [];
+                const isQualityExpanded = !!expandedPoQuality[po.id];
+
+                let delayText: string | null = null;
+                let delayBadgeClass = "bg-zinc-800 text-zinc-300";
+                if (po.expected_delivery_date && po.actual_delivery_date) {
+                  const exp = new Date(po.expected_delivery_date).getTime();
+                  const act = new Date(po.actual_delivery_date).getTime();
+                  const diffDays = Math.round((act - exp) / (1000 * 60 * 60 * 24));
+                  if (diffDays > 0) {
+                    delayText = `+${diffDays} gün gecikmeli`;
+                    delayBadgeClass = "bg-red-500/15 text-red-400 border border-red-500/30";
+                  } else if (diffDays < 0) {
+                    delayText = `${Math.abs(diffDays)} gün erken`;
+                    delayBadgeClass = "bg-emerald-500/15 text-emerald-400 border border-emerald-500/30";
+                  } else {
+                    delayText = "Tam gününde";
+                    delayBadgeClass = "bg-emerald-500/15 text-emerald-400 border border-emerald-500/30";
+                  }
+                } else if (po.expected_delivery_date && !po.actual_delivery_date && !isPoCancelled) {
+                  const exp = new Date(po.expected_delivery_date).getTime();
+                  const now = new Date().getTime();
+                  if (now > exp) {
+                    const overDays = Math.round((now - exp) / (1000 * 60 * 60 * 24));
+                    delayText = `Gecikmede (+${overDays} gün)`;
+                    delayBadgeClass = "bg-amber-500/15 text-amber-400 border border-amber-500/30";
+                  }
+                }
+
+                const cardBorderClass = isPoCancelled
+                  ? 'bg-red-950/20 border-red-500/30'
+                  : isCompleted
+                  ? 'bg-emerald-950/20 border-emerald-500/30'
+                  : isDelivered
+                  ? 'bg-amber-950/20 border-amber-500/30'
+                  : 'bg-primary/5 border-primary/30';
+
+                const statusBadgeClass = isPoCancelled
+                  ? 'bg-red-500/20 text-red-300 border-red-500/40'
+                  : isCompleted
+                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                  : isDelivered
+                  ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                  : 'bg-primary/20 text-primary-light border-primary/40';
+
                 return (
                   <div 
                     key={po.id} 
-                    className={`rounded-xl p-5 shadow-sm border ${
-                      isPoCancelled 
-                        ? 'bg-red-950/20 border-red-500/30 text-text-primary' 
-                        : 'bg-emerald-950/20 border-emerald-500/30 text-text-primary'
-                    }`}
+                    className={`rounded-xl p-5 shadow-sm border text-text-primary ${cardBorderClass}`}
                   >
-                    <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center justify-between mb-3">
                       <h2 className="text-sm font-semibold uppercase tracking-wider flex items-center gap-2">
                         {isPoCancelled ? (
                           <>
                             <Ban size={16} className="text-red-400" />
                             <span className="text-red-400">Sipariş İptal Edildi</span>
                           </>
+                        ) : isCompleted ? (
+                          <>
+                            <PackageCheck size={16} className="text-emerald-400" />
+                            <span className="text-emerald-400">Sipariş Tamamlandı</span>
+                          </>
+                        ) : isDelivered ? (
+                          <>
+                            <Truck size={16} className="text-amber-400" />
+                            <span className="text-amber-400">Teslim Alındı (Doğrulama Bekliyor)</span>
+                          </>
                         ) : (
                           <>
-                            <CheckCircle size={16} className="text-emerald-400" />
-                            <span className="text-emerald-400">Satın Alma Siparişi Aktif</span>
+                            <CheckCircle size={16} className="text-primary" />
+                            <span className="text-primary-light">Sipariş Aktif (Tedarikçide)</span>
                           </>
                         )}
                       </h2>
-                      <span className={`px-2 py-0.5 rounded text-[11px] font-mono font-semibold border ${
-                        isPoCancelled 
-                          ? 'bg-red-500/20 text-red-300 border-red-500/40' 
-                          : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
-                      }`}>
+                      <span className={`px-2.5 py-0.5 rounded text-[11px] font-mono font-semibold border ${statusBadgeClass}`}>
                         {po.status.toUpperCase()}
                       </span>
                     </div>
 
-                    <div className="bg-bg/60 rounded p-3 text-xs font-mono space-y-1 border border-border">
+                    <div className="bg-bg/60 rounded p-3 text-xs font-mono space-y-1.5 border border-border">
                       <div className="flex justify-between">
                         <span className="text-text-muted">PO No:</span>
                         <span className="font-semibold text-text-primary">{po.po_number}</span>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-text-muted">Oluşturulma:</span>
-                        <span>{new Date(po.created_at).toLocaleString()}</span>
+                        <span>{new Date(po.created_at).toLocaleDateString()}</span>
                       </div>
                       <div className="flex justify-between">
-                        <span className="text-text-muted">E-posta Bildirimi:</span>
-                        <span>{po.email_sent ? "Gönderildi" : "Beklemede"}</span>
+                        <span className="text-text-muted">Beklenen Teslimat:</span>
+                        <span>{po.expected_delivery_date || "-"}</span>
                       </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-text-muted">Fiilî Teslimat:</span>
+                        <div className="flex items-center gap-2">
+                          <span>{po.actual_delivery_date || "-"}</span>
+                          {delayText && (
+                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-sans font-medium ${delayBadgeClass}`}>
+                              {delayText}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      {po.final_amount != null && (
+                        <div className="flex justify-between text-emerald-400 pt-1 border-t border-border">
+                          <span className="text-text-muted">Kesinleşen Tutar:</span>
+                          <span className="font-semibold">₺ {Number(po.final_amount).toLocaleString('tr-TR')}</span>
+                        </div>
+                      )}
+                      {po.delivery_notes && (
+                        <div className="pt-1 text-text-secondary text-[11px] border-t border-border">
+                          <span className="text-text-muted block text-[10px] uppercase font-semibold">Notlar:</span>
+                          <span className="block mt-0.5 whitespace-pre-line">{po.delivery_notes}</span>
+                        </div>
+                      )}
                       {isPoCancelled && (
-                        <>
-                          <div className="flex justify-between text-red-300 pt-1 border-t border-border">
-                            <span className="text-text-muted">İptal Tarihi:</span>
-                            <span>{po.cancelled_at ? new Date(po.cancelled_at).toLocaleString() : "-"}</span>
-                          </div>
-                          <div className="pt-1 text-red-300 text-xs">
-                            <span className="text-text-muted block text-[10px] uppercase font-semibold">İptal Gerekçesi:</span>
-                            <span className="italic block mt-0.5">{po.cancellation_reason || "Gerekçe belirtilmedi"}</span>
-                          </div>
-                        </>
+                        <div className="pt-1 text-red-300 text-xs border-t border-border">
+                          <span className="text-text-muted block text-[10px] uppercase font-semibold">İptal Gerekçesi ({po.cancelled_at ? new Date(po.cancelled_at).toLocaleDateString() : "-"}):</span>
+                          <span className="italic block mt-0.5">{po.cancellation_reason || "Gerekçe belirtilmedi"}</span>
+                        </div>
                       )}
                     </div>
 
+                    {/* Quality Issues Summary & Accordion */}
+                    <div className="mt-3 pt-2.5 border-t border-border/60">
+                      <div className="flex items-center justify-between text-xs">
+                        <button
+                          type="button"
+                          onClick={() => setExpandedPoQuality(prev => ({ ...prev, [po.id]: !prev[po.id] }))}
+                          className="flex items-center gap-1.5 font-medium text-text-secondary hover:text-text-primary transition-colors"
+                        >
+                          <AlertCircle size={13} className={issues.length > 0 ? "text-amber-400" : "text-text-muted"} />
+                          <span>Kalite & İade Kayıtları ({issues.length})</span>
+                          <span className="text-[10px] text-text-muted">[{isQualityExpanded ? "Gizle" : "Göster"}]</span>
+                        </button>
+
+                        {!isPoCancelled && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setPoForQuality(po);
+                              setQualityIssueType("defect");
+                              setQualitySeverity("medium");
+                              setQualityRejectionCount(0);
+                              setQualityDescription("");
+                              setQualityError(null);
+                            }}
+                            className="text-[11px] font-medium text-amber-400 hover:text-amber-300 transition-colors"
+                          >
+                            + Kalite Kaydı Ekle
+                          </button>
+                        )}
+                      </div>
+
+                      {isQualityExpanded && (
+                        <div className="mt-2 space-y-1.5">
+                          {issues.length === 0 ? (
+                            <p className="text-[11px] text-text-muted italic bg-bg/40 p-2 rounded">
+                              Bu sipariş için henüz bir kalite veya fire kaydı girilmedi.
+                            </p>
+                          ) : (
+                            issues.map(qi => (
+                              <div key={qi.id} className="p-2 rounded bg-bg/70 border border-border text-xs space-y-1">
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="font-semibold text-text-primary uppercase text-[10px] px-1.5 py-0.5 rounded bg-surface border border-border">
+                                      {qi.issue_type}
+                                    </span>
+                                    <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${
+                                      qi.severity === 'critical'
+                                        ? 'bg-red-500/20 text-red-300'
+                                        : qi.severity === 'medium'
+                                        ? 'bg-amber-500/20 text-amber-300'
+                                        : 'bg-zinc-700/50 text-zinc-300'
+                                    }`}>
+                                      {qi.severity}
+                                    </span>
+                                  </div>
+                                  {qi.rejection_count > 0 && (
+                                    <span className="text-[11px] font-semibold text-red-400">
+                                      Fire / İade: {qi.rejection_count} adet
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-text-secondary text-[11px]">{qi.description}</p>
+                                <div className="flex justify-between text-[10px] text-text-muted pt-0.5">
+                                  <span>Kaydeden: {qi.reported_by_name || "Kullanıcı"}</span>
+                                  <span>{new Date(qi.created_at).toLocaleDateString()}</span>
+                                </div>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Actions Bar */}
                     {!isPoCancelled && (
-                      <div className="mt-3 flex justify-end">
+                      <div className="mt-4 pt-3 border-t border-border flex items-center justify-between gap-2 flex-wrap">
+                        <div className="flex items-center gap-2">
+                          {isIssued && (
+                            <button
+                              onClick={() => {
+                                setPoToDeliver(po);
+                                setDeliverDate(new Date().toISOString().split("T")[0]);
+                                setDeliverNotes("");
+                                setDeliverPoError(null);
+                              }}
+                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold transition-colors shadow-sm"
+                            >
+                              <Truck size={13} />
+                              Teslim Alındı
+                            </button>
+                          )}
+                          {isDelivered && (
+                            <button
+                              onClick={() => {
+                                setPoToComplete(po);
+                                setFinalAmount(po.final_amount != null ? String(po.final_amount) : "");
+                                setCompletionNotes("");
+                                setCompletePoError(null);
+                              }}
+                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-colors shadow-sm"
+                            >
+                              <PackageCheck size={13} />
+                              Siparişi Tamamla
+                            </button>
+                          )}
+                        </div>
+
                         <button
                           onClick={() => {
                             setPoToCancel(po);
                             setPoCancelReason("");
                             setCancelPoError(null);
                           }}
-                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-600/80 hover:bg-red-600 text-white text-xs font-medium transition-colors shadow-sm"
+                          disabled={isCompleted}
+                          title={isCompleted ? "Tamamlanmış sipariş iptal edilemez" : "Siparişi iptal et"}
+                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                            isCompleted
+                              ? "text-zinc-600 border border-zinc-800 cursor-not-allowed opacity-40"
+                              : "border border-red-500/30 text-red-400 hover:bg-red-500/10"
+                          }`}
                         >
                           <Ban size={13} />
-                          Siparişi İptal Et
+                          İptal Et
                         </button>
                       </div>
                     )}
@@ -1449,6 +1759,259 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
               >
                 {isCancellingPo && <Loader2 size={13} className="animate-spin" />}
                 {isCancellingPo ? "İptal Ediliyor..." : "Evet, Siparişi İptal Et"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal: Deliver PO ── */}
+      {poToDeliver && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-surface border border-border rounded-xl shadow-2xl max-w-md w-full overflow-hidden">
+            <div className="p-6">
+              <div className="flex items-center gap-3 text-amber-500 mb-4">
+                <div className="p-2.5 rounded-full bg-amber-500/10 border border-amber-500/20">
+                  <Truck size={22} />
+                </div>
+                <div>
+                  <h3 className="text-base font-semibold text-text-primary">Teslimat Kaydı Gir</h3>
+                  <p className="text-xs text-text-muted font-mono mt-0.5">{poToDeliver.po_number}</p>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                    Fiilî Teslim Tarihi
+                  </label>
+                  <input
+                    type="date"
+                    value={deliverDate}
+                    onChange={(e) => setDeliverDate(e.target.value)}
+                    className="w-full text-xs p-2.5 rounded-lg bg-bg border border-border text-text-primary focus:outline-none focus:border-amber-500 transition-colors"
+                  />
+                  <p className="text-[11px] text-text-muted mt-1">Belirtilmezse bugünün tarihi esas alınır.</p>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                    Teslimat Notları (Opsiyonel)
+                  </label>
+                  <textarea
+                    rows={3}
+                    placeholder="Örn: İrsaliye No: IRS-9821, ambar 2 numaralı rampa üzerinden teslim alındı..."
+                    value={deliverNotes}
+                    onChange={(e) => setDeliverNotes(e.target.value)}
+                    className="w-full text-xs p-3 rounded-lg bg-bg border border-border text-text-primary placeholder:text-text-muted focus:outline-none focus:border-amber-500 transition-colors"
+                  />
+                </div>
+
+                {deliverPoError && (
+                  <div className="p-3 rounded-lg bg-red-500/15 border border-red-500/30 text-xs text-red-300">
+                    {deliverPoError}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="px-6 py-4 border-t border-border bg-surface-elevated/40 flex justify-end gap-3">
+              <button
+                onClick={() => { setPoToDeliver(null); setDeliverPoError(null); }}
+                disabled={isDeliveringPo}
+                className="px-4 py-2 text-xs font-medium text-text-muted hover:text-text-primary transition-colors disabled:opacity-50"
+              >
+                Vazgeç
+              </button>
+              <button
+                onClick={handleDeliverPo}
+                disabled={isDeliveringPo}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold bg-amber-600 hover:bg-amber-500 text-white transition-colors shadow-sm disabled:opacity-50"
+              >
+                {isDeliveringPo && <Loader2 size={13} className="animate-spin" />}
+                {isDeliveringPo ? "Kaydediliyor..." : "Teslimatı Onayla"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal: Complete PO ── */}
+      {poToComplete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-surface border border-border rounded-xl shadow-2xl max-w-md w-full overflow-hidden">
+            <div className="p-6">
+              <div className="flex items-center gap-3 text-emerald-400 mb-4">
+                <div className="p-2.5 rounded-full bg-emerald-500/10 border border-emerald-500/20">
+                  <PackageCheck size={22} />
+                </div>
+                <div>
+                  <h3 className="text-base font-semibold text-text-primary">Siparişi Tamamla & Kesinleştir</h3>
+                  <p className="text-xs text-text-muted font-mono mt-0.5">{poToComplete.po_number}</p>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                    Kesinleşen Fatura Tutarı (TL)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    placeholder="Örn: 24500.00 (Boş bırakılırsa teklif tutarı esas alınır)"
+                    value={finalAmount}
+                    onChange={(e) => setFinalAmount(e.target.value)}
+                    className="w-full text-xs p-2.5 rounded-lg bg-bg border border-border text-text-primary focus:outline-none focus:border-emerald-500 transition-colors"
+                  />
+                  <p className="text-[11px] text-text-muted mt-1">Muhasebe ve finansal özetlerde bu tutar baz alınacaktır.</p>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                    Tamamlama / İnceleme Notu (Opsiyonel)
+                  </label>
+                  <textarea
+                    rows={3}
+                    placeholder="Örn: Kalite kontrol onayı alındı, fatura mutabakatı sağlandı..."
+                    value={completionNotes}
+                    onChange={(e) => setCompletionNotes(e.target.value)}
+                    className="w-full text-xs p-3 rounded-lg bg-bg border border-border text-text-primary placeholder:text-text-muted focus:outline-none focus:border-emerald-500 transition-colors"
+                  />
+                </div>
+
+                {completePoError && (
+                  <div className="p-3 rounded-lg bg-red-500/15 border border-red-500/30 text-xs text-red-300">
+                    {completePoError}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="px-6 py-4 border-t border-border bg-surface-elevated/40 flex justify-end gap-3">
+              <button
+                onClick={() => { setPoToComplete(null); setCompletePoError(null); }}
+                disabled={isCompletingPo}
+                className="px-4 py-2 text-xs font-medium text-text-muted hover:text-text-primary transition-colors disabled:opacity-50"
+              >
+                Vazgeç
+              </button>
+              <button
+                onClick={handleCompletePo}
+                disabled={isCompletingPo}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white transition-colors shadow-sm disabled:opacity-50"
+              >
+                {isCompletingPo && <Loader2 size={13} className="animate-spin" />}
+                {isCompletingPo ? "Tamamlanıyor..." : "Siparişi Tamamla"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal: Add Quality Issue ── */}
+      {poForQuality && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-surface border border-border rounded-xl shadow-2xl max-w-md w-full overflow-hidden">
+            <div className="p-6">
+              <div className="flex items-center gap-3 text-amber-500 mb-4">
+                <div className="p-2.5 rounded-full bg-amber-500/10 border border-amber-500/20">
+                  <AlertCircle size={22} />
+                </div>
+                <div>
+                  <h3 className="text-base font-semibold text-text-primary">Kalite & Fire Kaydı Ekle</h3>
+                  <p className="text-xs text-text-muted font-mono mt-0.5">{poForQuality.po_number}</p>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                      Sorun Türü
+                    </label>
+                    <select
+                      value={qualityIssueType}
+                      onChange={(e) => setQualityIssueType(e.target.value)}
+                      className="w-full text-xs p-2.5 rounded-lg bg-bg border border-border text-text-primary focus:outline-none focus:border-amber-500 transition-colors"
+                    >
+                      <option value="defect">Kusurlu Ürün (Defect)</option>
+                      <option value="late_delivery">Gecikmeli Teslimat</option>
+                      <option value="missing_items">Eksik Ürün</option>
+                      <option value="damaged">Hasarlı Malzeme</option>
+                      <option value="documentation">Belge Eksikliği</option>
+                      <option value="other">Diğer</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                      Önem Derecesi
+                    </label>
+                    <select
+                      value={qualitySeverity}
+                      onChange={(e) => setQualitySeverity(e.target.value)}
+                      className="w-full text-xs p-2.5 rounded-lg bg-bg border border-border text-text-primary focus:outline-none focus:border-amber-500 transition-colors"
+                    >
+                      <option value="low">Düşük</option>
+                      <option value="medium">Orta</option>
+                      <option value="critical">Kritik</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                    Fire / İade / Reddedilen Adet
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={qualityRejectionCount}
+                    onChange={(e) => setQualityRejectionCount(Math.max(0, parseInt(e.target.value) || 0))}
+                    className="w-full text-xs p-2.5 rounded-lg bg-bg border border-border text-text-primary focus:outline-none focus:border-amber-500 transition-colors"
+                  />
+                  <p className="text-[11px] text-text-muted mt-1">Kullanılamaz veya iade edilen ürün sayısı (0 olabilir).</p>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                    Açıklama <span className="text-red-400">*</span>
+                  </label>
+                  <textarea
+                    rows={3}
+                    placeholder="Örn: 5 kutu malzemenin ambalajı ıslanmış ve deforme olmuş şekilde teslim edildi..."
+                    value={qualityDescription}
+                    onChange={(e) => setQualityDescription(e.target.value)}
+                    className="w-full text-xs p-3 rounded-lg bg-bg border border-border text-text-primary placeholder:text-text-muted focus:outline-none focus:border-amber-500 transition-colors"
+                  />
+                  <p className="text-[11px] text-text-muted mt-1">En az 3 karakter gereklidir. Tedarikçi performans geçmişine işlenir.</p>
+                </div>
+
+                {qualityError && (
+                  <div className="p-3 rounded-lg bg-red-500/15 border border-red-500/30 text-xs text-red-300">
+                    {qualityError}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="px-6 py-4 border-t border-border bg-surface-elevated/40 flex justify-end gap-3">
+              <button
+                onClick={() => { setPoForQuality(null); setQualityError(null); }}
+                disabled={isSavingQuality}
+                className="px-4 py-2 text-xs font-medium text-text-muted hover:text-text-primary transition-colors disabled:opacity-50"
+              >
+                Vazgeç
+              </button>
+              <button
+                onClick={handleSaveQualityIssue}
+                disabled={isSavingQuality || !qualityDescription.trim() || qualityDescription.trim().length < 3}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold bg-amber-600 hover:bg-amber-500 text-white transition-colors shadow-sm disabled:opacity-50"
+              >
+                {isSavingQuality && <Loader2 size={13} className="animate-spin" />}
+                {isSavingQuality ? "Kaydediliyor..." : "Kaydı Ekle"}
               </button>
             </div>
           </div>

@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
-from sqlalchemy import String, ForeignKey, DateTime, Boolean, Text, Date, Numeric
+from sqlalchemy import String, ForeignKey, DateTime, Boolean, Text, Date, Numeric, Integer
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID
 
@@ -69,6 +69,83 @@ class PurchaseOrder(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         back_populates="purchase_order",
         uselist=False,
     )
+    quality_issues: Mapped[list["POQualityIssue"]] = relationship(
+        back_populates="purchase_order",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        order_by="POQualityIssue.created_at.desc()",
+    )
 
     def __repr__(self) -> str:
         return f"<PurchaseOrder {self.po_number} status={self.status}>"
+
+
+class IssueType(str, enum.Enum):
+    DEFECT = "defect"
+    LATE_DELIVERY = "late_delivery"
+    MISSING_ITEMS = "missing_items"
+    DOCUMENTATION = "documentation"
+    DAMAGED = "damaged"
+    OTHER = "other"
+
+
+class IssueSeverity(str, enum.Enum):
+    LOW = "low"
+    MEDIUM = "medium"
+    CRITICAL = "critical"
+
+
+class QualityIssueStatus(str, enum.Enum):
+    OPEN = "open"
+    RESOLVED = "resolved"
+    DISMISSED = "dismissed"
+
+
+class POQualityIssue(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """
+    Satın alma siparişi (PO) kapsamında teslimatta veya incelemede tespit edilen
+    kusur, eksik ürün, hasar veya fire/iade kayıtları.
+    """
+    __tablename__ = "po_quality_issues"
+
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    purchase_order_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("purchase_orders.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    supplier_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("suppliers.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    reported_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
+    issue_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    severity: Mapped[str] = mapped_column(String(20), default=IssueSeverity.MEDIUM.value, nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    rejection_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default=QualityIssueStatus.OPEN.value, nullable=False, index=True)
+    resolution_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # ── Relationships ──────────────────────────────────────────────────────────
+    purchase_order: Mapped["PurchaseOrder"] = relationship(back_populates="quality_issues")
+    supplier: Mapped["Supplier"] = relationship()
+    reported_by: Mapped["User | None"] = relationship()
+    organization: Mapped["Organization"] = relationship()
+
+    def __repr__(self) -> str:
+        return f"<POQualityIssue po_id={self.purchase_order_id} type={self.issue_type} status={self.status} rejections={self.rejection_count}>"

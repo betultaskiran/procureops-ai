@@ -139,6 +139,7 @@ export interface PurchaseOrderResponse {
   approval_id: string;
   status: string;
   email_sent: boolean;
+  email_sent_at?: string | null;
   cancellation_reason?: string | null;
   cancelled_at?: string | null;
   expected_delivery_date?: string | null;
@@ -147,6 +148,57 @@ export interface PurchaseOrderResponse {
   final_amount?: number | null;
   delivery_notes?: string | null;
   created_at: string;
+  updated_at?: string | null;
+}
+
+export interface POQualityIssueResponse {
+  id: string;
+  organization_id: string;
+  purchase_order_id: string;
+  supplier_id: string;
+  reported_by_id?: string | null;
+  reported_by_name?: string | null;
+  issue_type: string;
+  severity: string;
+  description: string;
+  rejection_count: number;
+  status: "open" | "resolved" | "dismissed";
+  resolution_notes?: string | null;
+  resolved_at?: string | null;
+  created_at: string;
+}
+
+export interface POQualityIssueCreate {
+  issue_type: string;
+  severity?: string;
+  description: string;
+  rejection_count?: number;
+}
+
+export interface POQualityIssueUpdate {
+  status: "open" | "resolved" | "dismissed";
+  resolution_notes?: string;
+}
+
+export interface DeliverPORequest {
+  actual_delivery_date?: string | null;
+  delivery_notes?: string | null;
+}
+
+export interface CompletePORequest {
+  final_amount?: number | null;
+  completion_notes?: string | null;
+}
+
+export interface PurchaseOrderDetailResponse extends PurchaseOrderResponse {
+  rfq_id: string;
+  rfq_title: string;
+  supplier_id: string;
+  supplier_name: string;
+  currency: string;
+  quoted_amount: number;
+  quality_issues: POQualityIssueResponse[];
+  allowed_actions: string[];
 }
 
 export interface ReviewRequest {

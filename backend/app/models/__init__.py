@@ -36,7 +36,14 @@ from app.models.analysis import (
     ApprovalStatus,
 )
 from app.models.audit import AuditEvent
-from app.models.order import PurchaseOrder, PurchaseOrderStatus
+from app.models.order import (
+    PurchaseOrder,
+    PurchaseOrderStatus,
+    POQualityIssue,
+    IssueType,
+    IssueSeverity,
+    QualityIssueStatus,
+)
 
 __all__ = [
     # Base
@@ -80,4 +87,8 @@ __all__ = [
     # Order
     "PurchaseOrder",
     "PurchaseOrderStatus",
+    "POQualityIssue",
+    "IssueType",
+    "IssueSeverity",
+    "QualityIssueStatus",
 ]
