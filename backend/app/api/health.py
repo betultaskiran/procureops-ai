@@ -18,7 +18,7 @@ blocking I/O (like psycopg2) from FastAPI without freezing the server.
 import psycopg2
 import redis as redis_lib
 import httpx
-from fastapi import APIRouter
+from fastapi import APIRouter, Response, status
 from app.core.config import settings
 
 router = APIRouter(tags=["Health"])
@@ -101,6 +101,44 @@ def health_check():
 
     return {
         "status": "ok" if all_ok else "degraded",
+        "version": settings.APP_VERSION,
+        "services": services,
+    }
+
+
+@router.get("/health/live", summary="Kubernetes Liveness Probe")
+def liveness_check():
+    """
+    Liveness probe: verifies that the FastAPI application process is alive and responding.
+    Returns HTTP 200 as long as the server is running.
+    """
+    return {
+        "status": "ok",
+        "timestamp": settings.APP_NAME,
+        "version": settings.APP_VERSION,
+    }
+
+
+@router.get("/health/ready", summary="Kubernetes Readiness Probe")
+def readiness_check(response: Response):
+    """
+    Readiness probe: verifies that the application can accept user traffic by checking
+    that all backing services (PostgreSQL, Redis, Qdrant) are reachable.
+
+    Returns HTTP 200 when ready, or HTTP 503 Service Unavailable when degraded.
+    """
+    services = {
+        "postgres": _check_postgres(),
+        "qdrant": _check_qdrant(),
+        "redis": _check_redis(),
+    }
+
+    all_ok = all(v == "ok" for v in services.values())
+    if not all_ok:
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+
+    return {
+        "status": "ok" if all_ok else "unready",
         "version": settings.APP_VERSION,
         "services": services,
     }

@@ -71,6 +71,7 @@ async function handleResponse<T>(response: Response, path?: string): Promise<T> 
 export const apiClient = {
   async get<T>(path: string, options?: RequestInit): Promise<T> {
     const res = await fetch(`${BASE_URL}${path}`, {
+      credentials: "include",
       ...options,
       headers: {
         "Content-Type": "application/json",
@@ -83,6 +84,7 @@ export const apiClient = {
 
   async post<T>(path: string, body: any, options?: RequestInit): Promise<T> {
     const res = await fetch(`${BASE_URL}${path}`, {
+      credentials: "include",
       ...options,
       method: "POST",
       headers: {
@@ -97,6 +99,7 @@ export const apiClient = {
 
   async patch<T>(path: string, body: any, options?: RequestInit): Promise<T> {
     const res = await fetch(`${BASE_URL}${path}`, {
+      credentials: "include",
       ...options,
       method: "PATCH",
       headers: {
@@ -112,6 +115,7 @@ export const apiClient = {
   // Added for file uploads (FormData)
   async postForm<T>(path: string, body: FormData, options?: RequestInit): Promise<T> {
     const res = await fetch(`${BASE_URL}${path}`, {
+      credentials: "include",
       ...options,
       method: "POST",
       // Do NOT set Content-Type header manually when using FormData, 
@@ -127,6 +131,7 @@ export const apiClient = {
 
   async delete<T>(path: string, options?: RequestInit): Promise<T> {
     const res = await fetch(`${BASE_URL}${path}`, {
+      credentials: "include",
       ...options,
       method: "DELETE",
       headers: {

@@ -39,9 +39,10 @@ export const authApi = {
   },
 
   /**
-   * Terminate user session and clear stored tokens.
+   * Terminate user session and clear stored tokens and cookies.
    */
   logout(): void {
+    apiClient.post("/api/v1/auth/logout", {}).catch(() => {});
     removeAuthToken();
   },
 

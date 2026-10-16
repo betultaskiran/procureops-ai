@@ -180,6 +180,8 @@ def upgrade() -> None:
     sa.Column('status', sa.String(length=30), nullable=False),
     sa.Column('comment', sa.Text(), nullable=True),
     sa.Column('reviewed_at', sa.DateTime(timezone=True), nullable=True),
+    sa.Column('selected_quote_id', sa.UUID(), nullable=True),
+    sa.Column('acknowledged_policy_violation', sa.Boolean(), server_default=sa.text('false'), nullable=False),
     sa.Column('id', sa.UUID(), nullable=False),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
     sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
@@ -206,9 +208,9 @@ def upgrade() -> None:
     sa.Column('quote_document_id', sa.UUID(), nullable=True),
     sa.Column('currency', sa.String(length=3), nullable=False),
     sa.Column('subtotal', sa.Numeric(precision=14, scale=4), nullable=False),
-    sa.Column('vat_rate', sa.Numeric(precision=5, scale=4), nullable=False),
-    sa.Column('vat_amount', sa.Numeric(precision=14, scale=4), nullable=False),
-    sa.Column('shipping_cost', sa.Numeric(precision=14, scale=4), nullable=False),
+    sa.Column('vat_rate', sa.Numeric(precision=5, scale=4), nullable=True),
+    sa.Column('vat_amount', sa.Numeric(precision=14, scale=4), nullable=True),
+    sa.Column('shipping_cost', sa.Numeric(precision=14, scale=4), nullable=True),
     sa.Column('discount_amount', sa.Numeric(precision=14, scale=4), nullable=False),
     sa.Column('other_costs', sa.Numeric(precision=14, scale=4), nullable=False),
     sa.Column('total_price', sa.Numeric(precision=14, scale=4), nullable=False),
@@ -229,6 +231,24 @@ def upgrade() -> None:
     )
     op.create_index(op.f('ix_quotes_rfq_id'), 'quotes', ['rfq_id'], unique=False)
     op.create_index(op.f('ix_quotes_supplier_id'), 'quotes', ['supplier_id'], unique=False)
+    op.create_foreign_key('approvals_selected_quote_id_fkey', 'approvals', 'quotes', ['selected_quote_id'], ['id'], ondelete='SET NULL')
+    op.create_table('purchase_orders',
+    sa.Column('po_number', sa.String(length=50), nullable=False),
+    sa.Column('quote_id', sa.UUID(), nullable=False),
+    sa.Column('approval_id', sa.UUID(), nullable=False),
+    sa.Column('status', sa.String(length=20), nullable=False),
+    sa.Column('email_sent', sa.Boolean(), nullable=False),
+    sa.Column('email_sent_at', sa.DateTime(timezone=True), nullable=True),
+    sa.Column('cancellation_reason', sa.Text(), nullable=True),
+    sa.Column('cancelled_at', sa.DateTime(timezone=True), nullable=True),
+    sa.Column('id', sa.UUID(), nullable=False),
+    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+    sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+    sa.ForeignKeyConstraint(['approval_id'], ['approvals.id'], ondelete='RESTRICT'),
+    sa.ForeignKeyConstraint(['quote_id'], ['quotes.id'], ondelete='RESTRICT'),
+    sa.PrimaryKeyConstraint('id')
+    )
+    op.create_index(op.f('ix_purchase_orders_po_number'), 'purchase_orders', ['po_number'], unique=True)
     op.create_table('compliance_checks',
     sa.Column('analysis_id', sa.UUID(), nullable=False),
     sa.Column('quote_id', sa.UUID(), nullable=True),
@@ -304,6 +324,9 @@ def downgrade() -> None:
     op.drop_table('quote_items')
     op.drop_index(op.f('ix_compliance_checks_analysis_id'), table_name='compliance_checks')
     op.drop_table('compliance_checks')
+    op.drop_index(op.f('ix_purchase_orders_po_number'), table_name='purchase_orders')
+    op.drop_table('purchase_orders')
+    op.drop_constraint('approvals_selected_quote_id_fkey', 'approvals', type_='foreignkey')
     op.drop_index(op.f('ix_quotes_supplier_id'), table_name='quotes')
     op.drop_index(op.f('ix_quotes_rfq_id'), table_name='quotes')
     op.drop_table('quotes')

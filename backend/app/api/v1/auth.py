@@ -11,13 +11,14 @@ from datetime import datetime
 import re
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.config import settings
 from app.core.auth import get_current_active_user
 from app.core.security import (
     MAX_PASSWORD_BYTES,
@@ -120,6 +121,20 @@ def _slugify(text: str) -> str:
     return s[:80]
 
 
+def _set_auth_cookie(response: Response, token: str) -> None:
+    """Attach secure HttpOnly session cookie for web clients."""
+    is_prod = settings.ENVIRONMENT.lower() in ("production", "prod")
+    response.set_cookie(
+        key="access_token",
+        value=token,
+        max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        httponly=True,
+        samesite="lax",
+        secure=is_prod,
+        path="/",
+    )
+
+
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.post(
@@ -135,6 +150,7 @@ def _slugify(text: str) -> str:
 )
 async def register(
     payload: RegisterRequest,
+    response: Response,
     db: AsyncSession = Depends(get_db),
 ):
     normalized_email = payload.email.lower().strip()
@@ -210,6 +226,8 @@ async def register(
         "role": user.role,
     })
 
+    _set_auth_cookie(response, token)
+
     return TokenResponse(
         access_token=token,
         token_type="bearer",
@@ -226,6 +244,7 @@ async def register(
 )
 async def login(
     payload: LoginRequest,
+    response: Response,
     db: AsyncSession = Depends(get_db),
 ):
     normalized_email = payload.email.lower().strip()
@@ -263,11 +282,31 @@ async def login(
         "role": user.role,
     })
 
+    _set_auth_cookie(response, token)
+
     return TokenResponse(
         access_token=token,
         token_type="bearer",
         user=UserResponse.model_validate(user),
     )
+
+
+@router.post(
+    "/logout",
+    status_code=status.HTTP_200_OK,
+    summary="Logout current user",
+    description="Clears the HttpOnly access_token session cookie.",
+)
+async def logout(response: Response):
+    is_prod = settings.ENVIRONMENT.lower() in ("production", "prod")
+    response.delete_cookie(
+        key="access_token",
+        httponly=True,
+        samesite="lax",
+        secure=is_prod,
+        path="/",
+    )
+    return {"message": "Logged out successfully"}
 
 
 @router.get(

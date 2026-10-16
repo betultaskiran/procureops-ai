@@ -17,7 +17,7 @@ Usage anywhere in the codebase:
   print(settings.POSTGRES_HOST)
 """
 
-from pydantic import model_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEV_JWT_SECRET: str = "dev-secret-change-in-production-only-procureops-jwt-secret-key-32chars"
@@ -74,15 +74,44 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440  # 24 hours
 
+    # ── Observability & Production Hardening (Phase 7) ────────────────────────
+    CORS_ORIGINS: list[str] = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ]
+    LOG_LEVEL: str = "INFO"
+    LOG_FORMAT: str = "console"  # 'console' or 'json'
+    SENTRY_DSN: str | None = None
+
+    @field_validator("CORS_ORIGINS", mode="before")
+    @classmethod
+    def assemble_cors_origins(cls, v: object) -> list[str]:
+        if isinstance(v, str):
+            if v.strip().startswith("[") and v.strip().endswith("]"):
+                import json
+                try:
+                    return json.loads(v)
+                except Exception:
+                    pass
+            return [origin.strip() for origin in v.split(",") if origin.strip()]
+        elif isinstance(v, list):
+            return [str(origin).strip() for origin in v]
+        return ["http://localhost:3000", "http://127.0.0.1:3000"]
+
     @model_validator(mode="after")
-    def validate_production_jwt_secret(self) -> "Settings":
+    def validate_production_settings(self) -> "Settings":
         """
-        Enforce fail-closed security for JWT configuration:
+        Enforce fail-closed security for JWT configuration and production invariants:
         In production (when DEBUG is False or ENVIRONMENT is 'production'/'prod'),
-        require a non-default secret with at least 32 characters.
+        require a non-default secret with at least 32 characters, safe passwords,
+        and strict CORS.
         """
         is_production = (not self.DEBUG) or (self.ENVIRONMENT.lower() in ("production", "prod"))
         if is_production:
+            if self.DEBUG and self.ENVIRONMENT.lower() in ("production", "prod"):
+                raise ValueError(
+                    "Production configuration error: DEBUG cannot be True when ENVIRONMENT is production."
+                )
             if self.JWT_SECRET_KEY == DEV_JWT_SECRET:
                 raise ValueError(
                     "Production configuration error: JWT_SECRET_KEY cannot use the default "
@@ -93,6 +122,16 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "Production configuration error: JWT_SECRET_KEY must be at least 32 "
                     "characters long in production."
+                )
+            if self.POSTGRES_PASSWORD == "change_me_in_production":
+                raise ValueError(
+                    "Production configuration error: POSTGRES_PASSWORD cannot use default "
+                    "development placeholder 'change_me_in_production' in production."
+                )
+            if "*" in self.CORS_ORIGINS:
+                raise ValueError(
+                    "Production configuration error: Wildcard '*' in CORS_ORIGINS is prohibited "
+                    "when credentialed authentication is enabled."
                 )
         return self
 

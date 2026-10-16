@@ -107,19 +107,80 @@ The following table reflects the actual implementation state verified by the cod
 | **Phase 4A** | **Supplier History Data Foundation** | Delivery fields on PO (`expected_delivery_date`, `actual_delivery_date`, `final_amount`, `delivery_notes`), `SupplierHistory` PO link (`models/order.py`, `models/supplier.py`, `test_supplier_history_foundation.py`). | ✅ Complete |
 | **Phase 4B** | **Supplier Performance Engine & APIs** | `SupplierPerformanceService`, delivery reliability %, currency-isolated financials, quality metrics, collision detection (`/api/v1/suppliers/{id}/performance`, `history`, `test_supplier_performance.py`). | ✅ Complete |
 | **Phase 4C** | **Supplier Performance UI & Drawer** | Accessible slide-over drawer (`SupplierPerformanceDrawer.tsx`), matrix triggers, focus trap, request identity guards, zero-page safety (`frontend/tests/supplier-drawer.test.mjs`). | ✅ Complete |
-| **Phase 5** | **Authentication, RBAC & Team Management** | Real JWT auth, password hashing, role enforcement (`admin`, `manager`, `employee`, `viewer`), tenant isolation middleware, and `/dashboard/team` member management page. *(Currently mock auth / team page 404)* | ⏳ **Next Phase** |
+| **Phase 5** | **Authentication, RBAC & Team Management** | Real JWT auth, Argon2/Bcrypt hashing, role enforcement (`admin`, `manager`, `employee`, `viewer`), tenant-isolated organization scoping, `/dashboard/team` page, last-admin protection (`test_team_management.py`, `test_auth_core.py`, `test_rbac_tenant_isolation.py`). | ✅ Complete |
+| **Phase 6** | **Purchase Order Lifecycle & Quality Tracking** | Dedicated lifecycle endpoints (`/api/v1/orders/{id}/deliver`, `/complete`, `/cancel`, `/quality-issues`), `POQualityIssue` model, delay metrics, terminal state safety, UI modals & delay badges (`test_order_lifecycle.py`). | ✅ Complete |
+| **Phase 7** | **Production Readiness & Observability** | Alembic migration consistency (`7c4b92df0a12`), fail-closed production config, dual HttpOnly cookie + Bearer token session security, structured JSON logging with correlation IDs, `/health/live` & `/health/ready` probes, Sentry integration hook (`test_production_readiness.py`). | ✅ Complete |
 | **Core AI** | **Deterministic TCO & Hard Rules** | Deterministic VAT, shipping, discount calculation (`tco.py`), hard rules evaluation (`compliance.py`, `orchestrator.py`, `test_multi_analysis.py`). | ✅ Complete |
 | **Core AI** | **Policy Knowledge Base (RAG & Hybrid Search)** | Dense + BM25 sparse hybrid retrieval with Reciprocal Rank Fusion (RRF), topical grounding, PDF chunking (`rag/service.py`, `test_policy_rag.py` 10 tests). | ✅ Complete |
 | **Core AI** | **Agentic Reasoning & Evidence Verification** | LLM trade-off synthesis, single-agent verification layer, evidence grounding cards (`agent/service.py`, `verification.py`, `EvidencePanel.tsx`). | ✅ Complete |
 | **Workflow** | **Human Review, Approval & Idempotent PO** | Standard vs Exception approval (`acknowledged_policy_violation`), duplicate PO blocking, cancellation flow (`ReviewModal.tsx`, `order.py`, `email.py`). | ✅ Complete |
-| **Phase 6** | **Background Jobs & Async Workers** | Celery / ARQ / Redis async worker daemon for background PDF ingestion and async email delivery. *(Redis active; async job runner pending)* | ⏳ Partial |
-| **Phase 7** | **AI Evaluation & Quality Observability** | Automated benchmark dataset for extraction and policy retrieval precision, prompt regression testing, cost/token tracking. *(16-query RAG tests complete; full eval harness pending)* | ⏳ Partial |
-| **Phase 8** | **Security Hardening & Audit Compliance** | Rate limiting, OWASP sanitization, file upload scanning, row-level tenant security, tamper-proof audit export (`models/audit.py` present). | ⏳ Partial |
+| **Phase 8** | **Background Jobs & Async Workers** | Celery / ARQ / Redis async worker daemon for background PDF ingestion and async email delivery. *(Redis active; async job runner pending)* | ⏳ Partial |
 | **Phase 9** | **Production CI/CD & Deployment** | GitHub Actions pipeline, production Docker/K8s manifests, automated migrations, SSL/TLS termination. | ⏳ Pending |
 
-> [!IMPORTANT]
-> **Audit Finding on Team Management & Authentication:**
-> The frontend sidebar links to `/dashboard/team`, but the route does not exist (returns 404). Furthermore, backend endpoints currently use mock organization lookup (`select(Organization).limit(1)`). Phase 5 is designated as the immediate next phase to implement real authentication, tenant-scoped RBAC, and team member management.
+---
+
+## Production Deployment & Operational Runbook
+
+### 1. Production Configuration & Secret Generation
+Never run with default development secrets in production (`ENVIRONMENT=production` or `DEBUG=false` fails fast if default secrets are detected).
+
+Generate cryptographically secure secrets:
+```bash
+# Generate 64-character hex JWT secret
+openssl rand -hex 32
+
+# Generate high-entropy database password
+openssl rand -base64 24
+```
+
+Required production environment variables:
+```ini
+ENVIRONMENT=production
+DEBUG=false
+POSTGRES_USER=procureops
+POSTGRES_PASSWORD=<strong_random_password>
+POSTGRES_DB=procureops_db
+POSTGRES_HOST=<database_host>
+POSTGRES_PORT=5432
+JWT_SECRET_KEY=<64_char_random_hex_key>
+CORS_ORIGINS=https://app.yourdomain.com
+GEMINI_API_KEY=<your_google_ai_studio_api_key>
+LOG_FORMAT=json
+LOG_LEVEL=INFO
+# SENTRY_DSN=https://your_sentry_key@o0.ingest.sentry.io/0
+```
+
+### 2. Database Migrations
+Always apply migrations before directing user traffic to new backend releases:
+```bash
+# Check current migration revision
+docker compose exec backend alembic current
+
+# Upgrade to latest head (7c4b92df0a12)
+docker compose exec backend alembic upgrade head
+
+# Rollback one revision if necessary
+docker compose exec backend alembic downgrade -1
+```
+
+### 3. Database Backup & Restore Procedures
+Backup (Logical dump):
+```bash
+docker compose exec -T postgres pg_dump -U procureops -d procureops_db -F c -b -v -f /tmp/backup.dump
+docker compose cp postgres:/tmp/backup.dump ./procureops_backup_$(date +%Y%m%d_%H%M%S).dump
+```
+
+Restore:
+```bash
+docker compose cp ./procureops_backup.dump postgres:/tmp/backup.dump
+docker compose exec postgres pg_restore -U procureops -d procureops_db -v -c /tmp/backup.dump
+```
+
+### 4. Health Probes & Monitoring
+- **Liveness Probe**: `GET /health/live` (Returns HTTP 200 as long as the process is alive).
+- **Readiness Probe**: `GET /health/ready` (Returns HTTP 200 when PostgreSQL, Redis, and Qdrant are operational; returns HTTP 503 if degraded).
+- **Full Health Status**: `GET /health` (Returns detailed breakdown of all subsystem statuses).
+- **Structured Logs**: In production with `LOG_FORMAT=json`, logs are emitted as JSON lines with correlation ID, HTTP route, duration in ms, and status code for integration with Datadog, ELK, or CloudWatch.
 
 ---
 
