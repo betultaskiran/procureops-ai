@@ -116,7 +116,7 @@ The following table reflects the actual implementation state verified by the cod
 | **Workflow** | **Human Review, Approval & Idempotent PO** | Standard vs Exception approval (`acknowledged_policy_violation`), duplicate PO blocking, cancellation flow (`ReviewModal.tsx`, `order.py`, `email.py`). | ✅ Complete |
 | **Phase 8** | **Document Intelligence & Reliable Ingestion** | Robust ingestion pipeline: text-based PDF (`pdfplumber`), scanned PDF & image OCR fallback (Gemini Multimodal Vision), `.xlsx` Excel parsing (`openpyxl`), arithmetic validation & discrepancy warnings, idempotent re-extraction & retry endpoint (`/reprocess`) (`services/extraction/`, `test_document_intelligence.py`). | ✅ Complete |
 | **Phase 9** | **Reliable Email Integration** | Provider abstraction (`SMTPEmailProvider`, `MockEmailProvider`), persistent transactional outbox (`email_deliveries`), idempotent RFQ invitations & PO notifications, runnable worker loop, bounded exponential backoff (`services/email/`, `test_email_integration.py`). | ✅ Complete |
-| **Phase 10** | **AI Workflow & Agent Orchestration** | Clear separation of extraction, policy analysis, recommendation, and verification; multi-agent contracts where measurable. | ⏳ Pending |
+| **Phase 10** | **AI Workflow & Agent Orchestration** | 6-stage sequential pipeline (deterministic input validation, TCO & hard rules, Qdrant policy RAG with citation grounding, structured LLM synthesis, independent verification layer setting `passed`/`failed`/`inconclusive`, and human-in-the-loop review with exception approvals blocking PO generation on verification failure) (`services/orchestration/`, `test_workflow_orchestration.py`). | ✅ Complete |
 | **Phase 11** | **Security & Pilot Readiness** | Full HttpOnly cookie session hardening, CSRF/CORS, concurrency, end-to-end logging, and pilot UAT. | ⏳ Pending |
 
 ---
@@ -213,6 +213,18 @@ Supplier invitations and purchase order notifications are delivered using a data
   # Python built-in debugging server on port 1025
   python -m smtpd -c DebuggingServer -n localhost:1025
   ```
+
+### 7. AI Workflow & Agent Orchestration (Phase 10)
+The RFQ analysis workflow is structured into 6 sequential, observable, and isolated stages:
+1. **Stage 1 — Extraction & Input Validation (Deterministic)**: Validates minimum quote requirements (>= 2 quotes), currency consistency, and financial completeness. Rejects invalid inputs before any AI service invocation.
+2. **Stage 2 — Deterministic TCO & Hard-Rule Evaluation (Deterministic)**: Pure Python calculation of total cost of ownership (subtotal + VAT + shipping - discount + other costs) and evaluation of non-negotiable delivery, warranty, and budget rules.
+3. **Stage 3 — Policy Compliance Analysis (Qdrant RAG + Citation Grounding)**: Dense vector similarity search against organizational policies with a minimum score threshold (0.65). If no matching policies meet the threshold, marks `insufficient_evidence` without hallucination.
+4. **Stage 4 — Supplier Recommendation (LLM Synthesis)**: Synthesis of financial, operational, and compliance data into a structured schema (`AgentRecommendationSchema`) with trade-off analysis, risk factors, and cited justification.
+5. **Stage 5 — Independent Verification Layer (Deterministic & Grounding Engine)**: Evaluates hard-rule violations, TCO consistency, and citation accuracy. Assigns discrete verification states:
+   - `passed`: All deterministic checks and citations validated.
+   - `failed` / `overridden`: Hard-rule or TCO violation detected. System revokes recommendation (`recommended_quote_id = None`).
+   - `inconclusive`: Citations refer to ungrounded or unsupported sources.
+6. **Stage 6 — Human Review & Approval Gate (Human-in-the-Loop)**: Gated by verification outcome. Standard `approved` requests for analyses that failed verification return HTTP 400. Overriding a failed recommendation requires an explicit `exception_approved` action with `acknowledged_policy_violation = True` and manager justification.
 
 ---
 

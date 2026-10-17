@@ -54,8 +54,10 @@ class EvidenceSourceType(str, enum.Enum):
 class VerificationStatus(str, enum.Enum):
     PENDING = "pending"
     VERIFIED = "verified"        # Deterministik kontroller geçti
+    PASSED = "passed"            # Doğrulama geçti (Phase 10 açık sözleşme)
     OVERRIDDEN = "overridden"    # LLM öneri kurallarla çakıştı, override edildi
     FAILED = "failed"            # Kritik kural ihlali
+    INCONCLUSIVE = "inconclusive" # Yetersiz kanıt / sonuçsuz
 
 
 class ApprovalStatus(str, enum.Enum):

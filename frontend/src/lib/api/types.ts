@@ -120,6 +120,31 @@ export interface EvidenceItemResponse {
   claim: string;
 }
 
+export interface StageEvidenceRef {
+  source_type: "quote" | "policy" | "supplier_history" | "calculation";
+  source_reference: string;
+  claim: string;
+  content?: string;
+  document_id?: string | null;
+  section_title?: string | null;
+  page_number?: number | null;
+  confidence_score?: number | null;
+}
+
+export interface StageResultResponse {
+  stage: "extraction_validation" | "deterministic_evaluation" | "policy_compliance" | "supplier_recommendation" | "independent_verification" | "human_review";
+  status: "pending" | "running" | "completed" | "failed" | "inconclusive" | "skipped";
+  started_at: string;
+  completed_at: string;
+  duration_ms: number;
+  summary: string;
+  details?: Record<string, any>;
+  sources?: StageEvidenceRef[];
+  warnings?: string[];
+  error_code?: string | null;
+  error_message?: string | null;
+}
+
 export interface AnalysisResponse {
   id: string;
   rfq_id: string;
@@ -128,6 +153,7 @@ export interface AnalysisResponse {
   compliance_checks: ComplianceCheckResponse[];
   recommendation: RecommendationResponse | null;
   evidence_items: EvidenceItemResponse[];
+  stage_results?: StageResultResponse[];
   is_stale?: boolean;
 }
 
