@@ -70,7 +70,7 @@ class LLMProvider(ABC):
     @abstractmethod
     async def extract_structured(
         self,
-        prompt: str,
+        prompt: str | list[Any],
         schema: type[BaseModel],
         system_prompt: str | None = None,
         config: ExtractionConfig | None = None,

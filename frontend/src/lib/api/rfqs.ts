@@ -71,18 +71,30 @@ export const rfqsApi = {
     formData.append("supplier_id", supplierId);
     formData.append("file", file);
     
-    // Using fetch directly since apiClient might not support FormData easily
-    const res = await fetch(`http://localhost:8000/api/v1/rfqs/${rfqId}/quote-documents`, {
+    const baseUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+    const token = typeof window !== "undefined" ? (localStorage.getItem("access_token") || localStorage.getItem("token")) : null;
+    const headers: Record<string, string> = {};
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+
+    const res = await fetch(`${baseUrl}/api/v1/rfqs/${rfqId}/quote-documents`, {
       method: "POST",
+      headers,
       body: formData,
+      credentials: "include",
     });
     
     if (!res.ok) {
-      const error = await res.json();
+      const error = await res.json().catch(() => ({ detail: "Upload failed" }));
       throw new Error(error.detail || "Upload failed");
     }
     
     return res.json();
+  },
+
+  async reprocessQuoteDocument(rfqId: string, documentId: string): Promise<UploadResponse> {
+    return apiClient.post<UploadResponse>(`/api/v1/rfqs/${rfqId}/quote-documents/${documentId}/reprocess`, {});
   },
   
   async analyzeRfq(rfqId: string, organizationId?: string): Promise<AnalysisResponse> {

@@ -1489,11 +1489,11 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
               )}
 
               <div className="flex flex-col gap-2">
-                <label className="text-sm font-medium text-text-secondary">Quote Document (PDF) *</label>
+                <label className="text-sm font-medium text-text-secondary">Quote Document (PDF, Excel, Image) *</label>
                 <div className="border-2 border-dashed border-border rounded-lg p-6 flex flex-col items-center justify-center text-center group hover:border-primary/50 transition-colors relative">
                   <input 
                     type="file" 
-                    accept=".pdf,.xlsx,.xls"
+                    accept=".pdf,.xlsx,.png,.jpg,.jpeg"
                     className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
                     onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
                   />
@@ -1510,7 +1510,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                   ) : (
                     <>
                       <p className="text-sm font-medium text-text-primary">Click to upload or drag and drop</p>
-                      <p className="text-xs text-text-muted mt-1">PDF, Excel up to 10MB</p>
+                      <p className="text-xs text-text-muted mt-1">PDF, Excel (.xlsx), PNG, JPG up to 50MB</p>
                     </>
                   )}
                 </div>

@@ -1,41 +1,36 @@
 """
 app/services/extraction/extractor.py
 
-Orchestrator: PDF → metin → LLM → validation → veritabanı.
+Orchestrator: PDF / Excel / Resim → metin/multimodal → LLM → validation → veritabanı.
 
-Bu dosya Phase 3'ün kalbidir. Şu işlemi yönetir:
-
-  QuoteDocument (status=PENDING)
-       │
-       ▼
-  pdfplumber → ham metin
-       │
-       ▼
-  LLM (Gemini) → QuoteExtractionSchema
-       │
-       ▼
-  Pydantic validation (field_validator'lar)
-       │
-       ├── BAŞARILI → Quote + QuoteItems DB'ye yazılır → status=COMPLETED
-       │
-       └── BAŞARISIZ → parse_error yazılır → status=FAILED
-
-PHASE 13 NOTU:
-  Şu an extraction senkron çalışıyor — HTTP isteği extraction bitene kadar bekler.
-  Bu gerçek hayatta kabul edilemez (10-30 saniyelik request).
-  Phase 13'te bu Celery task veya FastAPI BackgroundTask'a taşınacak.
-  Şimdi temeli doğru kuruyoruz; async'leştirme sonra gelecek.
+Phase 8 Yenilikleri:
+  1. Çoklu Format Desteği:
+     - Metin tabanlı PDF: pdfplumber ile hızlı, yerel metin/tablo çıkarımı
+     - Taranmış (Scanned) PDF: Metin katmanı yoksa Gemini Multimodal Vision ile OCR fallback
+     - Excel (.xlsx): openpyxl ile sayfaların tablo formatına dönüştürülmesi
+     - Resim (.png, .jpg, .jpeg): Gemini Vision ile doğrudan görsel teklif çıkarma
+  2. Idempotency (Yinelenen İstek Güvenliği):
+     - Yeniden denemelerde (retry) eski Quote/QuoteItem kayıtları temizlenir, mükerrer kayıt oluşmaz.
+  3. Matematiksel ve Şema Validasyonu:
+     - Eksik ve sıfır değer ayrımı, tutar uyumsuzluğu uyarıları Quote.notes ve metadata'ya kaydedilir.
 """
 
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.quote import Quote, QuoteItem
 from app.models.rfq import ParseStatus, QuoteDocument
+from app.services.extraction.excel_parser import (
+    EmptyExcelError,
+    ExcelParseError,
+    extract_text_from_excel,
+)
 from app.services.extraction.pdf_parser import (
     PDFParseError,
     ScannedPDFError,
@@ -43,6 +38,11 @@ from app.services.extraction.pdf_parser import (
 )
 from app.services.extraction.schemas import QuoteExtractionSchema
 from app.services.llm.base import EXTRACTION_CONFIG, LLMExtractionError, LLMProvider
+
+try:
+    from google.genai import types as genai_types
+except ImportError:
+    genai_types = None
 
 
 EXTRACTION_SYSTEM_PROMPT = """
@@ -52,30 +52,25 @@ Your task: Extract structured data from supplier quote documents.
 
 Guidelines:
 - Be precise with numbers — do not round or estimate
-- If a field is not mentioned in the document, return null (do not guess)
-- Express VAT/KDV as a decimal fraction: 0.20 for 20%
-- Use ISO 4217 currency codes: TRY (not TL or ₺), USD, EUR
+- If a field is not mentioned in the document, return null (do not guess or assume zero)
+- For shipping_cost, discount_amount, other_costs: use 0.0 ONLY if explicitly stated as free/0. Otherwise return null.
+- Express VAT/KDV as a decimal fraction: 0.20 for 20%, 0.10 for 10%
+- Use ISO 4217 currency codes: TRY (not TL or ₺), USD, EUR, GBP
 - Convert all dates to ISO 8601: YYYY-MM-DD
 - Convert "business days" to calendar days (multiply by 1.4, round up)
-- Set extraction_confidence based on clarity:
-    1.0 = all fields explicitly stated
-    0.7 = most fields stated, some inferred
-    0.4 = many fields missing or ambiguous
-    0.2 = document is unclear or poorly formatted
-- In extraction_notes, document any field that required inference or was missing
+- Extract all line items (description, quantity, unit_price, total_price) accurately
+- Set extraction_confidence based on document clarity:
+    1.0 = all fields explicitly stated and mathematically consistent
+    0.7 = most fields stated, minor ambiguity
+    0.4 = several fields missing or ambiguous
+    0.2 = document is very poor quality or blurry
+- In extraction_notes, record any fields that required inference, had math discrepancies, or were missing
 """.strip()
 
 
 class QuoteExtractor:
     """
-    PDF'den Quote çıkaran servis.
-
-    Kullanım:
-        extractor = QuoteExtractor(provider=get_llm_provider())
-        quote = await extractor.extract(
-            quote_document=doc,
-            db=session,
-        )
+    Tedarikçi teklif belgelerini (PDF, Excel, Resim) ayrıştırıp veritabanına kaydeden servis.
     """
 
     def __init__(self, provider: LLMProvider):
@@ -89,55 +84,117 @@ class QuoteExtractor:
     ) -> Quote | None:
         """
         QuoteDocument'ten structured Quote çıkarır.
-
-        Adımlar:
-        1. status → PROCESSING
-        2. PDF → metin (pdfplumber)
-        3. Metin → QuoteExtractionSchema (LLM)
-        4. Schema → Quote + QuoteItems (DB)
-        5. status → COMPLETED
-
-        Herhangi bir adımda hata → status → FAILED, parse_error doldurulur.
-
-        Returns:
-            Oluşturulan Quote instance veya None (hata durumunda)
         """
-        # ── 1. Processing başladı ──────────────────────────────────────────────
+        # ── 1. Processing durumuna al ──────────────────────────────────────────
         quote_document.parse_status = ParseStatus.PROCESSING
+        quote_document.parse_error = None
         await db.commit()
 
-        file_path = Path(upload_dir) / quote_document.file_name
-        # Gerçek dosya yolu farklı saklanıyor olabilir
-        if quote_document.file_path:
-            file_path = Path(quote_document.file_path)
+        file_path = Path(quote_document.file_path) if quote_document.file_path else (Path(upload_dir) / quote_document.file_name)
+
+        if not file_path.exists():
+            await self._mark_failed(quote_document, f"File not found on storage: {file_path}", db)
+            return None
+
+        suffix = file_path.suffix.lower()
 
         try:
-            # ── 2. PDF → Metin ─────────────────────────────────────────────────
-            pdf_text = extract_text_from_pdf(file_path)
+            extraction_result: QuoteExtractionSchema
 
-            # ── 3. LLM Extraction ──────────────────────────────────────────────
-            extraction_result: QuoteExtractionSchema = await self.provider.extract_structured(
-                prompt=pdf_text,
-                schema=QuoteExtractionSchema,
-                system_prompt=EXTRACTION_SYSTEM_PROMPT,
-                config=EXTRACTION_CONFIG,  # thinking_budget=0: hızlı extraction
-            )
+            # ── 2. Dosya tipine göre ayrıştırma ve extraction ───────────────────
+            if suffix == ".xlsx":
+                # Excel ayrıştırma
+                excel_text = extract_text_from_excel(file_path)
+                extraction_result = await self.provider.extract_structured(
+                    prompt=excel_text,
+                    schema=QuoteExtractionSchema,
+                    system_prompt=EXTRACTION_SYSTEM_PROMPT,
+                    config=EXTRACTION_CONFIG,
+                )
 
-            # ── 4. Quote ve QuoteItems oluştur ─────────────────────────────────
+            elif suffix in (".png", ".jpg", ".jpeg"):
+                # Resim formatları -> Doğrudan Gemini Multimodal Vision
+                img_bytes = file_path.read_bytes()
+                mime_type = "image/png" if suffix == ".png" else "image/jpeg"
+                multimodal_content = self._create_multimodal_part(img_bytes, mime_type)
+
+                extraction_result = await self.provider.extract_structured(
+                    prompt=[
+                        multimodal_content,
+                        "Extract the supplier quote data from this image document according to the schema.",
+                    ],
+                    schema=QuoteExtractionSchema,
+                    system_prompt=EXTRACTION_SYSTEM_PROMPT,
+                    config=EXTRACTION_CONFIG,
+                )
+                self._append_extraction_note(extraction_result, "Extracted via Multimodal Vision (image)")
+
+            elif suffix == ".pdf":
+                # PDF: Önce hızlı ve yerel metin katmanı ayrıştırması
+                try:
+                    pdf_text = extract_text_from_pdf(file_path)
+                    extraction_result = await self.provider.extract_structured(
+                        prompt=pdf_text,
+                        schema=QuoteExtractionSchema,
+                        system_prompt=EXTRACTION_SYSTEM_PROMPT,
+                        config=EXTRACTION_CONFIG,
+                    )
+                except ScannedPDFError:
+                    # Metin katmanı yok/yetersiz -> Multimodal OCR Fallback
+                    pdf_bytes = file_path.read_bytes()
+                    multimodal_part = self._create_multimodal_part(pdf_bytes, "application/pdf")
+
+                    extraction_result = await self.provider.extract_structured(
+                        prompt=[
+                            multimodal_part,
+                            "This is a scanned or image-based PDF quote. Extract all structured quote fields and line items according to the schema.",
+                        ],
+                        schema=QuoteExtractionSchema,
+                        system_prompt=EXTRACTION_SYSTEM_PROMPT,
+                        config=EXTRACTION_CONFIG,
+                    )
+                    self._append_extraction_note(
+                        extraction_result, "Extracted via Gemini Multimodal OCR fallback (scanned PDF)"
+                    )
+
+            elif suffix in (".txt", ".eml"):
+                # Düz metin / e-posta teklifi
+                text_content = file_path.read_text(encoding="utf-8", errors="replace")
+                extraction_result = await self.provider.extract_structured(
+                    prompt=text_content,
+                    schema=QuoteExtractionSchema,
+                    system_prompt=EXTRACTION_SYSTEM_PROMPT,
+                    config=EXTRACTION_CONFIG,
+                )
+
+            else:
+                await self._mark_failed(
+                    quote_document,
+                    f"Unsupported file format: {suffix}. Supported: .pdf, .xlsx, .png, .jpg, .jpeg, .txt",
+                    db,
+                )
+                return None
+
+            # ── 3. Quote ve QuoteItems oluştur (Idempotent: eskileri temizle) ────
             quote = await self._create_quote(
                 extraction=extraction_result,
                 quote_document=quote_document,
                 db=db,
             )
 
-            # ── 5. Başarılı ────────────────────────────────────────────────────
+            # ── 4. Başarılı Tamamlama ──────────────────────────────────────────
             quote_document.parse_status = ParseStatus.COMPLETED
+            quote_document.parse_error = None
             await db.commit()
             await db.refresh(quote)
             return quote
 
-        except ScannedPDFError as e:
-            await self._mark_failed(quote_document, str(e), db)
+        except EmptyExcelError as e:
+            await self._mark_failed(quote_document, f"Excel error: {e}", db)
+            return None
+
+        except ExcelParseError as e:
+            await self._mark_failed(quote_document, f"Excel parse error: {e}", db)
             return None
 
         except PDFParseError as e:
@@ -155,9 +212,21 @@ class QuoteExtractor:
 
         except Exception as e:
             await self._mark_failed(
-                quote_document, f"Unexpected error: {type(e).__name__}: {e}", db
+                quote_document, f"Unexpected error during extraction: {type(e).__name__}: {e}", db
             )
             return None
+
+    def _create_multimodal_part(self, data: bytes, mime_type: str) -> Any:
+        """Multimodal API Part nesnesi oluşturur."""
+        if genai_types is None:
+            raise PDFParseError("Google GenAI SDK is not available for multimodal OCR extraction.")
+        return genai_types.Part.from_bytes(data=data, mime_type=mime_type)
+
+    def _append_extraction_note(self, extraction: QuoteExtractionSchema, note: str) -> None:
+        if extraction.extraction_notes:
+            extraction.extraction_notes = f"{extraction.extraction_notes} | {note}"
+        else:
+            extraction.extraction_notes = note
 
     async def _create_quote(
         self,
@@ -167,43 +236,56 @@ class QuoteExtractor:
     ) -> Quote:
         """
         QuoteExtractionSchema'yı Quote + QuoteItems olarak veritabanına yazar.
-
-        Neden ayrı bir metod?
-          - Sorumluluğu ayır: extraction ≠ persistence
-          - Test edilebilirlik: extraction'ı mock'layarak sadece persistence'ı test edebilirsin
+        Idempotent: Aynı QuoteDocument için daha önce oluşturulmuş bir Quote varsa
+        mükerrer kayıt oluşmaması için önce eski Quote ve bağlı kalemleri silinir.
         """
-        # valid_until string'ini date'e çevir
+        # Eski kayıtları temizle (Idempotent retry)
+        existing_res = await db.execute(
+            select(Quote).where(Quote.quote_document_id == quote_document.id)
+        )
+        for old_quote in existing_res.scalars().all():
+            await db.delete(old_quote)
+        await db.flush()
+
         valid_until_date: date | None = None
         if extraction.valid_until:
             try:
                 valid_until_date = date.fromisoformat(extraction.valid_until)
             except ValueError:
-                pass  # Geçersiz tarih formatı — None bırak
+                pass
+
+        # Validasyon uyarılarını notlara iliştir
+        all_notes = extraction.notes or ""
+        if extraction.validation_warnings:
+            warning_text = "[VALIDATION WARNINGS]: " + "; ".join(extraction.validation_warnings)
+            all_notes = f"{all_notes}\n{warning_text}".strip()
+        if extraction.quote_number:
+            all_notes = f"[Quote No: {extraction.quote_number}] {all_notes}".strip()
 
         quote = Quote(
             rfq_id=quote_document.rfq_id,
             supplier_id=quote_document.supplier_id,
             quote_document_id=quote_document.id,
             currency=extraction.currency,
-            subtotal=extraction.subtotal,
-            vat_rate=extraction.vat_rate,
-            vat_amount=extraction.vat_amount,
-            shipping_cost=extraction.shipping_cost,
-            discount_amount=extraction.discount_amount,
-            other_costs=extraction.other_costs,
-            total_price=extraction.total_price,
+            subtotal=Decimal(str(round(extraction.subtotal, 4))),
+            vat_rate=Decimal(str(round(extraction.vat_rate, 4))) if extraction.vat_rate is not None else None,
+            vat_amount=Decimal(str(round(extraction.vat_amount, 4))) if extraction.vat_amount is not None else None,
+            shipping_cost=Decimal(str(round(extraction.shipping_cost, 4))) if extraction.shipping_cost is not None else None,
+            discount_amount=Decimal(str(round(extraction.discount_amount or 0.0, 4))),
+            other_costs=Decimal(str(round(extraction.other_costs or 0.0, 4))),
+            total_price=Decimal(str(round(extraction.total_price, 4))),
             delivery_days=extraction.delivery_days,
             payment_terms=extraction.payment_terms,
             warranty_months=extraction.warranty_months,
             valid_until=valid_until_date,
-            notes=extraction.notes,
+            notes=all_notes if all_notes else None,
             extracted_supplier_name=extraction.supplier_name,
-            extraction_confidence=Decimal(str(extraction.extraction_confidence)),
-            is_compliant=None,  # Phase 4'te deterministik katman dolduracak
+            extraction_confidence=Decimal(str(round(extraction.extraction_confidence, 2))),
+            is_compliant=None,  # Phase 4 deterministik katman dolduracak
         )
 
         db.add(quote)
-        await db.flush()  # quote.id'yi oluştur (commit etmeden)
+        await db.flush()
 
         # QuoteItems
         for item in extraction.items:
@@ -211,13 +293,14 @@ class QuoteExtractor:
                 quote_id=quote.id,
                 line_number=item.line_number,
                 description=item.description,
-                quantity=item.quantity,
+                quantity=Decimal(str(round(item.quantity, 4))),
                 unit=item.unit,
-                unit_price=item.unit_price,
-                total_price=item.total_price,
+                unit_price=Decimal(str(round(item.unit_price, 4))),
+                total_price=Decimal(str(round(item.total_price, 4))),
             )
             db.add(quote_item)
 
+        await db.flush()
         return quote
 
     async def _mark_failed(

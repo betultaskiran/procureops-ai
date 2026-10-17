@@ -57,6 +57,9 @@ dependencies = [
     # PDF text and table extraction. Best-in-class for structured supplier quotes.
     "pdfplumber>=0.11.0",
 
+    # Excel spreadsheet (.xlsx) parsing for supplier quotations (Phase 8).
+    "openpyxl>=3.1.2",
+
     # Required by FastAPI for UploadFile / multipart form data.
     # Without this, file upload endpoints silently fail.
     "python-multipart>=0.0.9",

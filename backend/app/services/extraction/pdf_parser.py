@@ -145,11 +145,11 @@ def extract_text_from_pdf(file_path: str | Path) -> str:
 
                 page_contents.append("\n".join(page_parts))
 
-            if total_text_length == 0:
+            # 50 karakterden az metin varsa, doküman muhtemelen taranmış (resim) veya metin katmanı boştur
+            if total_text_length < 50:
                 raise ScannedPDFError(
-                    "No text could be extracted from this PDF. "
-                    "The document may be scanned (image-based). "
-                    "OCR support will be added in a future phase."
+                    "No sufficient text could be extracted from this PDF (< 50 characters). "
+                    "The document may be scanned (image-based) and requires OCR fallback."
                 )
 
             return "\n\n".join(page_contents)

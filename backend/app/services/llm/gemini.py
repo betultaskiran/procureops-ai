@@ -100,22 +100,13 @@ class GeminiProvider(LLMProvider):
 
     async def extract_structured(
         self,
-        prompt: str,
+        prompt: str | list[any],
         schema: type[BaseModel],
         system_prompt: str | None = None,
         config: ExtractionConfig | None = None,
     ) -> BaseModel:
         """
-        Metinden Pydantic şemasına uygun veri çıkarır.
-
-        Neden iki aşamalı validation?
-        1. Gemini → JSON (API seviyesi şema zorlaması)
-        2. schema.model_validate_json() → Pydantic validation
-           (field_validator'lar çalışır: vat_rate normalizasyonu vb.)
-
-        Bu iki aşama birbirini tamamlar:
-          API → doğru şekil garantisi
-          Pydantic → doğru değer garantisi
+        Metinden veya multimodal içerikten (PDF/resim Part nesneleri) Pydantic şemasına uygun veri çıkarır.
         """
         cfg = config or EXTRACTION_CONFIG
         gen_config = self._build_config(schema, system_prompt, cfg)
@@ -138,9 +129,19 @@ class GeminiProvider(LLMProvider):
                 raw_response=str(response),
             )
 
+        # Markdown json fence temizliği (gerekirse)
+        cleaned_text = raw_text.strip()
+        if cleaned_text.startswith("```"):
+            lines = cleaned_text.splitlines()
+            if lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].startswith("```"):
+                lines = lines[:-1]
+            cleaned_text = "\n".join(lines).strip()
+
         try:
             # Pydantic validation — field_validator'lar burada çalışır
-            return schema.model_validate_json(raw_text)
+            return schema.model_validate_json(cleaned_text)
         except Exception as e:
             raise LLMExtractionError(
                 f"Pydantic validation failed after Gemini extraction: {e}",

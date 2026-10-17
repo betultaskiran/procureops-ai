@@ -34,7 +34,7 @@ SUPPLIER_ID:
 import uuid
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Any
 
 import aiofiles
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
@@ -115,12 +115,13 @@ class UploadResponse(BaseModel):
 
 # ── Helper ─────────────────────────────────────────────────────────────────────
 
+# ── Helper & Validation ────────────────────────────────────────────────────────
+
 def _detect_file_type(filename: str) -> str:
     suffix = Path(filename).suffix.lower()
     mapping = {
         ".pdf": FileType.PDF,
         ".xlsx": FileType.EXCEL,
-        ".xls": FileType.EXCEL,
         ".jpg": FileType.IMAGE,
         ".jpeg": FileType.IMAGE,
         ".png": FileType.IMAGE,
@@ -130,123 +131,63 @@ def _detect_file_type(filename: str) -> str:
     return mapping.get(suffix, FileType.OTHER)
 
 
-# ── Endpoints ──────────────────────────────────────────────────────────────────
+def _validate_file_content(content: bytes, filename: str) -> None:
+    """
+    Dosya boyutu, format uyumluluğu ve bozuk/sahte dosya tespiti yapar.
+    """
+    if not content or len(content) == 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Uploaded file is empty (0 bytes).",
+        )
 
-@router.post(
-    "/rfqs/{rfq_id}/quote-documents",
-    response_model=UploadResponse,
-    status_code=status.HTTP_201_CREATED,
-    summary="Upload a supplier quote document",
-)
-@router.post(
-    "/quotes/rfqs/{rfq_id}/quote-documents",
-    response_model=UploadResponse,
-    status_code=status.HTTP_201_CREATED,
-    summary="Upload a supplier quote document (Alias)",
-)
-async def upload_quote_document(
-    rfq_id: uuid.UUID,
-    supplier_id: uuid.UUID = Form(..., description="Supplier UUID from the suppliers table"),
-    file: UploadFile = File(..., description="PDF or Excel quote document"),
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_employee_or_above),
+    suffix = Path(filename).suffix.lower()
+    if suffix == ".xls":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Legacy Excel 97-2003 (.xls) format is not supported. Please save and upload as modern Excel (.xlsx) or PDF.",
+        )
+
+    # Magic byte / Header doğrulamaları
+    if suffix == ".pdf":
+        if not content.startswith(b"%PDF"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="File content does not match PDF format or file is corrupt.",
+            )
+    elif suffix == ".xlsx":
+        # .xlsx dosyaları PK zip arşividir
+        if not content.startswith(b"PK\x03\x04"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="File content does not match Excel (.xlsx) format or file is corrupt.",
+            )
+    elif suffix == ".png":
+        if not content.startswith(b"\x89PNG\r\n\x1a\n"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="File content does not match PNG image format or file is corrupt.",
+            )
+    elif suffix in (".jpg", ".jpeg"):
+        if not content.startswith(b"\xff\xd8\xff"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="File content does not match JPEG image format or file is corrupt.",
+            )
+
+
+async def _build_upload_response(
+    quote: Quote | None,
+    quote_document: QuoteDocument,
+    supplier: Any | None,
+    db: AsyncSession,
 ) -> UploadResponse:
-    """
-    PDF yükle → extraction çalıştır → Quote kaydı oluştur.
-    """
-    # ── RFQ kontrolü ──────────────────────────────────────────────────────────
-    rfq_res = await db.execute(
-        select(RFQ).where(RFQ.id == rfq_id, RFQ.organization_id == current_user.organization_id)
-    )
-    rfq = rfq_res.scalar_one_or_none()
-    if not rfq:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"RFQ {rfq_id} not found",
-        )
-
-    # ── Supplier kontrolü & Organization Doğrulaması ──────────────────────────
-    from app.models.supplier import Supplier
-    supplier_res = await db.execute(
-        select(Supplier).where(
-            Supplier.id == supplier_id,
-            Supplier.organization_id == current_user.organization_id,
-            Supplier.is_active == True,
-        )
-    )
-    supplier = supplier_res.scalar_one_or_none()
-    if not supplier:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Active supplier {supplier_id} not found",
-        )
-
-    # ── Dosya boyutu kontrolü ──────────────────────────────────────────────────
-    max_size_bytes = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
-    content = await file.read()
-    if len(content) > max_size_bytes:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=(
-                f"File too large. Maximum size: {settings.MAX_UPLOAD_SIZE_MB} MB. "
-                f"Uploaded: {len(content) / 1024 / 1024:.1f} MB"
-            ),
-        )
-
-    # ── Dosya tipi kontrolü ───────────────────────────────────────────────────
-    file_type = _detect_file_type(file.filename or "")
-    if file_type not in (FileType.PDF, FileType.EXCEL, FileType.IMAGE, FileType.EMAIL_TEXT):
-        raise HTTPException(
-            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail=f"Unsupported file type. Supported: PDF, Excel, image, text/email",
-        )
-
-    # ── Dosyayı diske kaydet ──────────────────────────────────────────────────
-    # UUID ile eşsiz dosya adı → aynı isimli dosyalar çakışmaz
-    upload_dir = Path(settings.UPLOAD_DIR)
-    upload_dir.mkdir(parents=True, exist_ok=True)
-
-    file_suffix = Path(file.filename or "upload").suffix
-    storage_filename = f"{uuid.uuid4()}{file_suffix}"
-    storage_path = upload_dir / storage_filename
-
-    async with aiofiles.open(storage_path, "wb") as f:
-        await f.write(content)
-
-    # ── QuoteDocument kaydı oluştur ────────────────────────────────────────────
-    quote_document = QuoteDocument(
-        rfq_id=rfq_id,
-        supplier_id=supplier_id,
-        uploaded_by_id=current_user.id,
-        file_name=storage_filename,
-        file_path=str(storage_path),
-        file_type=file_type,
-        file_size_bytes=len(content),
-        parse_status=ParseStatus.PENDING,
-    )
-    db.add(quote_document)
-    await db.flush()  # ID üret, commit etme
-
-    # ── Extraction çalıştır (senkron — Phase 13'te background'a taşınacak) ─────
-    provider = get_llm_provider()
-    extractor = QuoteExtractor(provider=provider)
-
-    quote = await extractor.extract(
-        quote_document=quote_document,
-        db=db,
-        upload_dir=str(upload_dir),
-    )
-
-    await db.commit()
-
-    # ── Response ───────────────────────────────────────────────────────────────
     quote_response = None
     extracted_supplier_name = None
     supplier_mismatch = False
     warning_message = None
 
     if quote:
-        # QuoteItems ve Supplier'ı yükle
         result = await db.execute(
             select(Quote)
             .where(Quote.id == quote.id)
@@ -263,7 +204,7 @@ async def upload_quote_document(
             extracted_supplier_name = quote_with_items.extracted_supplier_name
 
             # Supplier mismatch kontrolü
-            if extracted_supplier_name:
+            if supplier and extracted_supplier_name:
                 import re
                 def _words(text: str):
                     return {w for w in re.sub(r"[^\w\s]", "", text.lower()).split() if len(w) >= 3}
@@ -293,6 +234,183 @@ async def upload_quote_document(
         warning=warning_message,
         message=status_messages.get(quote_document.parse_status, "Unknown status"),
     )
+
+
+# ── Endpoints ──────────────────────────────────────────────────────────────────
+
+@router.post(
+    "/rfqs/{rfq_id}/quote-documents",
+    response_model=UploadResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Upload a supplier quote document",
+)
+@router.post(
+    "/quotes/rfqs/{rfq_id}/quote-documents",
+    response_model=UploadResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Upload a supplier quote document (Alias)",
+)
+async def upload_quote_document(
+    rfq_id: uuid.UUID,
+    supplier_id: uuid.UUID = Form(..., description="Supplier UUID from the suppliers table"),
+    file: UploadFile = File(..., description="PDF, Excel (.xlsx), or Image quote document"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_employee_or_above),
+) -> UploadResponse:
+    """
+    Belge yükle (PDF / Excel / Resim) → extraction çalıştır → Quote kaydı oluştur.
+    """
+    # ── RFQ kontrolü ──────────────────────────────────────────────────────────
+    rfq_res = await db.execute(
+        select(RFQ).where(RFQ.id == rfq_id, RFQ.organization_id == current_user.organization_id)
+    )
+    rfq = rfq_res.scalar_one_or_none()
+    if not rfq:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"RFQ {rfq_id} not found",
+        )
+
+    # ── Supplier kontrolü & Organization Doğrulaması ──────────────────────────
+    from app.models.supplier import Supplier
+    supplier_res = await db.execute(
+        select(Supplier).where(
+            Supplier.id == supplier_id,
+            Supplier.organization_id == current_user.organization_id,
+            Supplier.is_active == True,
+        )
+    )
+    supplier = supplier_res.scalar_one_or_none()
+    if not supplier:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Active supplier {supplier_id} not found",
+        )
+
+    # ── Dosya boyutu ve içerik kontrolü ───────────────────────────────────────
+    max_size_bytes = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
+    content = await file.read()
+    if len(content) > max_size_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=(
+                f"File too large. Maximum size: {settings.MAX_UPLOAD_SIZE_MB} MB. "
+                f"Uploaded: {len(content) / 1024 / 1024:.1f} MB"
+            ),
+        )
+
+    # Güvenli dosya adı ve uzantı kontrolü
+    raw_filename = file.filename or "upload"
+    safe_filename = Path(raw_filename).name  # Path traversal engelleme (örn. ../../)
+    _validate_file_content(content, safe_filename)
+
+    file_type = _detect_file_type(safe_filename)
+    if file_type not in (FileType.PDF, FileType.EXCEL, FileType.IMAGE, FileType.EMAIL_TEXT):
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail="Unsupported file type. Supported: PDF, Excel (.xlsx), Image (PNG/JPG), and text/email",
+        )
+
+    # ── Dosyayı diske kaydet ──────────────────────────────────────────────────
+    upload_dir = Path(settings.UPLOAD_DIR).resolve()
+    upload_dir.mkdir(parents=True, exist_ok=True)
+
+    file_suffix = Path(safe_filename).suffix.lower()
+    storage_filename = f"{uuid.uuid4()}{file_suffix}"
+    storage_path = (upload_dir / storage_filename).resolve()
+
+    if not storage_path.is_relative_to(upload_dir):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Unsafe file path detected.",
+        )
+
+    async with aiofiles.open(storage_path, "wb") as f:
+        await f.write(content)
+
+    # ── QuoteDocument kaydı oluştur ────────────────────────────────────────────
+    quote_document = QuoteDocument(
+        rfq_id=rfq_id,
+        supplier_id=supplier_id,
+        uploaded_by_id=current_user.id,
+        file_name=storage_filename,
+        file_path=str(storage_path),
+        file_type=file_type,
+        file_size_bytes=len(content),
+        parse_status=ParseStatus.PENDING,
+    )
+    db.add(quote_document)
+    await db.flush()
+
+    # ── Extraction çalıştır ───────────────────────────────────────────────────
+    provider = get_llm_provider()
+    extractor = QuoteExtractor(provider=provider)
+
+    quote = await extractor.extract(
+        quote_document=quote_document,
+        db=db,
+        upload_dir=str(upload_dir),
+    )
+
+    await db.commit()
+    return await _build_upload_response(quote, quote_document, supplier, db)
+
+
+@router.post(
+    "/rfqs/{rfq_id}/quote-documents/{document_id}/reprocess",
+    response_model=UploadResponse,
+    summary="Reprocess an existing quote document with retry safety",
+)
+@router.post(
+    "/quotes/documents/{document_id}/reprocess",
+    response_model=UploadResponse,
+    summary="Reprocess an existing quote document (Alias)",
+)
+async def reprocess_quote_document(
+    document_id: uuid.UUID,
+    rfq_id: uuid.UUID | None = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_employee_or_above),
+) -> UploadResponse:
+    """
+    Önceden yüklenmiş bir teklif belgesini (QuoteDocument) yeniden işleme alır (Retry).
+    Idempotent: Mevcut Quote/QuoteItems kayıtları güvenle güncellenir.
+    """
+    from app.models.supplier import Supplier
+
+    doc_res = await db.execute(
+        select(QuoteDocument)
+        .join(RFQ, QuoteDocument.rfq_id == RFQ.id)
+        .where(
+            QuoteDocument.id == document_id,
+            RFQ.organization_id == current_user.organization_id,
+        )
+    )
+    quote_document = doc_res.scalar_one_or_none()
+    if not quote_document:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Quote document {document_id} not found in your organization",
+        )
+
+    supplier = None
+    if quote_document.supplier_id:
+        sup_res = await db.execute(
+            select(Supplier).where(Supplier.id == quote_document.supplier_id)
+        )
+        supplier = sup_res.scalar_one_or_none()
+
+    provider = get_llm_provider()
+    extractor = QuoteExtractor(provider=provider)
+
+    quote = await extractor.extract(
+        quote_document=quote_document,
+        db=db,
+        upload_dir=settings.UPLOAD_DIR,
+    )
+    await db.commit()
+
+    return await _build_upload_response(quote, quote_document, supplier, db)
 
 
 # ── Quote Deletion Validation ──────────────────────────────────────────────────

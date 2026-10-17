@@ -4,22 +4,14 @@ app/services/extraction/schemas.py
 LLM'e "bu formatta veri döndür" diye gösterdiğimiz Pydantic şemaları.
 
 Bu şema iki iş birden yapıyor:
-  1. LLM'e response_schema olarak gönderilir → constrained JSON output
+  1. LLM'e response_schema olarak gönderilir → constrained JSON output (OpenAPI uyumlu)
   2. Pydantic validation → field_validator'larla değerler normalize edilir
 
-FIELD_VALIDATOR NEDEN LAZIM?
-  LLM çıktısı her zaman mükemmel değildir:
-    "KDV: %20" → vat_rate=20  (0.20 olmalıydı)
-    "Para Birimi: TL" → currency="TL"  ("TRY" olmalı)
-    "Teslimat: 7 iş günü" → delivery_days=7  (doğru)
-
-  Validator bu düzeltmeleri otomatik yapar.
-  LLM'e "0.20 yaz, 20 yazma" demek yerine, validator her ikisini de kabul eder.
-
-NOT: Bu şemayı SQLAlchemy modeliyle (Quote) karıştırma.
-  - Bu şema → LLM'den veri AL
-  - Quote model → Veritabanına yaz
-  Aralarında bir dönüşüm adımı var (extractor.py'de).
+DİKKAT:
+  Google GenAI SDK (OpenAPI schema dönüştürücü) ile uyumluluk için
+  sayısal alanlar şemada 'float' ve 'int' olarak tanımlanır.
+  Veritabanına (Quote / QuoteItem) yazılırken Decimal'a dönüştürülür.
+  Böylece GenAI SDK'sının 'anyOf.0.exclusiveMinimum' hatası vermesi engellenir.
 """
 
 from decimal import Decimal
@@ -34,17 +26,17 @@ class QuoteItemExtractionSchema(BaseModel):
 
     Örnek:
       line_number=1, description="HP Laptop 14s",
-      quantity=50, unit="adet", unit_price=4500.00, total_price=225000.00
+      quantity=50.0, unit="adet", unit_price=4500.00, total_price=225000.00
     """
-    line_number: int = Field(ge=1, description="Line number in the document")
+    line_number: int = Field(ge=1, description="Line number in the document (1, 2, 3...)")
     description: str = Field(description="Product or service description")
-    quantity: Decimal = Field(ge=0, description="Quantity ordered")
+    quantity: float = Field(ge=0, description="Quantity ordered")
     unit: str | None = Field(
         default=None,
-        description="Unit of measure: adet, kg, m2, etc."
+        description="Unit of measure: adet, kg, m2, paket, etc. Null if not specified."
     )
-    unit_price: Decimal = Field(ge=0, description="Price per unit")
-    total_price: Decimal = Field(ge=0, description="quantity × unit_price")
+    unit_price: float = Field(ge=0, description="Price per unit before tax")
+    total_price: float = Field(ge=0, description="Total line price: quantity × unit_price")
 
 
 class QuoteExtractionSchema(BaseModel):
@@ -52,17 +44,18 @@ class QuoteExtractionSchema(BaseModel):
     Tedarikçi teklifinden çıkarılan tüm finansal ve ticari veriler.
 
     LLM bu şemayı alır ve belgeyi okuyarak her alanı doldurur.
-    Bilinmeyen veya bulunamayan alanlar None olarak döner.
-
-    ÖNEMLI FIELD AÇIKLAMALARI (LLM bunları okur):
-      description= parametreleri LLM'e talimat verir.
-      "0.20 for 20% VAT" gibi açıklamalar hataları önler.
+    Bilinmeyen veya belgede bulunmayan alanlar null döner.
     """
 
-    # ── Tedarikçi bilgisi ─────────────────────────────────────────────────────
+    # ── Tedarikçi ve Teklif Bilgisi ───────────────────────────────────────────
     supplier_name: str | None = Field(
         default=None,
         description="Supplier company name as it appears in the document",
+    )
+
+    quote_number: str | None = Field(
+        default=None,
+        description="Supplier quote / invoice / proposal reference number (e.g. DEF-2026-0941). Null if none.",
     )
 
     # ── Para birimi ───────────────────────────────────────────────────────────
@@ -70,53 +63,51 @@ class QuoteExtractionSchema(BaseModel):
         description=(
             "ISO 4217 currency code. "
             "Use 'TRY' for Turkish Lira (even if document says TL or ₺). "
-            "Use 'USD' for US Dollar, 'EUR' for Euro."
+            "Use 'USD' for US Dollar, 'EUR' for Euro, 'GBP' for Pound."
         ),
     )
 
-    # ── Finansal alanlar ──────────────────────────────────────────────────────
-    subtotal: Decimal = Field(
+    # ── Finansal alanlar (Eksik vs Sıfır ayrımı) ──────────────────────────────
+    subtotal: float = Field(
         description="Sum of all line items before tax, shipping, and discounts",
         ge=0,
     )
 
-    vat_rate: Decimal = Field(
+    vat_rate: float | None = Field(
+        default=None,
         description=(
-            "VAT/KDV rate as a decimal fraction. "
-            "Express 20%% as 0.20, not 20. "
-            "If no VAT, use 0.0."
+            "VAT/KDV rate as a decimal fraction (e.g. 0.20 for 20%, 0.10 for 10%). "
+            "Null if VAT is not mentioned or exempt."
         ),
         ge=0,
         le=1,
     )
 
-    vat_amount: Decimal = Field(
-        description="Absolute VAT amount in the document's currency",
+    vat_amount: float | None = Field(
+        default=None,
+        description="Absolute VAT amount in the document's currency. Null if not mentioned.",
         ge=0,
     )
 
-    shipping_cost: Decimal = Field(
-        default=Decimal("0"),
-        description="Shipping, freight, or delivery cost. 0 if not mentioned.",
+    shipping_cost: float | None = Field(
+        default=None,
+        description="Shipping or delivery cost. Explicitly 0.0 only if free/included. Null if not mentioned.",
         ge=0,
     )
 
-    discount_amount: Decimal = Field(
-        default=Decimal("0"),
-        description="Discount amount (positive number). 0 if no discount.",
+    discount_amount: float | None = Field(
+        default=None,
+        description="Discount amount (positive number). Explicitly 0.0 only if 0 discount stated. Null if none.",
         ge=0,
     )
 
-    other_costs: Decimal = Field(
-        default=Decimal("0"),
-        description=(
-            "Any additional costs: installation, handling, customs, etc. "
-            "0 if none."
-        ),
+    other_costs: float | None = Field(
+        default=None,
+        description="Additional costs (handling, customs, installation, etc.). Null if none.",
         ge=0,
     )
 
-    total_price: Decimal = Field(
+    total_price: float = Field(
         description="Grand total: subtotal + vat + shipping + other - discount",
         ge=0,
     )
@@ -135,7 +126,7 @@ class QuoteExtractionSchema(BaseModel):
     payment_terms: str | None = Field(
         default=None,
         description=(
-            "Payment terms in English. Examples: 'net-30', 'net-60', "
+            "Payment terms in English. Examples: 'net-30', 'net-60', 'cash', "
             "'advance-payment', 'on-delivery'. Null if not specified."
         ),
     )
@@ -159,7 +150,7 @@ class QuoteExtractionSchema(BaseModel):
 
     notes: str | None = Field(
         default=None,
-        description="Any important terms or conditions not captured in other fields.",
+        description="Any important terms, bank details, or conditions not captured in other fields.",
     )
 
     # ── Kalem listesi ─────────────────────────────────────────────────────────
@@ -170,6 +161,7 @@ class QuoteExtractionSchema(BaseModel):
 
     # ── Extraction metadata ───────────────────────────────────────────────────
     extraction_confidence: float = Field(
+        default=0.8,
         ge=0.0,
         le=1.0,
         description=(
@@ -182,11 +174,12 @@ class QuoteExtractionSchema(BaseModel):
 
     extraction_notes: str | None = Field(
         default=None,
-        description=(
-            "Note any fields that were missing, ambiguous, or required inference. "
-            "Examples: 'VAT rate inferred from percentage shown', "
-            "'delivery days converted from business days'."
-        ),
+        description="Note any fields that were missing, ambiguous, or required inference.",
+    )
+
+    validation_warnings: list[str] = Field(
+        default_factory=list,
+        description="Warnings detected during arithmetic and field validation",
     )
 
     # ── Validators ────────────────────────────────────────────────────────────
@@ -200,7 +193,7 @@ class QuoteExtractionSchema(BaseModel):
         Bunları ISO 4217 koduna çeviriyoruz.
         """
         if not isinstance(v, str):
-            return v
+            return "TRY"
         mapping = {
             "TL": "TRY",
             "₺": "TRY",
@@ -222,53 +215,75 @@ class QuoteExtractionSchema(BaseModel):
 
     @field_validator("vat_rate", mode="before")
     @classmethod
-    def normalize_vat_rate(cls, v) -> Decimal:
+    def normalize_vat_rate(cls, v) -> float | None:
         """
         KDV oranı normalizasyonu.
-
-        LLM bazen yüzde olarak verir (20), bazen ondalık olarak (0.20).
-        1'den büyükse yüzde olarak gelmiştir, 100'e bölüyoruz.
-
-        Örnekler:
-          20   → 0.20  (%20 KDV)
-          0.20 → 0.20  (zaten doğru)
-          18   → 0.18  (%18 KDV)
+        LLM bazen yüzde (20), bazen ondalık (0.20) verir.
         """
-        val = Decimal(str(v))
-        if val > 1:
-            return val / 100
-        return val
+        if v is None:
+            return None
+        try:
+            val = float(v)
+            if val > 1.0:
+                return round(val / 100.0, 4)
+            return round(val, 4)
+        except (ValueError, TypeError):
+            return None
 
     @model_validator(mode="after")
-    def validate_total_price_consistency(self) -> "QuoteExtractionSchema":
+    def validate_arithmetic_consistency(self) -> "QuoteExtractionSchema":
         """
-        total_price'ın hesaplanan değerle yakın olup olmadığını kontrol eder.
-
-        Not: Bu bir HARD ERROR değil, sadece confidence'ı düşürür.
-        Neden? LLM belgedeki "toplam" değerini almış olabilir,
-        bizim hesabımız ise biraz farklı olabilir (yuvarlama vb.)
-
-        HARD validation Phase 4'te deterministik katmanda yapılacak.
-        Burada sadece "bir şeyler garip" işareti koyuyoruz.
+        Matematiksel tutarlılık kontrolleri:
+        1. Kalemlerin toplamı vs subtotal
+        2. Her kalemin adet × birim fiyat = toplam fiyat doğrulaması
+        3. subtotal + kdv + nakliye + ek - indirim vs total_price
         """
-        calculated = (
+        warnings: list[str] = list(self.validation_warnings or [])
+
+        # 1. Kalem bazlı matematik kontrolü
+        for item in self.items:
+            if item.quantity > 0 and item.unit_price > 0:
+                expected_line = round(item.quantity * item.unit_price, 2)
+                diff = abs(expected_line - item.total_price)
+                if diff > max(1.0, item.total_price * 0.03):
+                    warnings.append(
+                        f"Line {item.line_number} calculation mismatch: "
+                        f"{item.quantity} × {item.unit_price:.2f} = {expected_line:.2f}, "
+                        f"document stated {item.total_price:.2f}"
+                    )
+
+        # 2. Kalemler toplamı vs subtotal
+        if self.items:
+            items_sum = round(sum(i.total_price for i in self.items), 2)
+            if self.subtotal > 0:
+                deviation = abs(items_sum - self.subtotal) / self.subtotal
+                if deviation > 0.05:
+                    self.extraction_confidence = max(0.1, self.extraction_confidence - 0.2)
+                    warnings.append(
+                        f"Items sum ({items_sum:.2f}) deviates by {deviation:.1%} from subtotal ({self.subtotal:.2f})"
+                    )
+
+        # 3. Genel toplam tutarlılığı
+        calculated_total = (
             self.subtotal
-            + self.vat_amount
-            + self.shipping_cost
-            + self.other_costs
-            - self.discount_amount
+            + (self.vat_amount or 0.0)
+            + (self.shipping_cost or 0.0)
+            + (self.other_costs or 0.0)
+            - (self.discount_amount or 0.0)
         )
-        # %5'ten fazla sapma → confidence'ı düşür ve not ekle
         if self.total_price > 0:
-            deviation = abs(calculated - self.total_price) / self.total_price
-            if deviation > Decimal("0.05"):
-                self.extraction_confidence = max(0.0, self.extraction_confidence - 0.2)
-                note = (
-                    f"Total price mismatch: document says {self.total_price}, "
-                    f"calculated {calculated:.2f} "
-                    f"(deviation: {deviation:.1%})"
+            total_dev = abs(calculated_total - self.total_price) / self.total_price
+            if total_dev > 0.05:
+                self.extraction_confidence = max(0.1, self.extraction_confidence - 0.2)
+                warnings.append(
+                    f"Total price mismatch: calculated {calculated_total:.2f} "
+                    f"vs document total {self.total_price:.2f} (deviation: {total_dev:.1%})"
                 )
-                self.extraction_notes = (
-                    f"{self.extraction_notes or ''} | {note}".strip(" |")
-                )
+
+        self.validation_warnings = warnings
+        if warnings and not self.extraction_notes:
+            self.extraction_notes = " | ".join(warnings)
+        elif warnings:
+            self.extraction_notes = f"{self.extraction_notes} | {' | '.join(warnings)}"
+
         return self
