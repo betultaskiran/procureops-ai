@@ -44,6 +44,11 @@ from app.models.order import (
     IssueSeverity,
     QualityIssueStatus,
 )
+from app.models.email_delivery import (
+    EmailDelivery,
+    EmailDeliveryStatus,
+    EmailMessageType,
+)
 
 __all__ = [
     # Base
@@ -91,4 +96,8 @@ __all__ = [
     "IssueType",
     "IssueSeverity",
     "QualityIssueStatus",
+    # Email Delivery (Phase 9)
+    "EmailDelivery",
+    "EmailDeliveryStatus",
+    "EmailMessageType",
 ]

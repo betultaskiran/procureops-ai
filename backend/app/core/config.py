@@ -83,6 +83,22 @@ class Settings(BaseSettings):
     LOG_FORMAT: str = "console"  # 'console' or 'json'
     SENTRY_DSN: str | None = None
 
+    # ── Email & SMTP Configuration (Phase 9) ──────────────────────────────────
+    EMAIL_BACKEND: str = "smtp"  # "smtp", "console", "mock"
+    SMTP_HOST: str = "smtp.provider.internal"
+    SMTP_PORT: int = 1025
+    SMTP_USER: str | None = None
+    SMTP_PASSWORD: str | None = None
+    SMTP_FROM_EMAIL: str = "procurement@procureops.com"
+    SMTP_FROM_NAME: str = "ProcureOps AI"
+    SMTP_USE_TLS: bool = False
+    SMTP_USE_SSL: bool = False
+    SMTP_TIMEOUT: int = 10  # seconds
+    EMAIL_MAX_RETRIES: int = 3
+    EMAIL_RETRY_BACKOFF_SECONDS: int = 30
+    APP_BASE_URL: str = "http://localhost:3000"
+    ENABLE_OUTBOX_WORKER: bool = True
+
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod
     def assemble_cors_origins(cls, v: object) -> list[str]:
@@ -101,10 +117,10 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def validate_production_settings(self) -> "Settings":
         """
-        Enforce fail-closed security for JWT configuration and production invariants:
+        Enforce fail-closed security for JWT configuration, production invariants,
+        and email provider settings:
         In production (when DEBUG is False or ENVIRONMENT is 'production'/'prod'),
-        require a non-default secret with at least 32 characters, safe passwords,
-        and strict CORS.
+        require non-default secrets, safe passwords, strict CORS, and valid SMTP setup.
         """
         is_production = (not self.DEBUG) or (self.ENVIRONMENT.lower() in ("production", "prod"))
         if is_production:
@@ -133,6 +149,21 @@ class Settings(BaseSettings):
                     "Production configuration error: Wildcard '*' in CORS_ORIGINS is prohibited "
                     "when credentialed authentication is enabled."
                 )
+            if self.EMAIL_BACKEND == "smtp":
+                if self.SMTP_HOST in ("localhost", "127.0.0.1"):
+                    raise ValueError(
+                        "Production configuration error: SMTP_HOST cannot be localhost or 127.0.0.1 "
+                        "in production when EMAIL_BACKEND is 'smtp'. Configure a valid SMTP provider."
+                    )
+                if self.SMTP_USER and not self.SMTP_PASSWORD:
+                    raise ValueError(
+                        "Production configuration error: SMTP_PASSWORD is required when SMTP_USER is configured."
+                    )
+                if self.SMTP_FROM_EMAIL.endswith("@procureops.local"):
+                    raise ValueError(
+                        "Production configuration error: SMTP_FROM_EMAIL cannot use development "
+                        "domain '@procureops.local' in production."
+                    )
         return self
 
     # ── pydantic-settings config ─────────────────────────────────────────────

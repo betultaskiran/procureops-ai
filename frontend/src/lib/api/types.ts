@@ -422,5 +422,36 @@ export interface UpdateMemberRoleInput {
   role: UserRole;
 }
 
+// ── Phase 9: Email & Outbox Delivery Types ─────────────────────────────────────
+export interface EmailDeliveryResponse {
+  id: string;
+  organization_id: string;
+  rfq_id: string | null;
+  supplier_id: string | null;
+  purchase_order_id?: string | null;
+  recipient_email: string;
+  recipient_name: string | null;
+  subject: string;
+  message_type: string;
+  idempotency_key: string;
+  status: "queued" | "sending" | "sent" | "delivered" | "failed";
+  attempt_count: number;
+  max_attempts: number;
+  last_error: string | null;
+  next_retry_at: string | null;
+  provider_message_id: string | null;
+  queued_at: string;
+  sent_at: string | null;
+  delivered_at: string | null;
+}
+
+export interface SendRFQInvitationRequest {
+  recipient_email: string;
+  supplier_id?: string | null;
+  recipient_name?: string | null;
+  custom_message?: string | null;
+  idempotency_key?: string | null;
+}
+
 
 

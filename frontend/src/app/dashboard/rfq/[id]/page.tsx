@@ -43,7 +43,8 @@ import {
   EvidenceItemResponse, 
   PurchaseOrderResponse,
   POQualityIssueResponse,
-  ReviewResponse 
+  ReviewResponse,
+  EmailDeliveryResponse
 } from "@/lib/api/types";
 import { ComparisonMatrix } from "@/components/analysis/ComparisonMatrix";
 import { EvidencePanel } from "@/components/analysis/EvidencePanel";
@@ -126,10 +127,23 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
   const [isUploadQuoteOpen, setIsUploadQuoteOpen] = useState(false);
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploadSupplierId, setUploadSupplierId] = useState("");
-  const [suppliers, setSuppliers] = useState<{ id: string; name: string }[]>([]);
+  const [suppliers, setSuppliers] = useState<{ id: string; name: string; email?: string | null }[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadWarning, setUploadWarning] = useState<string | null>(null);
+
+  // Phase 9: RFQ Invitations & Outbox State
+  const [invitations, setInvitations] = useState<EmailDeliveryResponse[]>([]);
+  const [isLoadingInvitations, setIsLoadingInvitations] = useState(false);
+  const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
+  const [inviteSupplierId, setInviteSupplierId] = useState("");
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteName, setInviteName] = useState("");
+  const [inviteCustomMessage, setInviteCustomMessage] = useState("");
+  const [isSendingInvite, setIsSendingInvite] = useState(false);
+  const [inviteError, setInviteError] = useState<string | null>(null);
+  const [inviteSuccess, setInviteSuccess] = useState<string | null>(null);
+  const [retryingInvitationId, setRetryingInvitationId] = useState<string | null>(null);
 
   // Inline supplier creation in modal
   const [isCreatingSupplier, setIsCreatingSupplier] = useState(false);
@@ -442,16 +456,70 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
     });
   };
 
+  const fetchInvitations = async () => {
+    try {
+      setIsLoadingInvitations(true);
+      const res = await rfqsApi.getRfqInvitations(rfqId);
+      setInvitations(res);
+    } catch (err) {
+      console.error("Failed to load invitations:", err);
+    } finally {
+      setIsLoadingInvitations(false);
+    }
+  };
+
+  const handleSendInvitation = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!inviteEmail.trim()) {
+      setInviteError("Lütfen geçerli bir e-posta adresi girin.");
+      return;
+    }
+    try {
+      setIsSendingInvite(true);
+      setInviteError(null);
+      setInviteSuccess(null);
+      const res = await rfqsApi.sendRfqInvitation(rfqId, {
+        recipient_email: inviteEmail.trim(),
+        supplier_id: inviteSupplierId || undefined,
+        recipient_name: inviteName.trim() || undefined,
+        custom_message: inviteCustomMessage.trim() || undefined,
+      });
+      setInviteSuccess(`Davet kuyruğa eklendi: ${res.recipient_email} (${res.status})`);
+      setIsInviteModalOpen(false);
+      setInviteEmail("");
+      setInviteName("");
+      setInviteCustomMessage("");
+      setInviteSupplierId("");
+      await fetchInvitations();
+    } catch (err: any) {
+      setInviteError(err.message || "Davet gönderilirken bir hata oluştu.");
+    } finally {
+      setIsSendingInvite(false);
+    }
+  };
+
+  const handleRetryInvitation = async (invitationId: string) => {
+    try {
+      setRetryingInvitationId(invitationId);
+      await rfqsApi.retryRfqInvitation(rfqId, invitationId);
+      await fetchInvitations();
+    } catch (err: any) {
+      alert(`Davet yeniden denenirken hata oluştu: ${err.message || err}`);
+    } finally {
+      setRetryingInvitationId(null);
+    }
+  };
 
   useEffect(() => {
     async function loadData() {
       try {
         setIsLoading(true);
-        const [rfqRes, quotesRes, analysisRes, poRes] = await Promise.allSettled([
+        const [rfqRes, quotesRes, analysisRes, poRes, invRes] = await Promise.allSettled([
           rfqsApi.getRfq(rfqId),
           rfqsApi.getRfqQuotes(rfqId),
           rfqsApi.getAnalysis(rfqId),
-          rfqsApi.getPurchaseOrders(rfqId)
+          rfqsApi.getPurchaseOrders(rfqId),
+          rfqsApi.getRfqInvitations(rfqId),
         ]);
 
         if (rfqRes.status === 'fulfilled') {
@@ -466,6 +534,10 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
 
         if (analysisRes.status === 'fulfilled') {
           setAnalysis(analysisRes.value);
+        }
+
+        if (invRes.status === 'fulfilled') {
+          setInvitations(invRes.value);
         }
 
         if (poRes.status === 'fulfilled') {
@@ -568,6 +640,16 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
             >
               <Plus size={15} />
               Add Supplier Quote
+            </button>
+          )}
+
+          {rfq.status !== 'cancelled' && (
+            <button
+              onClick={() => setIsInviteModalOpen(true)}
+              className="flex items-center gap-2 bg-surface-elevated border border-border hover:bg-bg text-blue-600 dark:text-blue-400 px-3.5 py-2 rounded text-xs font-medium transition-colors shadow-sm"
+            >
+              <Mail size={15} />
+              Invite Supplier (Email)
             </button>
           )}
 
@@ -1354,6 +1436,128 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
             </div>
           )}
 
+          {/* ── Phase 9: Supplier Invitations & Outbox Deliveries ────────── */}
+          <div className="bg-surface-elevated border border-border rounded-xl p-6 shadow-sm">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+              <div>
+                <h2 className="text-sm font-semibold text-text-primary uppercase tracking-wider flex items-center gap-2">
+                  <Mail size={16} className="text-blue-500" />
+                  Supplier Invitations & Email Outbox ({invitations.length})
+                </h2>
+                <p className="text-xs text-text-muted mt-0.5">
+                  Durable background email deliveries sent to suppliers via transactional outbox.
+                </p>
+              </div>
+              {rfq.status !== "cancelled" && (
+                <button
+                  onClick={() => setIsInviteModalOpen(true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white transition-colors shrink-0"
+                >
+                  <Plus size={14} />
+                  Yeni Davet Gönder
+                </button>
+              )}
+            </div>
+
+            {inviteSuccess && (
+              <div className="mb-4 p-3 rounded-lg bg-green-500/10 border border-green-500/20 text-green-600 dark:text-green-400 text-xs flex items-center justify-between">
+                <span>{inviteSuccess}</span>
+                <button onClick={() => setInviteSuccess(null)} className="text-xs hover:underline">Kapat</button>
+              </div>
+            )}
+
+            {invitations.length === 0 ? (
+              <div className="p-6 rounded-lg border border-dashed border-border text-center text-xs text-text-muted">
+                Henüz bu RFQ için tedarikçilere davet e-postası gönderilmedi.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs text-left">
+                  <thead className="bg-surface/50 border-b border-border text-text-muted uppercase">
+                    <tr>
+                      <th className="px-3 py-2.5 font-medium">Recipient / Supplier</th>
+                      <th className="px-3 py-2.5 font-medium">Subject</th>
+                      <th className="px-3 py-2.5 font-medium">Status</th>
+                      <th className="px-3 py-2.5 font-medium">Attempts</th>
+                      <th className="px-3 py-2.5 font-medium">Date</th>
+                      <th className="px-3 py-2.5 font-medium text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {invitations.map((inv) => {
+                      const isFailed = inv.status === "failed";
+                      const isSent = inv.status === "sent";
+                      const isDelivered = inv.status === "delivered";
+                      const isSending = inv.status === "sending";
+
+                      let badgeClass = "bg-blue-500/10 text-blue-500 border-blue-500/20";
+                      let badgeLabel = "Queued";
+                      if (isSending) {
+                        badgeClass = "bg-amber-500/10 text-amber-500 border-amber-500/20";
+                        badgeLabel = "Sending...";
+                      } else if (isSent) {
+                        badgeClass = "bg-emerald-500/10 text-emerald-500 border-emerald-500/20";
+                        badgeLabel = "Sent (Accepted)";
+                      } else if (isDelivered) {
+                        badgeClass = "bg-green-500/10 text-green-400 border-green-500/20";
+                        badgeLabel = "Delivered";
+                      } else if (isFailed) {
+                        badgeClass = "bg-red-500/10 text-red-400 border-red-500/20";
+                        badgeLabel = "Failed";
+                      }
+
+                      return (
+                        <tr key={inv.id} className="hover:bg-surface/30 transition-colors">
+                          <td className="px-3 py-2.5">
+                            <div className="font-medium text-text-primary">{inv.recipient_email}</div>
+                            {inv.recipient_name && (
+                              <div className="text-[11px] text-text-muted">{inv.recipient_name}</div>
+                            )}
+                          </td>
+                          <td className="px-3 py-2.5 max-w-xs truncate text-text-secondary" title={inv.subject}>
+                            {inv.subject}
+                          </td>
+                          <td className="px-3 py-2.5">
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium border ${badgeClass}`}>
+                              {badgeLabel}
+                            </span>
+                            {inv.last_error && (
+                              <div className="text-[10px] text-red-400 mt-0.5 max-w-xs truncate" title={inv.last_error}>
+                                {inv.last_error}
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-3 py-2.5 text-text-muted">
+                            {inv.attempt_count} / {inv.max_attempts}
+                          </td>
+                          <td className="px-3 py-2.5 text-text-muted">
+                            {inv.sent_at ? new Date(inv.sent_at).toLocaleString() : new Date(inv.queued_at).toLocaleString()}
+                          </td>
+                          <td className="px-3 py-2.5 text-right">
+                            {isFailed && (
+                              <button
+                                onClick={() => handleRetryInvitation(inv.id)}
+                                disabled={retryingInvitationId === inv.id}
+                                className="px-2 py-1 rounded text-[11px] font-medium bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 transition-colors"
+                              >
+                                {retryingInvitationId === inv.id ? (
+                                  <Loader2 size={12} className="animate-spin inline mr-1" />
+                                ) : (
+                                  <RefreshCw size={12} className="inline mr-1" />
+                                )}
+                                Tekrar Dene
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
         </div>
       </div>
 
@@ -1367,6 +1571,119 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
           initialSelectedQuoteId={reviewQuoteId || selectedQuoteId}
           onSuccess={handleReviewSuccess}
         />
+      )}
+
+      {/* ── Phase 9: Invite Supplier Modal ───────────────────────── */}
+      {isInviteModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <div className="bg-surface-hover border border-border rounded-lg shadow-xl w-full max-w-md overflow-hidden flex flex-col">
+            <div className="p-6 border-b border-border flex justify-between items-center bg-surface">
+              <h3 className="text-lg font-semibold text-text-primary flex items-center gap-2">
+                <Mail size={18} className="text-blue-500" />
+                Tedarikçiye RFQ Daveti Gönder
+              </h3>
+              <button
+                onClick={() => { setIsInviteModalOpen(false); setInviteError(null); }}
+                className="text-text-muted hover:text-text-primary transition-colors"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <form onSubmit={handleSendInvitation} className="p-6 flex flex-col gap-4">
+              {inviteError && (
+                <div className="p-3 rounded bg-danger/10 border border-danger/20 text-danger text-xs font-medium">
+                  {inviteError}
+                </div>
+              )}
+
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-medium text-text-secondary">Tedarikçi Seçimi (İsteğe Bağlı)</label>
+                <select
+                  value={inviteSupplierId}
+                  onChange={(e) => {
+                    const suppId = e.target.value;
+                    setInviteSupplierId(suppId);
+                    const selected = suppliers.find(s => s.id === suppId);
+                    if (selected) {
+                      if (selected.email) setInviteEmail(selected.email);
+                      if (selected.name) setInviteName(selected.name);
+                    }
+                  }}
+                  className="px-2.5 py-1.5 text-xs bg-background border border-border rounded text-text-primary focus:outline-none focus:border-primary"
+                >
+                  <option value="">-- Kayıtlı Tedarikçi Seç veya Doğrudan E-posta Gir --</option>
+                  {suppliers.map(s => (
+                    <option key={s.id} value={s.id}>
+                      {s.name} {s.email ? `(${s.email})` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-medium text-text-secondary">Alıcı E-posta Adresi *</label>
+                <input
+                  type="email"
+                  required
+                  placeholder="tedarikci@firma.com"
+                  value={inviteEmail}
+                  onChange={(e) => setInviteEmail(e.target.value)}
+                  className="px-2.5 py-1.5 text-xs bg-background border border-border rounded text-text-primary focus:outline-none focus:border-primary"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-medium text-text-secondary">Alıcı İlgili Kişi Adı</label>
+                <input
+                  type="text"
+                  placeholder="Örn. Ahmet Yılmaz"
+                  value={inviteName}
+                  onChange={(e) => setInviteName(e.target.value)}
+                  className="px-2.5 py-1.5 text-xs bg-background border border-border rounded text-text-primary focus:outline-none focus:border-primary"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-medium text-text-secondary">Özel Not / Mesaj (İsteğe Bağlı)</label>
+                <textarea
+                  rows={3}
+                  placeholder="Teklif hazırlarken dikkat edilmesini istediğiniz hususlar..."
+                  value={inviteCustomMessage}
+                  onChange={(e) => setInviteCustomMessage(e.target.value)}
+                  className="px-2.5 py-1.5 text-xs bg-background border border-border rounded text-text-primary focus:outline-none focus:border-primary resize-none"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2 border-t border-border">
+                <button
+                  type="button"
+                  onClick={() => { setIsInviteModalOpen(false); setInviteError(null); }}
+                  className="px-3.5 py-2 text-xs font-medium text-text-muted hover:text-text-primary"
+                >
+                  Vazgeç
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSendingInvite || !inviteEmail.trim()}
+                  className="flex items-center gap-1.5 px-4 py-2 text-xs font-semibold bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded transition-colors"
+                >
+                  {isSendingInvite ? (
+                    <>
+                      <Loader2 size={13} className="animate-spin" />
+                      <span>Kuyruğa Alınıyor...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Mail size={13} />
+                      <span>Davet Gönder</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
 
       {/* Upload Quote Modal */}

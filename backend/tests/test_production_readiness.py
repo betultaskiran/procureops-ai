@@ -226,22 +226,23 @@ def test_cors_origins_parsing_from_comma_string():
 
 @pytest.mark.asyncio
 async def test_alembic_database_head_consistency():
-    """Verify that the database alembic_version matches the latest migration head (7c4b92df0a12)."""
+    """Verify that the database alembic_version matches the latest migration head (2ac55145c03b)."""
     async with AsyncSessionLocal() as session:
         result = await session.execute(text("SELECT version_num FROM alembic_version"))
         current_version = result.scalar_one_or_none()
-        assert current_version == "7c4b92df0a12", f"Expected head 7c4b92df0a12, got {current_version}"
+        assert current_version == "2ac55145c03b", f"Expected head 2ac55145c03b, got {current_version}"
 
 
 @pytest.mark.asyncio
 async def test_all_model_tables_exist_in_database():
-    """Verify all 19 application tables are physically present in PostgreSQL."""
+    """Verify all 20 application tables are physically present in PostgreSQL."""
     expected_tables = {
         "organizations", "users", "suppliers", "supplier_history",
         "policy_documents", "rfqs", "quote_documents", "rfq_items",
         "quotes", "quote_items", "analyses", "tco_results",
         "compliance_checks", "evidence_items", "recommendations",
-        "approvals", "audit_events", "purchase_orders", "po_quality_issues"
+        "approvals", "audit_events", "purchase_orders", "po_quality_issues",
+        "email_deliveries"
     }
 
     async with AsyncSessionLocal() as session:

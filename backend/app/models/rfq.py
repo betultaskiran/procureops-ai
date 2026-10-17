@@ -141,6 +141,13 @@ class RFQ(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         cascade="all, delete-orphan",
     )
 
+    # Tedarikçilere gönderilen RFQ davetleri ve e-posta kayıtları (Phase 9)
+    email_deliveries: Mapped[list["EmailDelivery"]] = relationship(
+        back_populates="rfq",
+        lazy="selectin",
+        cascade="all, delete-orphan",
+    )
+
     def __repr__(self) -> str:
         return f"<RFQ id={self.id} title={self.title!r} status={self.status!r}>"
 

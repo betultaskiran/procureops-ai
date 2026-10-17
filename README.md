@@ -115,7 +115,7 @@ The following table reflects the actual implementation state verified by the cod
 | **Core AI** | **Agentic Reasoning & Evidence Verification** | LLM trade-off synthesis, single-agent verification layer, evidence grounding cards (`agent/service.py`, `verification.py`, `EvidencePanel.tsx`). | ✅ Complete |
 | **Workflow** | **Human Review, Approval & Idempotent PO** | Standard vs Exception approval (`acknowledged_policy_violation`), duplicate PO blocking, cancellation flow (`ReviewModal.tsx`, `order.py`, `email.py`). | ✅ Complete |
 | **Phase 8** | **Document Intelligence & Reliable Ingestion** | Robust ingestion pipeline: text-based PDF (`pdfplumber`), scanned PDF & image OCR fallback (Gemini Multimodal Vision), `.xlsx` Excel parsing (`openpyxl`), arithmetic validation & discrepancy warnings, idempotent re-extraction & retry endpoint (`/reprocess`) (`services/extraction/`, `test_document_intelligence.py`). | ✅ Complete |
-| **Phase 9** | **Reliable Email Integration** | SMTP/provider integration, RFQ invitations, delivery tracking, and retry mechanism. | ⏳ Pending |
+| **Phase 9** | **Reliable Email Integration** | Provider abstraction (`SMTPEmailProvider`, `MockEmailProvider`), persistent transactional outbox (`email_deliveries`), idempotent RFQ invitations & PO notifications, runnable worker loop, bounded exponential backoff (`services/email/`, `test_email_integration.py`). | ✅ Complete |
 | **Phase 10** | **AI Workflow & Agent Orchestration** | Clear separation of extraction, policy analysis, recommendation, and verification; multi-agent contracts where measurable. | ⏳ Pending |
 | **Phase 11** | **Security & Pilot Readiness** | Full HttpOnly cookie session hardening, CSRF/CORS, concurrency, end-to-end logging, and pilot UAT. | ⏳ Pending |
 
@@ -191,6 +191,28 @@ ProcureOps AI processes supplier quotes across multiple formats into structured,
 - **Excel Workbooks (`.xlsx`)**: Structured worksheet parsing via `openpyxl` with `data_only=True` (resolving formulas to calculated values) and markdown table formatting. Legacy binary `.xls` files are rejected with guidance to upload `.xlsx` or `.pdf`.
 - **Arithmetic Discrepancy Detection**: Computes item line math (`qty * unit_price`), subtotal comparisons, and grand total formula checks. Discrepancies are flagged in `Quote.notes` without dropping valid data.
 - **Idempotent Reprocessing**: Failed or updated documents can be reprocessed via `POST /api/v1/rfqs/{rfq_id}/quote-documents/{document_id}/reprocess` without duplicate quote creation.
+
+### 6. Reliable Email Integration & Transactional Outbox (Phase 9)
+Supplier invitations and purchase order notifications are delivered using a database-backed transactional outbox:
+- **Provider Abstraction**: Abstract `EmailProvider` with `SMTPEmailProvider`, `MockEmailProvider`, and `ConsoleEmailProvider`.
+- **Persistent Outbox Table (`email_deliveries`)**: Tracks state transitions (`queued` -> `sending` -> `sent` / `failed` -> `delivered`).
+- **Delivery Guarantees**: SMTP socket acceptance is recorded strictly as `sent`. `delivered` status requires explicit provider delivery signals / webhooks.
+- **Idempotency & Concurrency**: Enforced at the database level using a unique index on `idempotency_key` and atomic `SELECT ... FOR UPDATE SKIP LOCKED` during worker dispatch.
+- **Transient Backoff Retries**: Transient socket/server errors trigger bounded exponential backoff (`EMAIL_RETRY_BACKOFF_SECONDS * 2^(attempts-1)`), up to `EMAIL_MAX_RETRIES` (default 3). Permanent recipient or auth rejections fail fast without retrying.
+- **Outbox Worker CLI & Daemon**:
+  ```bash
+  # Run continuous worker loop (polling every 5 seconds)
+  docker compose exec backend python -m app.services.email.worker
+
+  # Run a single batch pass (for cron or CI)
+  docker compose exec backend python -m app.services.email.worker --once
+  ```
+- **Local Mailcatcher Testing**:
+  To capture emails locally without sending external mail, run a lightweight SMTP receiver:
+  ```bash
+  # Python built-in debugging server on port 1025
+  python -m smtpd -c DebuggingServer -n localhost:1025
+  ```
 
 ---
 

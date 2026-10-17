@@ -4,7 +4,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status, BackgroundTasks
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -88,6 +88,36 @@ class RFQArchiveRequest(BaseModel):
 class POCancelRequest(BaseModel):
     reason: str
     organization_id: Optional[uuid.UUID] = None
+
+class RFQInvitationRequest(BaseModel):
+    recipient_email: str
+    supplier_id: Optional[uuid.UUID] = None
+    recipient_name: Optional[str] = None
+    custom_message: Optional[str] = None
+    idempotency_key: Optional[str] = None
+
+class EmailDeliveryResponse(BaseModel):
+    id: uuid.UUID
+    organization_id: uuid.UUID
+    rfq_id: Optional[uuid.UUID] = None
+    supplier_id: Optional[uuid.UUID] = None
+    purchase_order_id: Optional[uuid.UUID] = None
+    recipient_email: str
+    recipient_name: Optional[str] = None
+    subject: str
+    message_type: str
+    idempotency_key: str
+    status: str
+    attempt_count: int
+    max_attempts: int
+    last_error: Optional[str] = None
+    next_retry_at: Optional[datetime] = None
+    provider_message_id: Optional[str] = None
+    queued_at: datetime
+    sent_at: Optional[datetime] = None
+    delivered_at: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ── Metadata & Safe Deletion Validation ────────────────────────────────────────
@@ -885,3 +915,124 @@ async def list_suppliers_alias(
     )
     suppliers = result.scalars().all()
     return [SupplierResponse.model_validate(s) for s in suppliers]
+
+
+# ── Phase 9: RFQ Supplier Invitations & Outbox Delivery ─────────────────────────
+
+@router.post(
+    "/{rfq_id}/invitations",
+    response_model=EmailDeliveryResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Send or Queue RFQ Invitation to Supplier",
+)
+async def send_rfq_invitation(
+    rfq_id: uuid.UUID,
+    request: RFQInvitationRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_employee_or_above),
+) -> EmailDeliveryResponse:
+    """
+    Idempotently creates a persistent outbox delivery record and triggers background transmission.
+    Prevents duplicate emails if repeatedly called with the same recipient or idempotency key.
+    """
+    from app.services.email.renderer import EmailValidationError
+    from app.services.email.service import EmailDeliveryService
+
+    try:
+        delivery, is_new_or_requeued = await EmailDeliveryService.create_rfq_invitation(
+            db=db,
+            rfq_id=rfq_id,
+            recipient_email=request.recipient_email,
+            organization_id=current_user.organization_id,
+            supplier_id=request.supplier_id,
+            recipient_name=request.recipient_name,
+            custom_message=request.custom_message,
+            idempotency_key=request.idempotency_key,
+        )
+    except EmailValidationError as err:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(err))
+    except ValueError as err:
+        msg = str(err)
+        status_code = status.HTTP_404_NOT_FOUND if "not found" in msg.lower() else status.HTTP_400_BAD_REQUEST
+        raise HTTPException(status_code=status_code, detail=msg)
+
+    # Dispatch delivery asynchronously in background task if newly queued or re-queued
+    if is_new_or_requeued:
+        background_tasks.add_task(EmailDeliveryService.dispatch_delivery, delivery.id)
+
+    return EmailDeliveryResponse.model_validate(delivery)
+
+
+@router.get(
+    "/{rfq_id}/invitations",
+    response_model=list[EmailDeliveryResponse],
+    summary="List RFQ Supplier Invitations",
+)
+async def list_rfq_invitations(
+    rfq_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_authenticated),
+) -> list[EmailDeliveryResponse]:
+    """
+    Retrieves all outbound email delivery attempts for an RFQ within the tenant organization.
+    """
+    from app.services.email.service import EmailDeliveryService
+
+    # Check RFQ belongs to tenant
+    rfq_res = await db.execute(
+        select(RFQ).where(and_(RFQ.id == rfq_id, RFQ.organization_id == current_user.organization_id))
+    )
+    if not rfq_res.scalars().first():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="RFQ not found or access denied for this organization.",
+        )
+
+    deliveries = await EmailDeliveryService.list_rfq_invitations(
+        db=db,
+        rfq_id=rfq_id,
+        organization_id=current_user.organization_id,
+    )
+    return [EmailDeliveryResponse.model_validate(d) for d in deliveries]
+
+
+@router.post(
+    "/{rfq_id}/invitations/{invitation_id}/retry",
+    response_model=EmailDeliveryResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Retry a Failed RFQ Invitation",
+)
+async def retry_rfq_invitation(
+    rfq_id: uuid.UUID,
+    invitation_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_employee_or_above),
+) -> EmailDeliveryResponse:
+    """
+    Resets a failed invitation's attempt counter and re-dispatches it asynchronously.
+    """
+    from app.services.email.service import EmailDeliveryService
+
+    # Check RFQ belongs to tenant
+    rfq_res = await db.execute(
+        select(RFQ).where(and_(RFQ.id == rfq_id, RFQ.organization_id == current_user.organization_id))
+    )
+    if not rfq_res.scalars().first():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="RFQ not found or access denied for this organization.",
+        )
+
+    try:
+        delivery = await EmailDeliveryService.retry_delivery(
+            db=db,
+            delivery_id=invitation_id,
+            organization_id=current_user.organization_id,
+        )
+    except ValueError as err:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(err))
+
+    background_tasks.add_task(EmailDeliveryService.dispatch_delivery, delivery.id)
+    return EmailDeliveryResponse.model_validate(delivery)

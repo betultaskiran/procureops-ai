@@ -9,7 +9,9 @@ import {
   RFQCreateRequest, 
   SupplierResponse, 
   UploadResponse,
-  PaginatedRFQResponse
+  PaginatedRFQResponse,
+  EmailDeliveryResponse,
+  SendRFQInvitationRequest
 } from "./types";
 
 export interface GetRfqsOptions {
@@ -165,5 +167,18 @@ export const rfqsApi = {
       reason,
       organization_id: organizationId
     });
+  },
+
+  // ── Phase 9: RFQ Supplier Invitations ───────────────────────────────────────
+  async sendRfqInvitation(rfqId: string, req: SendRFQInvitationRequest): Promise<EmailDeliveryResponse> {
+    return apiClient.post<EmailDeliveryResponse>(`/api/v1/rfqs/${rfqId}/invitations`, req);
+  },
+
+  async getRfqInvitations(rfqId: string): Promise<EmailDeliveryResponse[]> {
+    return apiClient.get<EmailDeliveryResponse[]>(`/api/v1/rfqs/${rfqId}/invitations`);
+  },
+
+  async retryRfqInvitation(rfqId: string, invitationId: string): Promise<EmailDeliveryResponse> {
+    return apiClient.post<EmailDeliveryResponse>(`/api/v1/rfqs/${rfqId}/invitations/${invitationId}/retry`, {});
   }
 };
