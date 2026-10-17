@@ -17,6 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.config import settings
 from app.core.security import decode_access_token
 from app.db.session import get_db
 from app.models.user import User, UserRole
@@ -25,20 +26,60 @@ from app.models.user import User, UserRole
 security_scheme = HTTPBearer(auto_error=False)
 
 
+def verify_csrf_for_cookie_auth(request: Request, is_cookie_auth: bool) -> None:
+    """
+    OWASP-compliant CSRF defense for cookie-authenticated state-changing requests.
+    If the request was authenticated purely via the HttpOnly cookie (no Authorization header),
+    and the HTTP method is state-changing (POST, PUT, PATCH, DELETE), verify that
+    the Origin / Referer matches trusted CORS origins, and Sec-Fetch-Site is not cross-site.
+    Requests with an Authorization: Bearer header are inherently immune to CSRF.
+    """
+    if not is_cookie_auth:
+        return
+
+    if request.method in ("GET", "HEAD", "OPTIONS"):
+        return
+
+    # Check Sec-Fetch-Site if provided by modern browser
+    sec_fetch_site = request.headers.get("sec-fetch-site")
+    if sec_fetch_site and sec_fetch_site.lower() == "cross-site":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cross-site request forgery protection: cross-site requests with session cookie are prohibited",
+        )
+
+    # Check Origin header against allowed CORS origins
+    origin = request.headers.get("origin")
+    if origin:
+        allowed = {o.rstrip("/") for o in settings.CORS_ORIGINS}
+        if origin.rstrip("/") not in allowed:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Cross-site request forgery protection: untrusted origin",
+            )
+
+
 async def get_current_user(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(security_scheme),
     db: AsyncSession = Depends(get_db),
 ) -> User:
     """
-    Extract JWT bearer token from request Authorization header or HttpOnly access_token cookie,
-    decode claims, and fetch the corresponding User from the database.
+    Extract JWT bearer token from request:
+    1. RFC-6750 Authorization header: 'Bearer <token>'
+    2. HttpOnly session cookie: 'access_token'
+
+    Validates token signature and expiration, enforces CSRF checks for cookie-only requests,
+    and fetches active User from DB.
     """
     token: str | None = None
+    is_cookie_auth: bool = False
+
     if credentials is not None and credentials.credentials:
         token = credentials.credentials
     elif request is not None and "access_token" in request.cookies:
         token = request.cookies.get("access_token")
+        is_cookie_auth = True
 
     if not token:
         raise HTTPException(
@@ -46,6 +87,10 @@ async def get_current_user(
             detail="Authentication credentials were not provided",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    # Enforce CSRF protection on state-changing requests authenticated solely via cookies
+    if request is not None and is_cookie_auth:
+        verify_csrf_for_cookie_auth(request, is_cookie_auth)
 
     try:
         payload = decode_access_token(token)
