@@ -110,21 +110,44 @@ class VerificationService:
             known_sources.extend(["sql", "geçmiş", "sipariş"])
 
         for citation in unique_citations:
-            is_policy = "sözleşme" in citation.lower() or "politika" in citation.lower() or "madde" in citation.lower()
-            is_sql = "sql" in citation.lower() or "geçmiş" in citation.lower() or "sipariş" in citation.lower()
-            
-            if is_policy:
-                source_type = "policy"
+            cit_lower = citation.lower()
+
+            # 1. Deterministik Kural Motoru & Hesaplama Atıfları
+            is_calculation = any(k in cit_lower for k in [
+                "kural motoru", "rule engine", "deterministik", "kural", "hesap", "tco",
+                "maliyet", "bütçe kontrolü", "teslimat kontrolü", "garanti kontrolü", "sistem", "calculation"
+            ])
+            # 2. Teklif Belgesi Atıfları
+            is_quote = any(k in cit_lower for k in [
+                "teklif", "quote", "fatura", "şartname", "belge", "pdf", "xlsx"
+            ])
+            # 3. SQL / Tedarikçi Geçmişi Atıfları
+            is_sql = any(k in cit_lower for k in [
+                "sql", "geçmiş", "sipariş", "supplier history", "tedarikçi geçmişi", "performans"
+            ])
+            # 4. Kurumsal Politika Atıfları
+            is_policy = any(k in cit_lower for k in [
+                "sözleşme", "politika", "yönetmelik", "madde", "prosedür", "sla"
+            ])
+
+            if is_calculation:
+                source_type = "calculation"
+            elif is_quote:
+                source_type = "quote"
             elif is_sql:
                 source_type = "supplier_history"
+            elif is_policy:
+                source_type = "policy"
             else:
                 source_type = "other"
 
-            # Eğer bilinen kaynaklar verildiyse ve eşleşmiyorsa
-            if known_sources is not None and len(known_sources) > 0:
-                cit_matched = any(citation.lower() in ks.lower() or ks.lower() in citation.lower() for ks in known_sources)
-                if not cit_matched:
-                    unsupported_citations.append(citation)
+            # Doğrulama: calculation, quote ve sql sistem içi doğrulanabilir kaynaklardır.
+            # Politika veya diğer harici iddialarda bilinen aktif politika kaynaklarıyla eşleşme kontrol edilir.
+            if not is_calculation and not is_quote and not is_sql:
+                if known_sources is not None and len(known_sources) > 0:
+                    cit_matched = any(cit_lower in ks.lower() or ks.lower() in cit_lower for ks in known_sources)
+                    if not cit_matched:
+                        unsupported_citations.append(citation)
 
             item = EvidenceItem(
                 analysis_id=analysis.id,

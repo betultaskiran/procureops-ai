@@ -31,27 +31,44 @@ class AgentService:
 
     def _build_dynamic_rag_query(self, rfq: RFQ | None, quotes: List[Quote]) -> str:
         """
-        RFQ başlığı, talep edilen kalemler ve ticari koşullardan dinamik,
-        kapsayıcı ve hedefe yönelik bir RAG sorgusu oluşturur.
+        RFQ başlığı, talep edilen kalemler ve ticari gereksinimlerden kurumsal politikalara yönelik
+        çoklu niyetli (multi-intent) ve hedefe odaklı bir RAG arama sorgusu oluşturur.
         """
-        parts = []
-        if rfq:
-            if rfq.title:
-                parts.append(rfq.title)
-            try:
-                if rfq.items:
-                    item_descs = [it.description for it in rfq.items if it.description]
-                    parts.extend(item_descs[:3])
-            except Exception:
-                pass
-            if rfq.max_delivery_days:
-                parts.append(f"teslimat süresi {rfq.max_delivery_days} gün")
-            if rfq.min_warranty_months:
-                parts.append(f"garanti süresi {rfq.min_warranty_months} ay")
-            if rfq.payment_terms:
-                parts.append(f"ödeme vadesi {rfq.payment_terms}")
-        parts.append("onay limiti ve bütçe yetkisi teslimat süresi gecikme cezası garanti ve teknik şartlar")
-        return " ".join(parts)
+        clauses = []
+        clean_title = ""
+        if rfq and rfq.title:
+            clean_title = rfq.title.strip()
+
+        category = clean_title or "Donanım ve hizmet"
+
+        # Kalem isimleri
+        item_names = []
+        if rfq and hasattr(rfq, "items") and rfq.items:
+            item_names = [it.description for it in rfq.items if it.description][:3]
+
+        # 1. Garanti ve SLA kuralı
+        warranty_str = f"{rfq.min_warranty_months} ay" if (rfq and rfq.min_warranty_months) else "asgari"
+        clauses.append(f"{category} alımında garanti süresi {warranty_str} ve SLA şartı nedir")
+
+        # 2. Kalemler / donanım standartları (varsa)
+        if item_names:
+            items_str = ", ".join(item_names)
+            clauses.append(f"talep edilen {items_str} için teknik şartlar ve standartlar nedir")
+
+        # 3. Teslimat ve lojistik kuralları
+        if rfq and rfq.max_delivery_days:
+            clauses.append(f"azami teslimat süresi {rfq.max_delivery_days} gün ve gecikme cezası kuralı nedir")
+        else:
+            clauses.append("teslimat süresi ve gecikme cezası kuralı nedir")
+
+        # 4. Satın alma onay yetki matrisi ve bütçe limiti
+        clauses.append("satın alma onay yetki limiti ve bütçe yetki matrisi nedir")
+
+        # 5. Ödeme vadeleri ve ticari koşullar (varsa)
+        if rfq and rfq.payment_terms:
+            clauses.append(f"ödeme vadesi {rfq.payment_terms} ve ticari şartlar nedir")
+
+        return " ve ".join(clauses)
 
     async def generate_recommendation(self, analysis_id: uuid.UUID, organization_id: str) -> Recommendation:
         """

@@ -413,7 +413,12 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
       // Refresh analysis to reflect updated staleness
       rfqsApi.getAnalysis(rfqId).then(setAnalysis).catch(() => {});
     } catch (err: any) {
-      setUploadError(err.message || "Dosya yüklenirken bir hata oluştu.");
+      console.error("Quote upload error:", err);
+      if (err?.message?.includes("Authentication credentials") || err?.status === 401) {
+        setUploadError("Oturum kimlik bilgileriniz doğrulanamadı. Tarayıcınızda oturum süresi dolmuş olabilir; lütfen sayfayı yenileyip (F5) tekrar giriş yapın.");
+      } else {
+        setUploadError(err.message || "Dosya yüklenirken bir hata oluştu.");
+      }
     } finally {
       setIsUploading(false);
     }

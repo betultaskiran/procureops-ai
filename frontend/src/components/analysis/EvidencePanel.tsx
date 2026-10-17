@@ -3,6 +3,7 @@
 import React, { useState } from "react";
 import { 
   ShieldCheck, 
+  ShieldAlert,
   AlertTriangle, 
   CheckCircle, 
   XCircle, 
@@ -231,16 +232,60 @@ export const EvidencePanel: React.FC<EvidencePanelProps> = ({
           </div>
         </div>
 
+        {/* Stale Analysis Warning */}
+        {analysis.is_stale && (
+          <div className="mb-5 p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-center gap-2.5">
+            <AlertTriangle size={16} className="text-amber-400 shrink-0" />
+            <span>
+              <strong>Analiz Güncel Değil (Stale):</strong> RFQ veya tekliflerde yapılan değişiklikler nedeniyle bu analiz geçersizdir. Karar vermeden önce analizi yeniden çalıştırınız.
+            </span>
+          </div>
+        )}
+
         {/* Highlighted Recommended Supplier */}
         {recommendedQuote ? (
-          <div className="mb-5 p-4 rounded-xl bg-surface/70 border border-border flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className={`mb-5 p-4 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${
+            analysis.is_stale
+              ? "bg-surface/50 border-border opacity-70"
+              : recommendation?.verification_status?.toLowerCase() === "failed" || recommendation?.verification_status?.toLowerCase() === "overridden"
+              ? "bg-red-500/5 border-red-500/30"
+              : recommendation?.verification_status?.toLowerCase() === "inconclusive"
+              ? "bg-amber-500/5 border-amber-500/30"
+              : "bg-surface/70 border-border"
+          }`}>
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-emerald-500/15 text-emerald-400 flex items-center justify-center font-bold border border-emerald-500/30">
-                <Award size={20} />
+              <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold border ${
+                analysis.is_stale
+                  ? "bg-zinc-800 text-zinc-400 border-zinc-700"
+                  : recommendation?.verification_status?.toLowerCase() === "failed" || recommendation?.verification_status?.toLowerCase() === "overridden"
+                  ? "bg-red-500/15 text-red-400 border-red-500/30"
+                  : recommendation?.verification_status?.toLowerCase() === "inconclusive"
+                  ? "bg-amber-500/15 text-amber-400 border-amber-500/30"
+                  : "bg-emerald-500/15 text-emerald-400 border-emerald-500/30"
+              }`}>
+                {recommendation?.verification_status?.toLowerCase() === "failed" || recommendation?.verification_status?.toLowerCase() === "overridden" ? (
+                  <XCircle size={20} />
+                ) : recommendation?.verification_status?.toLowerCase() === "inconclusive" ? (
+                  <AlertTriangle size={20} />
+                ) : (
+                  <Award size={20} />
+                )}
               </div>
               <div>
-                <span className="text-[11px] uppercase tracking-wider text-text-muted font-bold block">
-                  ÖNERİLEN EN UYGUN TEDARİKÇİ
+                <span className={`text-[11px] uppercase tracking-wider font-bold block ${
+                  recommendation?.verification_status?.toLowerCase() === "failed" || recommendation?.verification_status?.toLowerCase() === "overridden"
+                    ? "text-red-400"
+                    : recommendation?.verification_status?.toLowerCase() === "inconclusive"
+                    ? "text-amber-400"
+                    : "text-text-muted"
+                }`}>
+                  {analysis.is_stale
+                    ? "ESKİ ANALİZ ÖNERİSİ (STALE)"
+                    : recommendation?.verification_status?.toLowerCase() === "failed" || recommendation?.verification_status?.toLowerCase() === "overridden"
+                    ? "DOĞRULANAMAYAN TEDARİKÇİ ÖNERİSİ (FAILED)"
+                    : recommendation?.verification_status?.toLowerCase() === "inconclusive"
+                    ? "ŞARTLI / GEÇİCİ TEDARİKÇİ ÖNERİSİ (INCONCLUSIVE)"
+                    : "ÖNERİLEN EN UYGUN TEDARİKÇİ"}
                 </span>
                 <span className="text-base font-bold text-text-primary">
                   {recommendedQuote.supplier_name || "Bilinmeyen Tedarikçi"}
@@ -256,10 +301,37 @@ export const EvidencePanel: React.FC<EvidencePanelProps> = ({
             {onOpenReviewModal && (
               <button
                 onClick={() => onOpenReviewModal(recommendedQuote.id)}
-                className="px-4 py-2 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white transition-colors shadow-sm flex items-center gap-1.5 self-start sm:self-auto"
+                className={`px-4 py-2 rounded-lg text-xs font-semibold text-white transition-colors shadow-sm flex items-center gap-1.5 self-start sm:self-auto ${
+                  analysis.is_stale
+                    ? "bg-zinc-700 hover:bg-zinc-600 text-zinc-300"
+                    : recommendation?.verification_status?.toLowerCase() === "failed" || recommendation?.verification_status?.toLowerCase() === "overridden"
+                    ? "bg-red-600 hover:bg-red-500"
+                    : recommendation?.verification_status?.toLowerCase() === "inconclusive"
+                    ? "bg-amber-600 hover:bg-amber-500"
+                    : "bg-emerald-600 hover:bg-emerald-500"
+                }`}
               >
-                <CheckCircle size={14} />
-                Öneriyi Değerlendir & Onayla
+                {analysis.is_stale ? (
+                  <>
+                    <Clock size={14} />
+                    Analiz Güncel Değil
+                  </>
+                ) : recommendation?.verification_status?.toLowerCase() === "inconclusive" ? (
+                  <>
+                    <ShieldAlert size={14} />
+                    Öneriyi İncele & Karar Ver
+                  </>
+                ) : recommendation?.verification_status?.toLowerCase() === "failed" || recommendation?.verification_status?.toLowerCase() === "overridden" ? (
+                  <>
+                    <XCircle size={14} />
+                    İhlali İncele & Karar Ver
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle size={14} />
+                    Öneriyi Değerlendir & Onayla
+                  </>
+                )}
               </button>
             )}
           </div>

@@ -322,33 +322,46 @@ class RAGService:
     def split_query_clauses(query: str) -> List[str]:
         """
         Sorguyu bağımsız alt ifadelere/sorulara ayırır.
-        've', 'ayrıca', 'hem de' bağlaçları veya noktalı virgül ile böler.
+        Soru işareti (?), noktalı virgül (;), satır sonu (\\n) ve 've', 'ayrıca', 'hem de' bağlaçları ile böler.
         Yalnızca alt ifadeler bağımsız bir yüklem veya soru kalıbı taşıyorsa (bileşik soru ise) bölme uygular.
         """
         if not query:
             return []
         import re
-        raw_clauses = re.split(r"\s+(?:ve|ayrıca|hem\s+de)\s+|;\s*", query.strip(), flags=re.IGNORECASE)
-        clauses = [rc.strip() for rc in raw_clauses if len(rc.strip()) >= 3]
-        if len(clauses) <= 1:
+        raw_clauses = re.split(r"[?;\n]+|\s+(?:ve|ayrıca|hem\s+de)\s+", query.strip(), flags=re.IGNORECASE)
+        parts = [rc.strip() for rc in raw_clauses if len(rc.strip()) >= 2]
+        if len(parts) <= 1:
             return [query.strip()]
 
         clause_markers = {
             "kaç", "ne", "nedir", "nelerdir", "kim", "kimler", "hangi", "mı", "mi", "mu", "mü",
             "edilmeli", "yapılmalı", "olmalı", "olmalıdır", "alınır", "edilir", "yapılır", "olur",
-            "kaçtır", "kaçdır", "gerekir", "süresi", "şartı", "orani", "oranı"
+            "kaçtır", "kaçdır", "gerekir", "süresi", "şartı", "orani", "oranı", "limiti", "yetkisi", "matrisi"
         }
 
         def has_clause_marker(t: str) -> bool:
             words = set(re.findall(r"[a-z0-9çğıöşü]+", t.lower()))
             return bool(words & clause_markers)
 
-        # Eğer ayrılan parçalardan herhangi biri yüklem/soru işareti taşımıyorsa (örn: 'otel ve yemek harcırahı'),
-        # bu durum tekil bir tamlamadır; bölme uygulanmaz.
-        if not all(has_clause_marker(c) for c in clauses):
+        # Parçaları akıllıca birleştir: Eğer bir parça bağımsız bir yüklem/marker içermiyorsa,
+        # kendisinden sonraki (veya önceki) parçayla birleştirilir.
+        merged = []
+        current_buf = []
+        for p in parts:
+            current_buf.append(p)
+            if has_clause_marker(p):
+                merged.append(" ve ".join(current_buf))
+                current_buf = []
+        if current_buf:
+            if merged:
+                merged[-1] = merged[-1] + " ve " + " ve ".join(current_buf)
+            else:
+                merged.append(" ve ".join(current_buf))
+
+        if len(merged) <= 1:
             return [query.strip()]
 
-        return clauses
+        return merged
 
     @staticmethod
     def extract_clause_topics_with_context(

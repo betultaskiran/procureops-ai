@@ -457,7 +457,7 @@ async def review_analysis(
     from app.models.analysis import Analysis, Approval, ApprovalStatus, AnalysisStatus
     from app.models.rfq import RFQ, RFQStatus
     from app.models.quote import Quote
-    from app.models.order import PurchaseOrder
+    from app.models.order import PurchaseOrder, PurchaseOrderStatus
     from app.models.audit import AuditEvent
     from app.services.workflow.order import PurchaseOrderService
     from app.services.workflow.email import EmailService
@@ -592,7 +592,7 @@ async def review_analysis(
         reviewer_id=current_user.id,
         status=request.status,
         comment=request.comment,
-        reviewed_at=datetime.utcnow(),
+        reviewed_at=datetime.now(timezone.utc),
         selected_quote_id=request.selected_quote_id,
         acknowledged_policy_violation=request.acknowledged_policy_violation
     )
@@ -608,8 +608,9 @@ async def review_analysis(
             
         # 1. PO Kaydı oluştur (senkron)
         po = await PurchaseOrderService.create_po_from_approval(db, approval)
-        # 2. Email Job'ı kuyruğa at (asenkron, BackgroundTasks)
-        background_tasks.add_task(EmailService.send_po_email, str(po.id))
+        # 2. Email Job'ı kuyruğa at (asenkron, BackgroundTasks) - Yalnızca yayınlanmış (ISSUED) siparişler tedarikçiye iletilir
+        if po.status == PurchaseOrderStatus.ISSUED.value:
+            background_tasks.add_task(EmailService.send_po_email, str(po.id))
     
     # AuditEvent kaydet
     db.add(AuditEvent(

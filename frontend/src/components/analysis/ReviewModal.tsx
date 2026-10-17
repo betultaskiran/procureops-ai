@@ -35,11 +35,19 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
 }) => {
   const recommendedQuoteId = analysis.recommendation?.recommended_quote_id;
 
-  const [selectedQuoteId, setSelectedQuoteId] = useState<string>(
-    initialSelectedQuoteId || recommendedQuoteId || quotes[0]?.id || ""
-  );
+  const vStatus = analysis.recommendation?.verification_status?.toLowerCase();
+  const isVerificationInconclusive = vStatus === "inconclusive";
+  const isVerificationFailed = vStatus === "failed" || vStatus === "overridden";
+  const isStale = Boolean(analysis.is_stale);
 
-  const [reviewStatus, setReviewStatus] = useState<string>("approved");
+  const initialTargetId = initialSelectedQuoteId || recommendedQuoteId || quotes[0]?.id || "";
+  const initialQuote = quotes.find((q) => q.id === initialTargetId);
+  const initialChecks = analysis.compliance_checks?.filter((c) => c.quote_id === initialTargetId) || [];
+  const initialIsNonCompliant = initialQuote?.is_compliant === false || initialChecks.some((c) => c.result === "fail");
+  const initialBlocked = initialIsNonCompliant || isVerificationInconclusive || isVerificationFailed || isStale;
+
+  const [selectedQuoteId, setSelectedQuoteId] = useState<string>(initialTargetId);
+  const [reviewStatus, setReviewStatus] = useState<string>(initialBlocked ? "exception_approved" : "approved");
   const [comment, setComment] = useState("");
   const [acknowledgedViolation, setAcknowledgedViolation] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -52,15 +60,20 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
   const quoteChecks = analysis.compliance_checks?.filter((c) => c.quote_id === selectedQuoteId) || [];
   const isNonCompliant = chosenQuote?.is_compliant === false || quoteChecks.some((c) => c.result === "fail");
 
-  // If the quote is non-compliant and status is "approved", auto-switch to "exception_approved" or notify
-  const isStandardApprovalBlocked = isNonCompliant && reviewStatus === "approved";
+  // Standard approval is blocked if:
+  // 1. The selected quote violates deterministic compliance rules
+  // 2. The AI recommendation is inconclusive (unsupported citations or missing policy evidence)
+  // 3. The AI recommendation verification failed or was overridden
+  // 4. The analysis is stale (quotes or RFQ changed)
+  const isStandardApprovalBlocked = isNonCompliant || isVerificationInconclusive || isVerificationFailed || isStale;
 
   const isSubmitDisabled =
     isSubmitting ||
     !selectedQuoteId ||
-    isStandardApprovalBlocked ||
-    (reviewStatus === "exception_approved" && !acknowledgedViolation) ||
-    ((reviewStatus === "rejected" || reviewStatus === "revision_requested") && !comment.trim());
+    isStale ||
+    (reviewStatus === "approved" && isStandardApprovalBlocked) ||
+    (reviewStatus === "exception_approved" && (!acknowledgedViolation || isStale)) ||
+    ((reviewStatus === "rejected" || reviewStatus === "revision_requested") && (!comment.trim() || isStale));
 
   const handleSubmit = async () => {
     try {
@@ -174,7 +187,9 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                         type="button"
                         onClick={() => {
                           setSelectedQuoteId(q.id);
-                          if (qHasFail && reviewStatus === "approved") {
+                          const qChecks = analysis.compliance_checks?.filter((c) => c.quote_id === q.id) || [];
+                          const qHasFail = q.is_compliant === false || qChecks.some((c) => c.result === "fail");
+                          if ((qHasFail || isVerificationInconclusive || isVerificationFailed || isStale) && reviewStatus === "approved") {
                             setReviewStatus("exception_approved");
                           }
                         }}
@@ -222,21 +237,29 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                   <button
                     type="button"
                     onClick={() => setReviewStatus("approved")}
-                    disabled={isNonCompliant}
+                    disabled={isStandardApprovalBlocked}
                     className={`p-3 rounded-lg border text-left text-xs transition-all ${
                       reviewStatus === "approved"
                         ? "bg-emerald-500/15 border-emerald-500/40 text-emerald-300 ring-1 ring-emerald-500"
-                        : isNonCompliant
+                        : isStandardApprovalBlocked
                         ? "bg-surface/20 border-border text-zinc-600 cursor-not-allowed opacity-50"
                         : "bg-surface/50 border-border hover:bg-surface text-text-primary"
                     }`}
                   >
                     <div className="font-semibold flex items-center gap-1.5">
-                      <CheckCircle size={14} className="text-emerald-400" />
+                      <CheckCircle size={14} className={isStandardApprovalBlocked ? "text-zinc-600" : "text-emerald-400"} />
                       Standart Onay
                     </div>
                     <span className="text-[11px] text-text-muted block mt-1">
-                      Kural ihlali olmayan teklif için PO üretir.
+                      {isStale
+                        ? "Analiz güncel değil (engellendi)."
+                        : isVerificationInconclusive
+                        ? "Doğrulama sonuçsuz (engellendi)."
+                        : isVerificationFailed
+                        ? "Doğrulama başarısız (engellendi)."
+                        : isNonCompliant
+                        ? "Kural ihlali var (engellendi)."
+                        : "Doğrulanmış ve uygun teklif için PO üretir."}
                     </span>
                   </button>
 
@@ -244,9 +267,12 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                   <button
                     type="button"
                     onClick={() => setReviewStatus("exception_approved")}
+                    disabled={isStale}
                     className={`p-3 rounded-lg border text-left text-xs transition-all ${
                       reviewStatus === "exception_approved"
                         ? "bg-amber-500/15 border-amber-500/40 text-amber-300 ring-1 ring-amber-500"
+                        : isStale
+                        ? "bg-surface/20 border-border text-zinc-600 cursor-not-allowed opacity-50"
                         : "bg-surface/50 border-border hover:bg-surface text-text-primary"
                     }`}
                   >
@@ -255,7 +281,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                       İstisna Onayı
                     </div>
                     <span className="text-[11px] text-text-muted block mt-1">
-                      Kural aşımını bilerek kabul edip PO üretir.
+                      Kural veya doğrulama aşımını kabul edip PO üretir.
                     </span>
                   </button>
 
@@ -263,9 +289,12 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                   <button
                     type="button"
                     onClick={() => setReviewStatus("revision_requested")}
+                    disabled={isStale}
                     className={`p-3 rounded-lg border text-left text-xs transition-all ${
                       reviewStatus === "revision_requested"
                         ? "bg-blue-500/15 border-blue-500/40 text-blue-300 ring-1 ring-blue-500"
+                        : isStale
+                        ? "bg-surface/20 border-border text-zinc-600 cursor-not-allowed opacity-50"
                         : "bg-surface/50 border-border hover:bg-surface text-text-primary"
                     }`}
                   >
@@ -282,9 +311,12 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                   <button
                     type="button"
                     onClick={() => setReviewStatus("rejected")}
+                    disabled={isStale}
                     className={`p-3 rounded-lg border text-left text-xs transition-all ${
                       reviewStatus === "rejected"
                         ? "bg-red-500/15 border-red-500/40 text-red-300 ring-1 ring-red-500"
+                        : isStale
+                        ? "bg-surface/20 border-border text-zinc-600 cursor-not-allowed opacity-50"
                         : "bg-surface/50 border-border hover:bg-surface text-text-primary"
                     }`}
                   >
@@ -299,12 +331,45 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                 </div>
               </div>
 
+              {/* Stale Analysis Alert */}
+              {isStale && (
+                <div className="p-3.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-start gap-2.5">
+                  <AlertTriangle size={16} className="text-amber-400 shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-bold block mb-0.5">Analiz Güncel Değil (Stale Analysis)</span>
+                    RFQ detaylarında veya teklif belgelerinde değişiklik yapılmıştır. Mevcut analiz hükümsüzdür ve onay işlemine kapalıdır. Lütfen sayfayı yenileyip analizi tekrar çalıştırın.
+                  </div>
+                </div>
+              )}
+
+              {/* Inconclusive Verification Alert */}
+              {!isStale && isVerificationInconclusive && (
+                <div className="p-3.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-start gap-2.5">
+                  <ShieldAlert size={16} className="text-amber-400 shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-bold block mb-0.5">Standart Onay Engellendi (Sonuçsuz / Inconclusive)</span>
+                    AI önerisi için şirket politikasında kesin kanıt bulunamamış veya alıntılar doğrulanamamıştır. Yasal ve denetimsel güvenlik gereği bu analiz için Standart Onay verilemez. Yalnızca yetkili yönetici tarafından risk üstlenilerek <strong>İstisna Onayı</strong> verilebilir.
+                  </div>
+                </div>
+              )}
+
+              {/* Failed Verification Alert */}
+              {!isStale && isVerificationFailed && (
+                <div className="p-3.5 rounded-lg bg-red-500/10 border border-red-500/30 text-red-300 text-xs flex items-start gap-2.5">
+                  <XCircle size={16} className="text-red-400 shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-bold block mb-0.5">Standart Onay Engellendi (Doğrulama Başarısız)</span>
+                    AI önerisi bağımsız doğrulama denetiminden geçememiştir ({analysis.recommendation?.verification_status}). Standart Onay ile sipariş emri üretilemez.
+                  </div>
+                </div>
+              )}
+
               {/* Non-compliance guardrail warning */}
-              {isNonCompliant && reviewStatus === "approved" && (
+              {!isStale && !isVerificationInconclusive && !isVerificationFailed && isNonCompliant && (
                 <div className="p-3.5 rounded-lg bg-red-500/10 border border-red-500/30 text-red-300 text-xs flex items-start gap-2.5">
                   <ShieldAlert size={16} className="text-red-400 shrink-0 mt-0.5" />
                   <div>
-                    <span className="font-bold block mb-0.5">Standart Onay Engellendi</span>
+                    <span className="font-bold block mb-0.5">Standart Onay Engellendi (Kural İhlali)</span>
                     Bu teklif şirket politikası kurallarından (bütçe, teslimat veya garanti) en az birini ihlal etmektedir. Sistemi baypas edip sipariş emri düzenlemek için &ldquo;İstisna Onayı&rdquo; seçilmeli ve kural ihlali açıkça onaylanmalıdır.
                   </div>
                 </div>
@@ -317,10 +382,10 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                     <AlertTriangle size={16} className="text-amber-400 shrink-0 mt-0.5" />
                     <div>
                       <span className="font-bold text-amber-300 text-xs block">
-                        İstisna Onayı & Kural İhlali Teyidi
+                        İstisna Onayı & Kural/Doğrulama Teyidi
                       </span>
                       <p className="text-[11px] text-text-muted leading-relaxed mt-0.5">
-                        Yasal denetim ve kurumsal yönetişim gereği, şirket politikasına aykırı unsurlar taşıyan tekliflerin onaylanabilmesi için yöneticinin bu kural ihlalini kabul etmesi zorunludur.
+                        Yasal denetim ve kurumsal yönetişim gereği, şirket politikasına aykırı veya doğrulama güvencesi bulunmayan tekliflerin onaylanabilmesi için yöneticinin bu durumu kabul etmesi zorunludur.
                       </p>
                     </div>
                   </div>
@@ -333,7 +398,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                       className="mt-0.5 rounded border-amber-500 text-amber-500 focus:ring-0"
                     />
                     <span className="leading-tight font-medium">
-                      Deterministik kural ihlalini ve olası riskleri inceledim. Bu teklif için istisna onayını onaylıyorum (acknowledged_policy_violation).
+                      Deterministik kural ihlalini, politika eksikliğini ve ilgili operasyonel/mali riskleri inceledim. Bu teklif için istisna onayını onaylıyorum (acknowledged_policy_violation).
                     </span>
                   </label>
                 </div>
@@ -389,6 +454,10 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
               <span>
                 {isSubmitting
                   ? "İşleniyor..."
+                  : isStale
+                  ? "Yeniden Analiz Gerekli"
+                  : reviewStatus === "approved" && isStandardApprovalBlocked
+                  ? "Standart Onay Engellendi"
                   : reviewStatus === "approved"
                   ? "Standart Onayla & PO Üret"
                   : reviewStatus === "exception_approved"

@@ -1,4 +1,5 @@
 import { apiClient } from "./client";
+import { quotesApi } from "./quotes";
 import { 
   RFQ, 
   Quote, 
@@ -69,34 +70,11 @@ export const rfqsApi = {
   },
   
   async uploadQuoteDocument(rfqId: string, supplierId: string, file: File): Promise<UploadResponse> {
-    const formData = new FormData();
-    formData.append("supplier_id", supplierId);
-    formData.append("file", file);
-    
-    const baseUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-    const token = typeof window !== "undefined" ? (localStorage.getItem("access_token") || localStorage.getItem("token")) : null;
-    const headers: Record<string, string> = {};
-    if (token) {
-      headers["Authorization"] = `Bearer ${token}`;
-    }
-
-    const res = await fetch(`${baseUrl}/api/v1/rfqs/${rfqId}/quote-documents`, {
-      method: "POST",
-      headers,
-      body: formData,
-      credentials: "include",
-    });
-    
-    if (!res.ok) {
-      const error = await res.json().catch(() => ({ detail: "Upload failed" }));
-      throw new Error(error.detail || "Upload failed");
-    }
-    
-    return res.json();
+    return quotesApi.uploadQuoteDocument(rfqId, supplierId, file);
   },
 
   async reprocessQuoteDocument(rfqId: string, documentId: string): Promise<UploadResponse> {
-    return apiClient.post<UploadResponse>(`/api/v1/rfqs/${rfqId}/quote-documents/${documentId}/reprocess`, {});
+    return quotesApi.reprocessQuoteDocument(rfqId, documentId);
   },
   
   async analyzeRfq(rfqId: string, organizationId?: string): Promise<AnalysisResponse> {
@@ -182,3 +160,5 @@ export const rfqsApi = {
     return apiClient.post<EmailDeliveryResponse>(`/api/v1/rfqs/${rfqId}/invitations/${invitationId}/retry`, {});
   }
 };
+
+export { quotesApi } from "./quotes";
