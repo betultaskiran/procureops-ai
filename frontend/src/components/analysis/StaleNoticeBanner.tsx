@@ -7,12 +7,16 @@ interface StaleNoticeBannerProps {
   isStale: boolean;
   isAnalyzing: boolean;
   onRerunAnalysis: () => void;
+  hasActivePo?: boolean;
+  poNumber?: string | null;
 }
 
 export const StaleNoticeBanner: React.FC<StaleNoticeBannerProps> = ({
   isStale,
   isAnalyzing,
   onRerunAnalysis,
+  hasActivePo = false,
+  poNumber = null,
 }) => {
   if (!isStale) return null;
 
@@ -25,7 +29,15 @@ export const StaleNoticeBanner: React.FC<StaleNoticeBannerProps> = ({
             Analiz Güncel Değil (Stale Analysis)
           </span>
           <p className="text-text-muted leading-relaxed">
-            Bu RFQ&apos;ya ait teklif kayıtlarında veya teklif sayısında son analizden sonra değişiklik yapılmıştır. Mevcut karşılaştırma matrisi ve yapay zeka tavsiyesi eski verileri yansıtmaktadır.
+            {hasActivePo ? (
+              <>
+                Bu satın alma talebi için onaylanmış bir Sipariş Emri {poNumber ? `(${poNumber})` : ""} bulunmaktadır. Teklif veya talep şartlarında yapılan değişiklikler mevcut siparişi değiştirmez; yeni koşullar için yeni bir analiz çalıştırabilirsiniz.
+              </>
+            ) : (
+              <>
+                Bu RFQ&apos;ya ait malzeme şartlarında, teklif kayıtlarında veya teklif sayısında son analizden sonra değişiklik yapılmıştır. Mevcut karşılaştırma matrisi ve yapay zeka tavsiyesi eski verileri yansıtmaktadır.
+              </>
+            )}
           </p>
         </div>
       </div>
@@ -43,7 +55,7 @@ export const StaleNoticeBanner: React.FC<StaleNoticeBannerProps> = ({
         ) : (
           <>
             <RefreshCw size={14} />
-            <span>Analizi Yeniden Çalıştır</span>
+            <span>{hasActivePo ? "Yeni Şartlarla Analiz Et" : "Analizi Yeniden Çalıştır"}</span>
           </>
         )}
       </button>

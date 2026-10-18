@@ -5,6 +5,8 @@ Analiz endpoint'leri. Şimdilik sadece deterministik (TCO + Compliance) çalış
 İlerleyen fazlarda LLM Reasoning bu endpoint üzerinden tetiklenecek.
 """
 
+import hashlib
+import json
 import uuid
 import time
 from datetime import datetime, timezone
@@ -148,6 +150,75 @@ def _resolve_policy_rules(rfq, explicit_rules: PolicyRules | None) -> PolicyRule
         min_warranty_months=warranty,
         require_payment_terms=payment_terms,
     )
+
+
+def compute_material_fingerprint(
+    rfq: "RFQ",
+    quotes: list["Quote"],
+    rfq_items: list["RFQItem"] | None = None,
+) -> str:
+    """
+    Computes a deterministic SHA-256 fingerprint of material procurement inputs:
+    - RFQ budget, delivery, warranty, payment terms, required quantity
+    - RFQ line items (line_number, description, quantity, unit)
+    - Quotes (quote IDs, prices, currency, subtotal, taxes, shipping, discounts,
+      other costs, delivery days, warranty, payment terms, and quote items)
+
+    Non-material changes (rfq.status, rfq.updated_at, rfq.is_archived, approvals,
+    audit events, page visits) do not change this fingerprint.
+    """
+    items_data = []
+    items = rfq_items if rfq_items is not None else (getattr(rfq, "items", None) or [])
+    for it in sorted(items, key=lambda x: getattr(x, "line_number", 0) if getattr(x, "line_number", None) is not None else 0):
+        items_data.append({
+            "line": it.line_number,
+            "desc": (it.description or "").strip(),
+            "qty": float(it.quantity) if it.quantity is not None else 0.0,
+            "unit": (it.unit or "").strip(),
+        })
+
+    quotes_data = []
+    for q in sorted(quotes, key=lambda x: str(x.id)):
+        q_items = []
+        for qi in (getattr(q, "items", None) or []):
+            q_items.append({
+                "desc": (qi.description or "").strip(),
+                "qty": float(qi.quantity) if qi.quantity is not None else 0.0,
+                "unit_price": str(qi.unit_price) if qi.unit_price is not None else "0",
+                "total_price": str(qi.total_price) if qi.total_price is not None else "0",
+            })
+        q_items.sort(key=lambda x: (x["desc"], x["qty"]))
+
+        quotes_data.append({
+            "id": str(q.id),
+            "supplier_id": str(q.supplier_id),
+            "total_price": str(q.total_price) if q.total_price is not None else "0",
+            "currency": (q.currency or "").strip().upper(),
+            "subtotal": str(q.subtotal) if q.subtotal is not None else "0",
+            "vat_rate": str(q.vat_rate) if q.vat_rate is not None else "",
+            "vat_amount": str(q.vat_amount) if q.vat_amount is not None else "",
+            "shipping_cost": str(q.shipping_cost) if q.shipping_cost is not None else "",
+            "discount_amount": str(q.discount_amount) if q.discount_amount is not None else "0",
+            "other_costs": str(q.other_costs) if q.other_costs is not None else "0",
+            "delivery_days": q.delivery_days,
+            "payment_terms": (q.payment_terms or "").strip(),
+            "warranty_months": q.warranty_months,
+            "items": q_items,
+        })
+
+    payload = {
+        "rfq": {
+            "budget": float(rfq.budget) if rfq.budget is not None else None,
+            "max_delivery_days": rfq.max_delivery_days,
+            "min_warranty_months": rfq.min_warranty_months,
+            "payment_terms": (rfq.payment_terms or "").strip(),
+            "required_quantity": rfq.required_quantity,
+            "items": items_data,
+        },
+        "quotes": quotes_data,
+    }
+    raw_json = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(raw_json.encode("utf-8")).hexdigest()
 
 
 # ── Endpoints ──────────────────────────────────────────────────────────────────
@@ -315,11 +386,42 @@ async def run_analysis(
         # Reload analysis with evidence items
         await db.refresh(analysis, ["evidence_items"])
 
-        # RFQ durumunu güncelle ve analiz zaman damgasını senkronize et
-        rfq.status = "pending_approval"
+        # RFQ durumunu güncelle: Eğer RFQ zaten onaylanmışsa veya aktif bir PO varsa
+        # RFQ'nun 'approved' durumunu ve karar tarihçesini koru; pending_approval'a sıfırlama.
+        from app.models.order import PurchaseOrder
+        from app.models.rfq import RFQItem
+        from app.models.quote import Quote
+        from sqlalchemy.orm import selectinload
+
+        active_po_res = await db.execute(
+            select(PurchaseOrder.id)
+            .join(Quote, PurchaseOrder.quote_id == Quote.id)
+            .where(
+                Quote.rfq_id == rfq.id,
+                PurchaseOrder.status != "cancelled"
+            )
+            .limit(1)
+        )
+        has_active_po = active_po_res.scalar_one_or_none() is not None
+
+        if not has_active_po and rfq.status != RFQStatus.APPROVED.value:
+            rfq.status = "pending_approval"
+
         analysis.status = AnalysisStatus.COMPLETED.value
         analysis.created_at = func.now()
         analysis.updated_at = func.now()
+
+        # Malzeme parmak izini hesapla
+        quotes_for_fp_res = await db.execute(
+            select(Quote).where(Quote.rfq_id == rfq.id).options(selectinload(Quote.items))
+        )
+        quotes_for_fp = list(quotes_for_fp_res.scalars().all())
+
+        items_for_fp_res = await db.execute(
+            select(RFQItem).where(RFQItem.rfq_id == rfq.id).order_by(RFQItem.line_number)
+        )
+        rfq_items_for_fp = list(items_for_fp_res.scalars().all())
+        material_fp = compute_material_fingerprint(rfq, quotes_for_fp, rfq_items_for_fp)
 
         # AuditEvent kaydet
         db.add(AuditEvent(
@@ -337,6 +439,7 @@ async def run_analysis(
                     for sr in stage_results
                 ],
                 "verification_outcome": verified_recommendation.verification_status,
+                "material_fingerprint": material_fp,
             }
         ))
         await db.commit()
@@ -384,34 +487,40 @@ async def compute_analysis_staleness(
 ) -> bool:
     """
     Dinamik bayatlama (staleness) kontrolü:
-    1. RFQ kuralları/detayları analizden sonra güncellendiyse (rfq.updated_at > analysis.created_at)
-    2. Teklif sayısı analizde temsil edilen teklif sayısından farklıysa (yeni teklif eklendi/silindi)
-    3. Herhangi bir teklif analizden sonra güncellendiyse (quote.updated_at > analysis.created_at)
-    4. RFQ'daki tekliflerden herhangi biri analiz edilen teklif kümesinde yer almıyorsa
+    1. RFQ malzeme girdi parmak izi (material_fingerprint) analiz anındaki parmak izinden
+       farklıysa analiz bayattır (bütçe, kalemler, teslimat/garanti/ödeme şartları veya teklifler değişti).
+    2. Parmak izi bulunmayan eski analizler için geriye dönük uyumlu kural, teklif sayısı ve
+       teklif güncelleme kontrolleri uygulanır.
+    3. Onay yazma (approval), audit log yazma, rfq.status veya rfq.is_archived gibi malzeme dışı
+       güncellemeler analizi bayatlatmaz.
     """
-    from app.models.rfq import RFQ
+    from app.models.rfq import RFQ, RFQItem
     from app.models.quote import Quote
     from app.models.analysis import TCOResult
     from app.models.audit import AuditEvent
     from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
 
     if rfq is None:
         rfq = await db.get(RFQ, analysis.rfq_id)
+    if not rfq:
+        return True
 
+    # RFQ kalemlerini çek
+    items_res = await db.execute(
+        select(RFQItem).where(RFQItem.rfq_id == rfq.id).order_by(RFQItem.line_number)
+    )
+    rfq_items = list(items_res.scalars().all())
+
+    # RFQ'ya ait güncel teklifleri çek
     quotes_res = await db.execute(
-        select(Quote).where(Quote.rfq_id == analysis.rfq_id)
+        select(Quote)
+        .where(Quote.rfq_id == analysis.rfq_id)
+        .options(selectinload(Quote.items))
     )
     current_quotes = list(quotes_res.scalars().all())
 
-    # Analizde temsil edilen teklif sayısı ve TCO kayıtları
-    tco_res = await db.execute(
-        select(TCOResult).where(TCOResult.analysis_id == analysis.id)
-    )
-    tco_results = list(tco_res.scalars().all())
-    represented_quote_count = len(tco_results)
-
-    # Cascade delete nedeniyle silinen tekliflerin tco_results kayıtları silinmiş olabileceğinden,
-    # analizin tamamlandığı andaki orijinal teklif sayısını AuditEvent kaydından teyit ederiz.
+    # Analizin tamamlandığı andaki AuditEvent kaydını incele
     audit_res = await db.execute(
         select(AuditEvent.payload).where(
             AuditEvent.entity_id == analysis.id,
@@ -419,11 +528,29 @@ async def compute_analysis_staleness(
         ).limit(1)
     )
     audit_payload = audit_res.scalar_one_or_none()
-    if audit_payload and isinstance(audit_payload, dict) and "quote_count" in audit_payload:
-        represented_quote_count = int(audit_payload["quote_count"])
 
-    if rfq and _is_later(rfq.updated_at, analysis.created_at):
-        return True
+    current_fingerprint = compute_material_fingerprint(rfq, current_quotes, rfq_items)
+
+    if audit_payload and isinstance(audit_payload, dict):
+        recorded_fingerprint = audit_payload.get("material_fingerprint")
+        if recorded_fingerprint:
+            return current_fingerprint != recorded_fingerprint
+
+    # ── Geriye Dönük Uyumlu Fallback (Parmak izi olmayan kayıtlar için) ────────
+    tco_res = await db.execute(
+        select(TCOResult).where(TCOResult.analysis_id == analysis.id)
+    )
+    tco_results = list(tco_res.scalars().all())
+    represented_quote_count = len(tco_results)
+
+    if audit_payload and isinstance(audit_payload, dict):
+        if "quote_count" in audit_payload:
+            represented_quote_count = int(audit_payload["quote_count"])
+        if "rules" in audit_payload:
+            effective_rules = _resolve_policy_rules(rfq, None).model_dump()
+            if audit_payload["rules"] != effective_rules:
+                return True
+
     if len(current_quotes) != represented_quote_count:
         return True
 
@@ -432,6 +559,10 @@ async def compute_analysis_staleness(
         if q.id not in analyzed_quote_ids:
             return True
         if _is_later(q.updated_at, analysis.created_at):
+            return True
+
+    if rfq and _is_later(rfq.updated_at, analysis.created_at):
+        if rfq.status != "approved":
             return True
 
     return False
@@ -474,8 +605,10 @@ async def review_analysis(
     if not analysis:
         raise HTTPException(status_code=404, detail="Analysis not found")
 
-    # RFQ kontrolü
-    rfq = await db.get(RFQ, analysis.rfq_id)
+    # RFQ kontrolü ve eşzamanlı onay yarış durumlarına karşı satır kilitleme (with_for_update)
+    rfq_stmt = select(RFQ).where(RFQ.id == analysis.rfq_id).with_for_update()
+    rfq_res = await db.execute(rfq_stmt)
+    rfq = rfq_res.scalars().first()
     if not rfq:
         raise HTTPException(status_code=404, detail="RFQ not found")
 

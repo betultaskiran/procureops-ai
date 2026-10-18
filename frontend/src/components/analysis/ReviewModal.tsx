@@ -47,7 +47,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
   const initialBlocked = initialIsNonCompliant || isVerificationInconclusive || isVerificationFailed || isStale;
 
   const [selectedQuoteId, setSelectedQuoteId] = useState<string>(initialTargetId);
-  const [reviewStatus, setReviewStatus] = useState<string>(initialBlocked ? "exception_approved" : "approved");
+  const [reviewStatus, setReviewStatus] = useState<string>("approved");
   const [comment, setComment] = useState("");
   const [acknowledgedViolation, setAcknowledgedViolation] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -187,11 +187,6 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                         type="button"
                         onClick={() => {
                           setSelectedQuoteId(q.id);
-                          const qChecks = analysis.compliance_checks?.filter((c) => c.quote_id === q.id) || [];
-                          const qHasFail = q.is_compliant === false || qChecks.some((c) => c.result === "fail");
-                          if ((qHasFail || isVerificationInconclusive || isVerificationFailed || isStale) && reviewStatus === "approved") {
-                            setReviewStatus("exception_approved");
-                          }
                         }}
                         className={`p-3 rounded-lg border text-left transition-all relative ${
                           isSel
