@@ -41,3 +41,5 @@ uploads/
 *.pdf
 *.xlsx
 scratch/
+backups/
+*.dump

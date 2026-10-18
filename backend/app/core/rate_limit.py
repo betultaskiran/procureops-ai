@@ -8,7 +8,8 @@ Supports Redis when reachable, with automatic in-memory sliding window fallback.
 import time
 import logging
 from collections import defaultdict
-from typing import Callable
+import ipaddress
+from typing import Callable, Optional, Sequence
 from fastapi import Request, HTTPException, status
 from app.core.config import settings
 
@@ -17,6 +18,82 @@ logger = logging.getLogger("app.rate_limit")
 # In-memory sliding-window storage fallback: {key: [timestamp_1, timestamp_2, ...]}
 _memory_store: dict[str, list[float]] = defaultdict(list)
 _LAST_CLEANUP = time.time()
+
+
+def _is_ip_in_trusted(ip_str: str, trusted_networks: Sequence[ipaddress.IPv4Network | ipaddress.IPv6Network]) -> bool:
+    try:
+        ip = ipaddress.ip_address(ip_str.strip())
+        return any(ip in net for net in trusted_networks)
+    except ValueError:
+        return False
+
+
+def resolve_client_ip(request: Request, trusted_proxies: Optional[Sequence[str]] = None) -> str:
+    """
+    Safely resolves the true client IP address, guarding against header spoofing (Phase 16.2).
+
+    Security model:
+    1. If request.client is None or empty, return 'unknown'.
+    2. Direct connection peer is peer_ip = request.client.host.
+    3. If trusted_proxies is None, settings.TRUSTED_PROXIES is used.
+    4. If no trusted proxies are configured (empty sequence, the default), direct peer_ip is returned.
+       Arbitrary X-Forwarded-For headers from public clients are strictly ignored.
+    5. If peer_ip is NOT within the configured trusted proxy CIDRs/IPs,
+       the direct peer_ip is returned, and X-Forwarded-For is ignored.
+    6. If peer_ip IS trusted:
+       Parse X-Forwarded-For entries from right to left (the path the request traveled).
+       The rightmost untrusted IP address in the chain is the authentic client IP.
+       Any malformed or invalid IP addresses trigger a safe fallback to peer_ip.
+    """
+    if not request.client or not request.client.host:
+        return "unknown"
+
+    peer_ip = request.client.host.strip()
+
+    if trusted_proxies is None:
+        trusted_proxies = getattr(settings, "TRUSTED_PROXIES", [])
+
+    if not trusted_proxies:
+        return peer_ip
+
+    # Parse trusted networks (fail-safe on malformed configuration)
+    trusted_networks = []
+    for tp in trusted_proxies:
+        try:
+            trusted_networks.append(ipaddress.ip_network(str(tp).strip(), strict=False))
+        except ValueError:
+            logger.warning("Geçersiz TRUSTED_PROXIES girdisi atlandı: %s", tp)
+
+    if not trusted_networks:
+        return peer_ip
+
+    # Check if direct connection peer is trusted
+    if not _is_ip_in_trusted(peer_ip, trusted_networks):
+        return peer_ip
+
+    forwarded = request.headers.get("X-Forwarded-For")
+    if not forwarded:
+        return peer_ip
+
+    # Walk right-to-left
+    raw_ips = [item.strip() for item in forwarded.split(",") if item.strip()]
+    if not raw_ips:
+        return peer_ip
+
+    # Right-to-left traversal: find the first IP that is NOT in trusted_networks
+    for ip_str in reversed(raw_ips):
+        try:
+            ip_obj = ipaddress.ip_address(ip_str)
+        except ValueError:
+            # Malformed IP in header -> possible attack/tampering, fail-safe to peer_ip
+            logger.warning("X-Forwarded-For başlığında geçersiz IP tespit edildi: %s", ip_str[:50])
+            return peer_ip
+
+        if not any(ip_obj in net for net in trusted_networks):
+            return str(ip_obj)
+
+    # If all IPs in X-Forwarded-For are in trusted networks, the leftmost valid IP is the originator
+    return raw_ips[0]
 
 
 def _cleanup_memory_store(now: float, window_seconds: int = 60) -> None:
@@ -43,11 +120,7 @@ def rate_limit(max_requests: int = 60, window_seconds: int = 60) -> Callable:
         @router.get("/portal/rfq", dependencies=[Depends(rate_limit(max_requests=60, window_seconds=60))])
     """
     async def dependency(request: Request) -> None:
-        client_ip = request.client.host if request.client else "unknown"
-        # Forwarded-For support for proxies
-        forwarded = request.headers.get("X-Forwarded-For")
-        if forwarded:
-            client_ip = forwarded.split(",")[0].strip()
+        client_ip = resolve_client_ip(request)
 
         now = time.time()
         route_path = request.url.path

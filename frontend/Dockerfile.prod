@@ -1,0 +1,60 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# frontend/Dockerfile.prod
+#
+# Multi-stage production image for Next.js 15 frontend.
+# - Stage 1 (deps): Installs full dependencies with npm ci
+# - Stage 2 (builder): Compiles Next.js with standalone output
+# - Stage 3 (runner): Minimal Node.js 20 Alpine runtime running as non-root nextjs
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Stage 1: Dependencies ─────────────────────────────────────────────────────
+FROM node:20-alpine AS deps
+RUN apk add --no-cache libc6-compat
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm ci
+
+# ── Stage 2: Production Build ─────────────────────────────────────────────────
+FROM node:20-alpine AS builder
+WORKDIR /app
+
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+
+# Production build arguments & telemetry disabled
+ENV NEXT_TELEMETRY_DISABLED=1 \
+    NODE_ENV=production
+
+RUN npm run build
+
+# ── Stage 3: Production Runner ────────────────────────────────────────────────
+FROM node:20-alpine AS runner
+WORKDIR /app
+
+ENV NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1 \
+    PORT=3000 \
+    HOSTNAME="0.0.0.0"
+
+# Install curl for container health check
+RUN apk add --no-cache curl
+
+# Create unprivileged system user & group
+RUN addgroup --system --gid 1001 nodejs && \
+    adduser --system --uid 1001 nextjs
+
+# Copy static assets and standalone server
+COPY --from=builder /app/public ./public
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+
+USER nextjs
+
+EXPOSE 3000
+
+# Health check
+HEALTHCHECK --interval=20s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -f http://127.0.0.1:3000/login || exit 1
+
+CMD ["node", "server.js"]

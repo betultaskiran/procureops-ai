@@ -1,0 +1,66 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# backend/Dockerfile.prod
+#
+# Multi-stage production image for ProcureOps AI FastAPI backend.
+# - Stage 1 (builder): Installs Python dependencies into a standalone virtualenv via uv.
+# - Stage 2 (runner): Lean, hardened runtime running as an unprivileged appuser.
+#   Runs Uvicorn with multiple workers and graceful signal handling (no --reload).
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Stage 1: Build virtual environment ─────────────────────────────────────────
+FROM python:3.12-slim AS builder
+
+WORKDIR /build
+
+# Install uv for rapid, deterministic dependency resolution
+RUN pip install uv --no-cache-dir
+
+COPY pyproject.toml .
+
+# Create virtual environment and install dependencies
+RUN uv venv /opt/venv && \
+    . /opt/venv/bin/activate && \
+    uv pip install --no-cache -r pyproject.toml
+
+# ── Stage 2: Production Runtime ───────────────────────────────────────────────
+FROM python:3.12-slim AS runner
+
+WORKDIR /app
+
+# Install curl for reliable container health checking
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends curl && \
+    rm -rf /var/lib/apt/lists/*
+
+# Create unprivileged system group and user
+RUN groupadd -g 1001 appgroup && \
+    useradd -u 1001 -g appgroup -s /bin/bash -m appuser
+
+# Copy virtual environment from builder stage
+COPY --from=builder --chown=appuser:appgroup /opt/venv /opt/venv
+
+# Copy application source code
+COPY --chown=appuser:appgroup . /app
+
+# Ensure uploads directory exists and is owned by appuser
+RUN mkdir -p /app/uploads && chown -R appuser:appgroup /app/uploads
+
+# Configure runtime environment
+ENV PATH="/opt/venv/bin:$PATH" \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH=/app \
+    PORT=8000 \
+    WEB_CONCURRENCY=2
+
+# Switch to unprivileged user
+USER appuser
+
+EXPOSE 8000
+
+# Healthcheck against FastAPI OpenAPI docs or health endpoint
+HEALTHCHECK --interval=20s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -f http://127.0.0.1:8000/docs || exit 1
+
+# Start production server: multiple workers, signal handling, NO --reload
+CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers ${WEB_CONCURRENCY:-2}"]

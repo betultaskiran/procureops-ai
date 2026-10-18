@@ -566,10 +566,22 @@ class RAGService:
         Sorulan soruya en yakın adayları bulup adaptif filtreleme uygulayarak
         LLM'in okuyabileceği tek bir metin (context) olarak birleştirir.
         """
-        results = await self.vector_store.search(
-            organization_id=organization_id,
-            query=query,
-            limit=max(top_k * 3, 10)
-        )
-        filtered = self.filter_and_rank_hits(results, top_k=top_k, query=query)
-        return self.format_context_from_payloads(filtered)
+        try:
+            results = await self.vector_store.search(
+                organization_id=organization_id,
+                query=query,
+                limit=max(top_k * 3, 10)
+            )
+            filtered = self.filter_and_rank_hits(results, top_k=top_k, query=query)
+            return self.format_context_from_payloads(filtered)
+        except Exception as exc:
+            import logging
+            logging.getLogger("app.rag").warning(
+                "Qdrant retrieve_context altyapı kesintisi/zaman aşımı (%s): %s",
+                type(exc).__name__,
+                str(exc)[:200]
+            )
+            return (
+                "UYARI: Kurumsal politika veritabanına (Qdrant) altyapı kesintisi veya zaman aşımı nedeniyle ulaşılamadı. "
+                "Politika hükümleri sorgulanamamıştır. Lütfen politika uyumunu varsaymayınız ve insan incelemesini zorunlu tutunuz."
+            )

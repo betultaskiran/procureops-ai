@@ -112,6 +112,8 @@ class PolicyComplianceOutput(BaseModel):
     citations: List[StageEvidenceRef] = Field(default_factory=list)
     query_used: str
     is_sufficient_evidence: bool
+    infrastructure_error: bool = False
+    error_code: Optional[str] = None
 
 
 class SupplierRecommendationOutput(BaseModel):

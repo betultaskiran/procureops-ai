@@ -108,6 +108,7 @@ class AnalysisPipelineOrchestrator:
                 compliance_checks=compliance_checks,
                 rag_context=rag_context,
                 llm_provider=llm_provider,
+                policy_output=s3_out,
             )
             stage_results.append(s4_res)
 
@@ -122,6 +123,7 @@ class AnalysisPipelineOrchestrator:
                 tco_results=tco_results,
                 compliance_checks=compliance_checks,
                 policy_evidence_refs=evidence_refs,
+                policy_output=s3_out,
             )
             stage_results.append(s5_res)
 

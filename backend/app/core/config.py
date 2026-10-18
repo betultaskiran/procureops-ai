@@ -99,6 +99,11 @@ class Settings(BaseSettings):
     APP_BASE_URL: str = "http://localhost:3000"
     ENABLE_OUTBOX_WORKER: bool = True
 
+    # ── Trusted Reverse Proxies (Phase 16.2) ─────────────────────────────────
+    # List of trusted reverse proxy IPs or CIDR blocks (e.g. ["127.0.0.1", "10.0.0.0/8"]).
+    # If empty (default), proxy headers (X-Forwarded-For) are ignored, preventing IP spoofing.
+    TRUSTED_PROXIES: list[str] = []
+
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod
     def assemble_cors_origins(cls, v: object) -> list[str]:
@@ -113,6 +118,21 @@ class Settings(BaseSettings):
         elif isinstance(v, list):
             return [str(origin).strip() for origin in v]
         return ["http://localhost:3000", "http://127.0.0.1:3000"]
+
+    @field_validator("TRUSTED_PROXIES", mode="before")
+    @classmethod
+    def assemble_trusted_proxies(cls, v: object) -> list[str]:
+        if isinstance(v, str):
+            if v.strip().startswith("[") and v.strip().endswith("]"):
+                import json
+                try:
+                    return json.loads(v)
+                except Exception:
+                    pass
+            return [proxy.strip() for proxy in v.split(",") if proxy.strip()]
+        elif isinstance(v, list):
+            return [str(proxy).strip() for proxy in v if str(proxy).strip()]
+        return []
 
     @model_validator(mode="after")
     def validate_production_settings(self) -> "Settings":

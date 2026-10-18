@@ -15,9 +15,12 @@ import re
 import json
 import uuid
 import time
+import logging
 from decimal import Decimal
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional, Tuple
+
+logger = logging.getLogger("app.orchestration.stages")
 
 from sqlalchemy import select, func, delete
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -338,49 +341,77 @@ class PolicyComplianceStage:
         query = cls._build_rag_query(rfq, quotes)
         evidence_refs: List[StageEvidenceRef] = []
 
-        raw_hits = await rag_service.vector_store.search(
-            organization_id=organization_id,
-            query=query,
-            limit=10
-        )
-        filtered_hits = rag_service.filter_and_rank_hits(raw_hits, top_k=3, query=query)
+        raw_hits = []
+        is_infrastructure_failure = False
+        infra_error_type = None
+        infra_error_msg = None
 
-        is_sufficient = len(filtered_hits) > 0
-        if is_sufficient:
-            rag_context = rag_service.format_context_from_payloads(filtered_hits)
-            rag_status = "compliant"
+        try:
+            raw_hits = await rag_service.vector_store.search(
+                organization_id=organization_id,
+                query=query,
+                limit=10
+            )
+        except Exception as qdrant_exc:
+            is_infrastructure_failure = True
+            infra_error_type = type(qdrant_exc).__name__
+            infra_error_msg = str(qdrant_exc)[:200]
+            logger.warning(
+                "Qdrant vektör aramasında altyapı kesintisi/zaman aşımı oluştu (%s): %s. Zarif gerileme devrede.",
+                infra_error_type,
+                infra_error_msg,
+            )
 
-            for i, hit in enumerate(filtered_hits, 1):
-                doc_title = hit.get("title") or hit.get("source") or "Kurumsal Politika"
-                sec_title = hit.get("section_title")
-                page_no = hit.get("page_number")
-                ref_parts = [f"Kaynak {i}: {doc_title}"]
-                if sec_title:
-                    ref_parts.append(f"Madde: {sec_title}")
-                if page_no:
-                    ref_parts.append(f"Sayfa: {page_no}")
-                ref_str = " | ".join(ref_parts)
-
-                claim_text = hit.get("text", "")[:250].strip()
-                evidence_refs.append(
-                    StageEvidenceRef(
-                        source_type=CitationSourceType.POLICY,
-                        source_reference=ref_str,
-                        claim=f"Politika kuralı: {sec_title or doc_title}",
-                        content=claim_text,
-                        document_id=str(hit.get("doc_id", "")),
-                        section_title=sec_title,
-                        page_number=page_no,
-                        confidence_score=float(hit.get("score", 0.0)),
-                    )
-                )
-        else:
+        if is_infrastructure_failure:
+            is_sufficient = False
             rag_status = "insufficient_evidence"
             rag_context = (
-                "İlgili kurumsal politika belgelerinde bu RFQ konusuyla ilgili herhangi bir spesifik kural veya kısıt bulunamadı. "
-                "Lütfen varsayımda bulunmadan bu kuralın politikalarda yer almadığını (yetersiz kanıt) açıkça belirtiniz."
+                "UYARI: Kurumsal politika veritabanına (Qdrant) teknik bir kesinti veya zaman aşımı nedeniyle ulaşılamadı. "
+                "Herhangi bir kurumsal politika kanıtı sorgulanamamıştır. "
+                "Bu teklif için kurumsal politika uyumu KESİNLİKLE varsayılamaz; zorunlu insan incelemesi ve yönetici onayı gereklidir."
             )
-            warnings.append("Politika belgelerinde bu RFQ için yeterli kanıt veya eşleşen kural bulunamadı (insufficient_evidence).")
+            warnings.append(
+                f"Vektör veritabanı (Qdrant) kesintisi/zaman aşımı nedeniyle kurumsal politika araması yapılamadı ({infra_error_type}). "
+                "Politika doğrulaması tamamlanamadı ve insan incelemesi zorunlu kılındı."
+            )
+        else:
+            filtered_hits = rag_service.filter_and_rank_hits(raw_hits, top_k=3, query=query)
+            is_sufficient = len(filtered_hits) > 0
+            if is_sufficient:
+                rag_context = rag_service.format_context_from_payloads(filtered_hits)
+                rag_status = "compliant"
+
+                for i, hit in enumerate(filtered_hits, 1):
+                    doc_title = hit.get("title") or hit.get("source") or "Kurumsal Politika"
+                    sec_title = hit.get("section_title")
+                    page_no = hit.get("page_number")
+                    ref_parts = [f"Kaynak {i}: {doc_title}"]
+                    if sec_title:
+                        ref_parts.append(f"Madde: {sec_title}")
+                    if page_no:
+                        ref_parts.append(f"Sayfa: {page_no}")
+                    ref_str = " | ".join(ref_parts)
+
+                    claim_text = hit.get("text", "")[:250].strip()
+                    evidence_refs.append(
+                        StageEvidenceRef(
+                            source_type=CitationSourceType.POLICY,
+                            source_reference=ref_str,
+                            claim=f"Politika kuralı: {sec_title or doc_title}",
+                            content=claim_text,
+                            document_id=str(hit.get("doc_id", "")),
+                            section_title=sec_title,
+                            page_number=page_no,
+                            confidence_score=float(hit.get("score", 0.0)),
+                        )
+                    )
+            else:
+                rag_status = "insufficient_evidence"
+                rag_context = (
+                    "İlgili kurumsal politika belgelerinde bu RFQ konusuyla ilgili herhangi bir spesifik kural veya kısıt bulunamadı. "
+                    "Lütfen varsayımda bulunmadan bu kuralın politikalarda yer almadığını (yetersiz kanıt) açıkça belirtiniz."
+                )
+                warnings.append("Politika belgelerinde bu RFQ için yeterli kanıt veya eşleşen kural bulunamadı (insufficient_evidence).")
 
         duration_ms = (time.monotonic() - start_mono) * 1000
         completed_at = datetime.now(timezone.utc)
@@ -391,18 +422,34 @@ class PolicyComplianceStage:
             citations=evidence_refs,
             query_used=query,
             is_sufficient_evidence=is_sufficient,
+            infrastructure_error=is_infrastructure_failure,
+            error_code="QDRANT_UNAVAILABLE" if is_infrastructure_failure else None,
         )
+
+        stage_status = (
+            StageStatus.COMPLETED
+            if (is_sufficient and not is_infrastructure_failure)
+            else StageStatus.INCONCLUSIVE
+        )
+
+        if is_infrastructure_failure:
+            summary = f"Politika analizi altyapı kesintisi nedeniyle tamamlanamadı: {infra_error_type} (insan incelemesi zorunlu)."
+        else:
+            summary = f"Politika analizi tamamlandı: {rag_status} ({len(evidence_refs)} kanıt maddesi)."
 
         stage_result = StageResultResponse(
             stage=StageName.POLICY_COMPLIANCE,
-            status=StageStatus.COMPLETED if is_sufficient else StageStatus.INCONCLUSIVE,
+            status=stage_status,
             started_at=started_at,
             completed_at=completed_at,
             duration_ms=round(duration_ms, 2),
-            summary=f"Politika analizi tamamlandı: {rag_status} ({len(evidence_refs)} kanıt maddesi).",
+            summary=summary,
             details=output.model_dump(mode="json"),
             sources=evidence_refs,
             warnings=warnings,
+            error_code="QDRANT_UNAVAILABLE" if is_infrastructure_failure else None,
+            error_message=f"Vektör veritabanına erişilemedi: {infra_error_type}" if is_infrastructure_failure else None,
+            metadata={"infrastructure_error": is_infrastructure_failure, "error_type": infra_error_type} if is_infrastructure_failure else {"infrastructure_error": False},
         )
 
         return stage_result, output, rag_context, evidence_refs
@@ -432,6 +479,7 @@ class SupplierRecommendationStage:
         compliance_checks: List[ComplianceCheck],
         rag_context: str,
         llm_provider = None,
+        policy_output: Optional[PolicyComplianceOutput] = None,
     ) -> Tuple[StageResultResponse, SupplierRecommendationOutput, AgentRecommendationSchema]:
         started_at = datetime.now(timezone.utc)
         start_mono = time.monotonic()
@@ -528,7 +576,7 @@ class SupplierRecommendationStage:
         prompt += "Görev: Tüm verileri analiz et, trade-off analizi yap ve en iyi teklifi seç. Format olarak istenen JSON şemasına kesinlikle uy."
 
         # 4. LLM Çağrısı
-        config = ExtractionConfig(thinking_budget=1024, max_tokens=2048, timeout=45)
+        config = ExtractionConfig(thinking_budget=1024, max_output_tokens=2048)
         try:
             agent_output = await llm_provider.extract_structured(
                 prompt=prompt,
@@ -542,6 +590,14 @@ class SupplierRecommendationStage:
                 message=f"LLM öneri üretirken hata oluştu: {str(exc)}",
                 status_code=500,
             )
+
+        # Enforce human review if policy compliance had an infrastructure error
+        if policy_output and policy_output.infrastructure_error:
+            if not agent_output.is_human_review_required:
+                agent_output.is_human_review_required = True
+                warnings.append(
+                    "Vektör veritabanı kesintisi nedeniyle insan incelemesi zorunlu kılındı (is_human_review_required=True)."
+                )
 
         duration_ms = (time.monotonic() - start_mono) * 1000
         completed_at = datetime.now(timezone.utc)
@@ -599,6 +655,7 @@ class IndependentVerificationStage:
         tco_results: List[TCOResult],
         compliance_checks: List[ComplianceCheck],
         policy_evidence_refs: List[StageEvidenceRef],
+        policy_output: Optional[PolicyComplianceOutput] = None,
     ) -> Tuple[StageResultResponse, IndependentVerificationOutput, Recommendation]:
         started_at = datetime.now(timezone.utc)
         start_mono = time.monotonic()
@@ -726,6 +783,44 @@ class IndependentVerificationStage:
                     is_inconclusive = True
                     recommendation_schema.is_human_review_required = True
                     notes.append("GÜVENLİK DÜZELTMESİ: Eksik maliyet verisi veya düşük çıkarma güven skoru nedeniyle zorunlu insan incelemesi (is_human_review_required=True) aktif edildi.")
+
+        # ── Denetim 5: Politika Kanıtı ve Vektör Altyapı Denetimi ──────────────
+        policy_infra_failed = policy_output.infrastructure_error if policy_output else False
+        if policy_infra_failed:
+            insufficient_evidence_flagged = True
+            is_inconclusive = True
+            recommendation_schema.is_human_review_required = True
+            fail_notes = (
+                "ALTYAPI KESİNTİSİ: Qdrant vektör veri tabanına erişilemedi veya zaman aşımı oluştu. "
+                "Politika kanıtı doğrulanamadı; karar onaylanmış (verified) sayılamaz ve insan incelemesi zorunludur."
+            )
+            notes.append(fail_notes)
+            checks_performed.append(VerificationCheckDetail(
+                name="policy_evidence_verification",
+                description="Kurumsal politika kanıtlarının varlığı ve altyapı erişimi denetlenir.",
+                passed=False,
+                actual_value=f"ALTYAPI_KESINTISI ({policy_output.error_code or 'QDRANT_UNAVAILABLE'})",
+                expected_value="DOGRULANMIS_KANIT",
+                notes=fail_notes,
+            ))
+        elif policy_output and not policy_output.is_sufficient_evidence and len(policy_evidence_refs) == 0:
+            checks_performed.append(VerificationCheckDetail(
+                name="policy_evidence_verification",
+                description="Kurumsal politika kanıtlarının varlığı ve altyapı erişimi denetlenir.",
+                passed=True,
+                actual_value="YETERSIZ_KANIT (Eşleşen kural yok)",
+                expected_value="BILGI_NOTU",
+                notes="Politika belgelerinde bu RFQ için kısıtlayıcı kural bulunamadı. Eksik kanıt uyumluluk kanıtı sayılamaz.",
+            ))
+        else:
+            checks_performed.append(VerificationCheckDetail(
+                name="policy_evidence_verification",
+                description="Kurumsal politika kanıtlarının varlığı ve altyapı erişimi denetlenir.",
+                passed=True,
+                actual_value=f"{len(policy_evidence_refs)} kanıt maddesi" if policy_evidence_refs else "N/A",
+                expected_value="DOGRULANMIS_KANIT",
+                notes="Kurumsal politika kanıtları doğrulandı." if policy_evidence_refs else "Politika kanıtı aranmadı.",
+            ))
 
         # ── Nihai Karar Sözleşmesi (passed | failed | inconclusive) ───────────
         if is_failed:
