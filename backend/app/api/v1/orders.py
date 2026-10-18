@@ -3,7 +3,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status, BackgroundTasks
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,11 +22,13 @@ from app.models.order import (
     IssueType,
     IssueSeverity,
     QualityIssueStatus,
+    POApprovalStep,
+    POApprovalStepStatus,
 )
 from app.models.quote import Quote
 from app.models.rfq import RFQ
 from app.models.supplier import Supplier, SupplierHistory
-from app.models.user import User
+from app.models.user import User, UserRole
 
 router = APIRouter(prefix="/api/v1/orders", tags=["orders"])
 
@@ -78,6 +80,49 @@ class POQualityIssueResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class POApprovalStepResponse(BaseModel):
+    id: uuid.UUID
+    purchase_order_id: uuid.UUID
+    organization_id: uuid.UUID
+    role: str
+    status: str
+    approver_id: uuid.UUID | None = None
+    approver_name: str | None = None
+    decision_at: datetime | None = None
+    comment: str | None = None
+    rejection_reason: str | None = None
+    created_at: datetime
+    updated_at: datetime | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PendingApprovalItemResponse(BaseModel):
+    step_id: uuid.UUID
+    purchase_order_id: uuid.UUID
+    po_number: str
+    rfq_id: uuid.UUID
+    rfq_title: str
+    supplier_id: uuid.UUID
+    supplier_name: str
+    amount: Decimal
+    currency: str
+    role: str
+    step_status: str
+    created_at: datetime
+    all_steps: list[POApprovalStepResponse] = []
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class POApproveStepRequest(BaseModel):
+    comment: Optional[str] = None
+
+
+class PORejectStepRequest(BaseModel):
+    reason: str = Field(..., min_length=3)
+
+
 class PurchaseOrderDetailResponse(BaseModel):
     id: uuid.UUID
     po_number: str
@@ -104,6 +149,7 @@ class PurchaseOrderDetailResponse(BaseModel):
     currency: str
     quoted_amount: Decimal
     quality_issues: list[POQualityIssueResponse] = []
+    approval_steps: list[POApprovalStepResponse] = []
     allowed_actions: list[str] = []
 
     model_config = ConfigDict(from_attributes=True)
@@ -131,6 +177,7 @@ async def _get_order_or_404(
         .options(
             selectinload(PurchaseOrder.quote).selectinload(Quote.rfq),
             selectinload(PurchaseOrder.quote).selectinload(Quote.supplier),
+            selectinload(PurchaseOrder.approval_steps).selectinload(POApprovalStep.approver),
             selectinload(PurchaseOrder.quality_issues).selectinload(POQualityIssue.reported_by),
             selectinload(PurchaseOrder.supplier_history_entry),
         )
@@ -189,6 +236,24 @@ def _build_order_response(
         for qi in (po.quality_issues or [])
     ]
 
+    approval_steps_dto = [
+        POApprovalStepResponse(
+            id=s.id,
+            purchase_order_id=s.purchase_order_id,
+            organization_id=s.organization_id,
+            role=s.role,
+            status=s.status,
+            approver_id=s.approver_id,
+            approver_name=s.approver.full_name if s.approver else None,
+            decision_at=s.decision_at,
+            comment=s.comment,
+            rejection_reason=s.rejection_reason,
+            created_at=s.created_at,
+            updated_at=s.updated_at,
+        )
+        for s in (po.approval_steps or [])
+    ]
+
     return PurchaseOrderDetailResponse(
         id=po.id,
         po_number=po.po_number,
@@ -213,6 +278,7 @@ def _build_order_response(
         currency=quote.currency or "TRY",
         quoted_amount=quote.total_price,
         quality_issues=quality_issues_dto,
+        approval_steps=approval_steps_dto,
         allowed_actions=_compute_allowed_actions(po, is_manager_or_above),
     )
 
@@ -282,6 +348,100 @@ async def _sync_supplier_history(
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.get(
+    "/approvals/pending",
+    response_model=list[PendingApprovalItemResponse],
+    summary="List pending Purchase Orders awaiting approval for current user's role",
+)
+async def list_pending_approvals(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_authenticated),
+) -> list[PendingApprovalItemResponse]:
+    """
+    Kullanıcının rolüne göre onay bekleyen Satın Alma Siparişlerini listeler.
+    - purchasing_director: rolü 'purchasing_director' olan bekleyen adımları görür.
+    - cfo: rolü 'cfo' olan bekleyen adımları görür.
+    - admin: organizasyondaki tüm bekleyen onay adımlarını görür.
+    - Yetkisiz roller veya pasif kullanıcılar boş liste alır.
+    """
+    if not current_user.is_active or current_user.role not in (
+        UserRole.PURCHASING_DIRECTOR.value,
+        UserRole.CFO.value,
+        UserRole.ADMIN.value,
+    ):
+        return []
+
+    stmt = (
+        select(POApprovalStep)
+        .join(POApprovalStep.purchase_order)
+        .join(PurchaseOrder.quote)
+        .join(Quote.rfq)
+        .where(
+            POApprovalStep.organization_id == current_user.organization_id,
+            POApprovalStep.status == POApprovalStepStatus.PENDING.value,
+            PurchaseOrder.status == PurchaseOrderStatus.DRAFT.value,
+            RFQ.status != "cancelled",
+        )
+        .options(
+            selectinload(POApprovalStep.purchase_order).selectinload(PurchaseOrder.quote).selectinload(Quote.rfq),
+            selectinload(POApprovalStep.purchase_order).selectinload(PurchaseOrder.quote).selectinload(Quote.supplier),
+            selectinload(POApprovalStep.purchase_order).selectinload(PurchaseOrder.approval_steps).selectinload(POApprovalStep.approver),
+        )
+        .order_by(POApprovalStep.created_at.desc())
+    )
+
+    if current_user.role != UserRole.ADMIN.value:
+        stmt = stmt.where(POApprovalStep.role == current_user.role)
+
+    res = await db.execute(stmt)
+    steps = res.scalars().all()
+
+    items: list[PendingApprovalItemResponse] = []
+    for step in steps:
+        po = step.purchase_order
+        quote = po.quote if po else None
+        rfq = quote.rfq if quote else None
+        if not po or not quote or not rfq:
+            continue
+
+        all_steps_dto = [
+            POApprovalStepResponse(
+                id=s.id,
+                purchase_order_id=s.purchase_order_id,
+                organization_id=s.organization_id,
+                role=s.role,
+                status=s.status,
+                approver_id=s.approver_id,
+                approver_name=s.approver.full_name if s.approver else None,
+                decision_at=s.decision_at,
+                comment=s.comment,
+                rejection_reason=s.rejection_reason,
+                created_at=s.created_at,
+                updated_at=s.updated_at,
+            )
+            for s in (po.approval_steps or [])
+        ]
+
+        items.append(
+            PendingApprovalItemResponse(
+                step_id=step.id,
+                purchase_order_id=po.id,
+                po_number=po.po_number,
+                rfq_id=rfq.id,
+                rfq_title=rfq.title,
+                supplier_id=quote.supplier_id,
+                supplier_name=quote.supplier.name if quote.supplier else (quote.supplier_name or "Bilinmeyen Tedarikçi"),
+                amount=quote.total_price or Decimal("0"),
+                currency=quote.currency or "TRY",
+                role=step.role,
+                step_status=step.status,
+                created_at=step.created_at,
+                all_steps=all_steps_dto,
+            )
+        )
+    return items
+
+
+@router.get(
     "/{po_id}",
     response_model=PurchaseOrderDetailResponse,
     summary="Get Purchase Order details",
@@ -294,6 +454,354 @@ async def get_order_detail(
     po, quote, rfq = await _get_order_or_404(po_id, db, current_user)
     is_manager = current_user.role in ("admin", "manager")
     return _build_order_response(po, quote, rfq, is_manager)
+
+
+@router.get(
+    "/{po_id}/approvals",
+    response_model=list[POApprovalStepResponse],
+    summary="List approval steps and history for a Purchase Order",
+)
+async def get_order_approvals(
+    po_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_authenticated),
+) -> list[POApprovalStepResponse]:
+    po, quote, rfq = await _get_order_or_404(po_id, db, current_user)
+    return [
+        POApprovalStepResponse(
+            id=s.id,
+            purchase_order_id=s.purchase_order_id,
+            organization_id=s.organization_id,
+            role=s.role,
+            status=s.status,
+            approver_id=s.approver_id,
+            approver_name=s.approver.full_name if s.approver else None,
+            decision_at=s.decision_at,
+            comment=s.comment,
+            rejection_reason=s.rejection_reason,
+            created_at=s.created_at,
+            updated_at=s.updated_at,
+        )
+        for s in (po.approval_steps or [])
+    ]
+
+
+@router.post(
+    "/{po_id}/approvals/{step_id}/approve",
+    response_model=PurchaseOrderDetailResponse,
+    summary="Approve a Purchase Order approval step",
+)
+async def approve_order_step(
+    po_id: uuid.UUID,
+    step_id: uuid.UUID,
+    payload: POApproveStepRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_authenticated),
+) -> PurchaseOrderDetailResponse:
+    from app.services.workflow.email import EmailService
+    from app.api.v1.analyses import compute_analysis_staleness
+    from app.models.analysis import Approval, Analysis
+
+    # 1. User active check
+    if not current_user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Aktif olmayan kullanıcı onay veremez.",
+        )
+
+    # 2. Concurrency Row Lock on PurchaseOrder
+    stmt = (
+        select(PurchaseOrder)
+        .join(PurchaseOrder.quote)
+        .join(Quote.rfq)
+        .where(
+            PurchaseOrder.id == po_id,
+            RFQ.organization_id == current_user.organization_id,
+        )
+        .options(
+            selectinload(PurchaseOrder.quote).selectinload(Quote.rfq),
+            selectinload(PurchaseOrder.quote).selectinload(Quote.supplier),
+            selectinload(PurchaseOrder.approval_steps).selectinload(POApprovalStep.approver),
+            selectinload(PurchaseOrder.quality_issues).selectinload(POQualityIssue.reported_by),
+            selectinload(PurchaseOrder.supplier_history_entry),
+        )
+        .with_for_update()
+    )
+    res = await db.execute(stmt)
+    po = res.scalar_one_or_none()
+    if not po or not po.quote or not po.quote.rfq:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Satın Alma Siparişi ({po_id}) bulunamadı.",
+        )
+
+    quote = po.quote
+    rfq = quote.rfq
+
+    # 3. Check Order and RFQ status invariants
+    if po.status == PurchaseOrderStatus.CANCELLED.value:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="İptal edilmiş sipariş adımı onaylanamaz.",
+        )
+    if po.status != PurchaseOrderStatus.DRAFT.value:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Sipariş taslak (draft) durumunda değil: {po.status}",
+        )
+    if rfq.status == "cancelled":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="İptal edilmiş RFQ'ya ait sipariş adımı onaylanamaz.",
+        )
+
+    # 4. Check dynamic analysis staleness
+    if po.approval_id:
+        approval = await db.get(Approval, po.approval_id)
+        if approval and approval.analysis_id:
+            analysis = await db.get(Analysis, approval.analysis_id)
+            if analysis and await compute_analysis_staleness(db, analysis, rfq):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Analiz veya RFQ verileri güncelliğini yitirmiştir (stale). Onay verilemez.",
+                )
+
+    # 5. Find target approval step
+    target_step = None
+    for s in (po.approval_steps or []):
+        if s.id == step_id:
+            target_step = s
+            break
+
+    if not target_step:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Belirtilen onay adımı bu sipariş altında bulunamadı.",
+        )
+
+    if target_step.status != POApprovalStepStatus.PENDING.value:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Onay adımı beklemede (pending) değil: {target_step.status}",
+        )
+
+    # 6. Role Authorization Gate
+    if current_user.role not in (target_step.role, UserRole.ADMIN.value):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Kullanıcı rolü ({current_user.role}) bu onay adımı ({target_step.role}) için yetkili değildir.",
+        )
+
+    # 7. Separation of Duties (SoD) Guardrail
+    # A single user cannot satisfy both purchasing_director and cfo roles on the same order.
+    # An admin also cannot approve both steps.
+    for other_s in (po.approval_steps or []):
+        if other_s.id != target_step.id and other_s.approver_id == current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Görevler Ayrılığı (Separation of Duties) Kuralı: Aynı kullanıcı hem Satın Alma Direktörü hem de CFO onayını gerçekleştiremez.",
+            )
+
+    # 8. Apply Step Approval
+    target_step.status = POApprovalStepStatus.APPROVED.value
+    target_step.approver_id = current_user.id
+    target_step.decision_at = datetime.now(timezone.utc)
+    if payload.comment and payload.comment.strip():
+        target_step.comment = payload.comment.strip()
+
+    db.add(
+        AuditEvent(
+            organization_id=current_user.organization_id,
+            actor_id=current_user.id,
+            event_type="po_approval_step_approved",
+            entity_type="po_approval_step",
+            entity_id=target_step.id,
+            payload={
+                "po_id": str(po.id),
+                "po_number": po.po_number,
+                "role": target_step.role,
+                "approver_id": str(current_user.id),
+                "comment": target_step.comment,
+            },
+        )
+    )
+
+    # 9. Evaluate Final Issuance Condition
+    all_steps_approved = (
+        len(po.approval_steps) > 0
+        and all(s.status == POApprovalStepStatus.APPROVED.value for s in po.approval_steps)
+    )
+
+    if all_steps_approved:
+        po.status = PurchaseOrderStatus.ISSUED.value
+        po.updated_at = datetime.now(timezone.utc)
+
+        db.add(
+            AuditEvent(
+                organization_id=current_user.organization_id,
+                actor_id=current_user.id,
+                event_type="po_issued",
+                entity_type="purchase_order",
+                entity_id=po.id,
+                payload={
+                    "po_number": po.po_number,
+                    "reason": "All required multi-tier approvals completed",
+                    "approvers": [str(s.approver_id) for s in po.approval_steps if s.approver_id],
+                },
+            )
+        )
+        background_tasks.add_task(EmailService.send_po_email, str(po.id))
+
+    await db.commit()
+    po, quote, rfq = await _get_order_or_404(po_id, db, current_user)
+    return _build_order_response(po, quote, rfq, is_manager_or_above=True)
+
+
+@router.post(
+    "/{po_id}/approvals/{step_id}/reject",
+    response_model=PurchaseOrderDetailResponse,
+    summary="Reject a Purchase Order approval step with mandatory reason",
+)
+async def reject_order_step(
+    po_id: uuid.UUID,
+    step_id: uuid.UUID,
+    payload: PORejectStepRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_authenticated),
+) -> PurchaseOrderDetailResponse:
+    if not payload.reason or len(payload.reason.strip()) < 3:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Geçerli bir red gerekçesi belirtilmelidir (en az 3 karakter).",
+        )
+
+    # 1. User active check
+    if not current_user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Aktif olmayan kullanıcı red işlemi yapamaz.",
+        )
+
+    # 2. Concurrency Row Lock on PurchaseOrder
+    stmt = (
+        select(PurchaseOrder)
+        .join(PurchaseOrder.quote)
+        .join(Quote.rfq)
+        .where(
+            PurchaseOrder.id == po_id,
+            RFQ.organization_id == current_user.organization_id,
+        )
+        .options(
+            selectinload(PurchaseOrder.quote).selectinload(Quote.rfq),
+            selectinload(PurchaseOrder.quote).selectinload(Quote.supplier),
+            selectinload(PurchaseOrder.approval_steps).selectinload(POApprovalStep.approver),
+            selectinload(PurchaseOrder.quality_issues).selectinload(POQualityIssue.reported_by),
+            selectinload(PurchaseOrder.supplier_history_entry),
+        )
+        .with_for_update()
+    )
+    res = await db.execute(stmt)
+    po = res.scalar_one_or_none()
+    if not po or not po.quote or not po.quote.rfq:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Satın Alma Siparişi ({po_id}) bulunamadı.",
+        )
+
+    quote = po.quote
+    rfq = quote.rfq
+
+    if po.status == PurchaseOrderStatus.CANCELLED.value:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Satın Alma Siparişi zaten iptal edilmiş/reddedilmiş durumda.",
+        )
+    if po.status != PurchaseOrderStatus.DRAFT.value:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Sipariş taslak (draft) durumunda değil: {po.status}",
+        )
+
+    # 3. Find target step
+    target_step = None
+    for s in (po.approval_steps or []):
+        if s.id == step_id:
+            target_step = s
+            break
+
+    if not target_step:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Belirtilen onay adımı bu sipariş altında bulunamadı.",
+        )
+
+    if target_step.status != POApprovalStepStatus.PENDING.value:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Onay adımı beklemede (pending) değil: {target_step.status}",
+        )
+
+    # 4. Role Authorization Gate
+    if current_user.role not in (target_step.role, UserRole.ADMIN.value):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Kullanıcı rolü ({current_user.role}) bu onay adımı ({target_step.role}) için yetkili değildir.",
+        )
+
+    clean_reason = payload.reason.strip()
+
+    # 5. Apply Step Rejection
+    target_step.status = POApprovalStepStatus.REJECTED.value
+    target_step.approver_id = current_user.id
+    target_step.decision_at = datetime.now(timezone.utc)
+    target_step.rejection_reason = clean_reason
+
+    # 6. Halt Workflow: Cancel the PO and invalidate all other pending steps
+    po.status = PurchaseOrderStatus.CANCELLED.value
+    po.cancellation_reason = f"Onay adımı reddedildi ({target_step.role}): {clean_reason}"
+    po.cancelled_at = datetime.now(timezone.utc)
+
+    for other_s in (po.approval_steps or []):
+        if other_s.id != target_step.id and other_s.status == POApprovalStepStatus.PENDING.value:
+            other_s.status = POApprovalStepStatus.REJECTED.value
+            other_s.rejection_reason = f"İş akışı durduruldu ({target_step.role} tarafından reddedildi)"
+
+    db.add(
+        AuditEvent(
+            organization_id=current_user.organization_id,
+            actor_id=current_user.id,
+            event_type="po_approval_step_rejected",
+            entity_type="po_approval_step",
+            entity_id=target_step.id,
+            payload={
+                "po_id": str(po.id),
+                "po_number": po.po_number,
+                "role": target_step.role,
+                "approver_id": str(current_user.id),
+                "rejection_reason": clean_reason,
+            },
+        )
+    )
+
+    db.add(
+        AuditEvent(
+            organization_id=current_user.organization_id,
+            actor_id=current_user.id,
+            event_type="po_cancelled",
+            entity_type="purchase_order",
+            entity_id=po.id,
+            payload={
+                "po_number": po.po_number,
+                "reason": po.cancellation_reason,
+                "rfq_id": str(rfq.id),
+            },
+        )
+    )
+
+    await db.commit()
+    po, quote, rfq = await _get_order_or_404(po_id, db, current_user)
+    return _build_order_response(po, quote, rfq, is_manager_or_above=True)
 
 
 @router.post(
@@ -486,6 +994,12 @@ async def cancel_order(
     po.status = PurchaseOrderStatus.CANCELLED.value
     po.cancellation_reason = payload.reason.strip()
     po.cancelled_at = datetime.now(timezone.utc)
+
+    # Invalidate any pending approval steps
+    for step in (po.approval_steps or []):
+        if step.status == POApprovalStepStatus.PENDING.value:
+            step.status = POApprovalStepStatus.REJECTED.value
+            step.rejection_reason = f"Sipariş iptal edildi: {payload.reason.strip()}"
 
     db.add(
         AuditEvent(

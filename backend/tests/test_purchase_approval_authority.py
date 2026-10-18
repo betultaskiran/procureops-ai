@@ -456,9 +456,9 @@ async def test_role_model_audit_proves_lack_of_director_and_cfo_roles():
     assert "employee" in roles
     assert "viewer" in roles
 
-    # Mimari Açık: Ayrı CFO ve Satın Alma Direktörü rolleri mevcut sistemde tanımlı değil
-    assert "cfo" not in roles
-    assert "purchasing_director" not in roles
+    # Phase 15 ile CFO ve Satın Alma Direktörü rolleri sisteme kazandırıldı
+    assert "cfo" in roles
+    assert "purchasing_director" in roles
     assert "director" not in roles
 
 

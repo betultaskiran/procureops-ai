@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
-from sqlalchemy import String, ForeignKey, DateTime, Boolean, Text, Date, Numeric, Integer
+from sqlalchemy import String, ForeignKey, DateTime, Boolean, Text, Date, Numeric, Integer, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID
 
@@ -23,6 +23,18 @@ class PurchaseOrderStatus(str, enum.Enum):
     DELIVERED = "delivered"
     COMPLETED = "completed"
     CANCELLED = "cancelled"
+
+
+class POApprovalStepStatus(str, enum.Enum):
+    """
+    Satın alma siparişi onay adımı durumları:
+    - PENDING: Yetkili rolün onayını bekliyor
+    - APPROVED: Onaylandı
+    - REJECTED: Reddedildi
+    """
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
 
 
 class PurchaseOrder(Base, UUIDPrimaryKeyMixin, TimestampMixin):
@@ -75,9 +87,64 @@ class PurchaseOrder(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         lazy="selectin",
         order_by="POQualityIssue.created_at.desc()",
     )
+    approval_steps: Mapped[list["POApprovalStep"]] = relationship(
+        back_populates="purchase_order",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        order_by="POApprovalStep.created_at.asc()",
+    )
 
     def __repr__(self) -> str:
         return f"<PurchaseOrder {self.po_number} status={self.status}>"
+
+
+class POApprovalStep(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """
+    Satın alma siparişi çok aşamalı onay adımı (Multi-Tier Approval Step).
+    Özellikle 250.000 TRY üzerindeki siparişler için Satın Alma Direktörü
+    (purchasing_director) ve CFO (cfo) bağımsız onay süreçlerini yönetir.
+    """
+    __tablename__ = "po_approval_steps"
+    __table_args__ = (
+        UniqueConstraint("purchase_order_id", "role", name="uq_po_approval_step_po_role"),
+    )
+
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    purchase_order_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("purchase_orders.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    role: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(
+        String(20),
+        default=POApprovalStepStatus.PENDING.value,
+        nullable=False,
+        index=True,
+    )
+    approver_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    decision_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # ── Relationships ──────────────────────────────────────────────────────────
+    purchase_order: Mapped["PurchaseOrder"] = relationship(back_populates="approval_steps")
+    approver: Mapped["User | None"] = relationship(lazy="selectin")
+    organization: Mapped["Organization"] = relationship()
+
+    def __repr__(self) -> str:
+        return f"<POApprovalStep po_id={self.purchase_order_id} role={self.role} status={self.status}>"
 
 
 class IssueType(str, enum.Enum):

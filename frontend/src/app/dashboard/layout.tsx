@@ -12,7 +12,8 @@ import {
   LogOut,
   Building2,
   Loader2,
-  Shield
+  Shield,
+  CheckSquare
 } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { useAuth } from "@/lib/auth/AuthContext";
@@ -26,6 +27,14 @@ const ROLE_BADGES: Record<UserRole, { label: string; badgeClass: string }> = {
   manager: {
     label: "Manager",
     badgeClass: "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20",
+  },
+  purchasing_director: {
+    label: "Satın Alma Direktörü",
+    badgeClass: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20",
+  },
+  cfo: {
+    label: "CFO",
+    badgeClass: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/20",
   },
   employee: {
     label: "Uzman",
@@ -156,7 +165,19 @@ export default function DashboardLayout({
             Policies
           </Link>
 
-          <Link 
+          <Link
+            href="/dashboard/approvals"
+            className={`flex items-center gap-3 px-3 py-2 rounded-md font-medium text-sm transition-colors ${
+              pathname.startsWith("/dashboard/approvals")
+                ? "bg-primary/10 text-primary"
+                : "text-text-muted hover:bg-surface-elevated hover:text-text-primary"
+            }`}
+          >
+            <CheckSquare size={18} />
+            Approvals
+          </Link>
+
+          <Link
             href="/dashboard/team" 
             className={`flex items-center gap-3 px-3 py-2 rounded-md font-medium text-sm transition-colors ${
               pathname.startsWith("/dashboard/team")

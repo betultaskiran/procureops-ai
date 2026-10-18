@@ -6,6 +6,8 @@ import {
   POQualityIssueResponse,
   POQualityIssueCreate,
   POQualityIssueUpdate,
+  POApprovalStepResponse,
+  PendingApprovalItemResponse,
 } from "./types";
 
 export const ordersApi = {
@@ -39,5 +41,33 @@ export const ordersApi = {
 
   async getQualityIssues(poId: string): Promise<POQualityIssueResponse[]> {
     return apiClient.get<POQualityIssueResponse[]>(`/api/v1/orders/${poId}/quality-issues`);
+  },
+
+  async getPendingApprovals(): Promise<PendingApprovalItemResponse[]> {
+    return apiClient.get<PendingApprovalItemResponse[]>("/api/v1/orders/approvals/pending");
+  },
+
+  async getPOApprovals(poId: string): Promise<POApprovalStepResponse[]> {
+    return apiClient.get<POApprovalStepResponse[]>(`/api/v1/orders/${poId}/approvals`);
+  },
+
+  async approveStep(
+    poId: string,
+    stepId: string,
+    comment?: string
+  ): Promise<PurchaseOrderDetailResponse> {
+    return apiClient.post<PurchaseOrderDetailResponse>(`/api/v1/orders/${poId}/approvals/${stepId}/approve`, {
+      comment: comment || null,
+    });
+  },
+
+  async rejectStep(
+    poId: string,
+    stepId: string,
+    reason: string
+  ): Promise<PurchaseOrderDetailResponse> {
+    return apiClient.post<PurchaseOrderDetailResponse>(`/api/v1/orders/${poId}/approvals/${stepId}/reject`, {
+      reason,
+    });
   },
 };

@@ -492,6 +492,7 @@ async def cancel_rfq(
         select(PurchaseOrder)
         .join(PurchaseOrder.quote)
         .where(Quote.rfq_id == rfq.id)
+        .options(selectinload(PurchaseOrder.approval_steps))
     )
     all_pos = po_query.scalars().all()
     active_pos = [po for po in all_pos if po.status != "cancelled"]
@@ -509,6 +510,12 @@ async def cancel_rfq(
             po.cancellation_reason = f"RFQ iptali nedeniyle: {payload.reason.strip()}"
             po.cancelled_at = now_utc
             cancelled_po_numbers.append(po.po_number)
+
+            for step in (po.approval_steps or []):
+                if getattr(step, "status", None) == "pending":
+                    step.status = "rejected"
+                    step.rejection_reason = f"RFQ iptali nedeniyle: {payload.reason.strip()}"
+
             db.add(
                 AuditEvent(
                     organization_id=rfq.organization_id,
@@ -751,6 +758,7 @@ async def cancel_rfq_purchase_order(
             PurchaseOrder.id == po_id,
             Quote.rfq_id == rfq_id
         )
+        .options(selectinload(PurchaseOrder.approval_steps))
     )
     po = po_query.scalar_one_or_none()
     if not po:
@@ -774,6 +782,11 @@ async def cancel_rfq_purchase_order(
     po.status = "cancelled"
     po.cancellation_reason = payload.reason.strip()
     po.cancelled_at = datetime.now(timezone.utc)
+
+    for step in (po.approval_steps or []):
+        if getattr(step, "status", None) == "pending":
+            step.status = "rejected"
+            step.rejection_reason = f"Sipariş iptal edildi: {payload.reason.strip()}"
 
     db.add(
         AuditEvent(
@@ -821,7 +834,10 @@ async def cancel_purchase_order_direct(
         select(PurchaseOrder)
         .join(PurchaseOrder.quote)
         .join(Quote.rfq)
-        .options(selectinload(PurchaseOrder.quote).selectinload(Quote.rfq))
+        .options(
+            selectinload(PurchaseOrder.quote).selectinload(Quote.rfq),
+            selectinload(PurchaseOrder.approval_steps),
+        )
         .where(
             PurchaseOrder.id == po_id,
             RFQ.organization_id == current_user.organization_id,
@@ -852,6 +868,11 @@ async def cancel_purchase_order_direct(
     po.status = "cancelled"
     po.cancellation_reason = payload.reason.strip()
     po.cancelled_at = datetime.now(timezone.utc)
+
+    for step in (po.approval_steps or []):
+        if getattr(step, "status", None) == "pending":
+            step.status = "rejected"
+            step.rejection_reason = f"Sipariş iptal edildi: {payload.reason.strip()}"
 
     db.add(
         AuditEvent(

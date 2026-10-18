@@ -39,6 +39,8 @@ from app.models.audit import AuditEvent
 from app.models.order import (
     PurchaseOrder,
     PurchaseOrderStatus,
+    POApprovalStep,
+    POApprovalStepStatus,
     POQualityIssue,
     IssueType,
     IssueSeverity,
@@ -92,6 +94,8 @@ __all__ = [
     # Order
     "PurchaseOrder",
     "PurchaseOrderStatus",
+    "POApprovalStep",
+    "POApprovalStepStatus",
     "POQualityIssue",
     "IssueType",
     "IssueSeverity",

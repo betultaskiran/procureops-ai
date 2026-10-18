@@ -34,9 +34,11 @@ class UserRole(str, enum.Enum):
     Yeni bir rol eklenmesi sadece buraya yeni bir satır eklemek demek.
     """
     ADMIN = "admin"
-    MANAGER = "manager"      # Procurement Manager — onay yetkisi var
-    EMPLOYEE = "employee"    # Procurement Employee — analiz yapabilir
-    VIEWER = "viewer"        # Sadece görüntüleme
+    MANAGER = "manager"                  # Procurement Manager — onay yetkisi var
+    EMPLOYEE = "employee"                # Procurement Employee — analiz yapabilir
+    VIEWER = "viewer"                    # Sadece görüntüleme
+    PURCHASING_DIRECTOR = "purchasing_director"  # Satın Alma Direktörü — 250k TL üzeri onay
+    CFO = "cfo"                          # CFO — 250k TL üzeri onay
 
 
 class User(Base, UUIDPrimaryKeyMixin, TimestampMixin):
@@ -62,10 +64,10 @@ class User(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     # Şimdilik nullable — şifresiz kullanıcı oluşturulabilir (dev ortamı için).
     hashed_password: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
-    # Rol: veritabanında "admin", "manager" vb. string olarak saklanır.
+    # Rol: veritabanında "admin", "manager", "purchasing_director", "cfo" vb. string olarak saklanır.
     # Python'da UserRole enum'u olarak kullanılır.
     role: Mapped[str] = mapped_column(
-        String(20),
+        String(50),
         nullable=False,
         default=UserRole.EMPLOYEE,
     )

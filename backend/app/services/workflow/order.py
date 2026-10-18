@@ -64,12 +64,16 @@ class PurchaseOrderService:
         from decimal import Decimal
         SINGLE_MANAGER_THRESHOLD_TRY = Decimal("250000.00")
         quote_currency = (quote_obj.currency or "TRY").upper() if quote_obj else "TRY"
-        quote_total = quote_obj.total_price if quote_obj and quote_obj.total_price is not None else Decimal("0")
 
-        if quote_currency != "TRY":
+        # Fail-closed spending authority validation (Phase 14):
+        # Missing, invalid, zero, or unverified amounts must NEVER default to zero for approval decisions.
+        # They must fail closed and remain in DRAFT status pending financial verification.
+        if not quote_obj or quote_obj.total_price is None or quote_obj.total_price <= Decimal("0"):
+            is_above_threshold = True
+        elif quote_currency != "TRY":
             is_above_threshold = True
         else:
-            is_above_threshold = quote_total > SINGLE_MANAGER_THRESHOLD_TRY
+            is_above_threshold = quote_obj.total_price > SINGLE_MANAGER_THRESHOLD_TRY
 
         po_status = PurchaseOrderStatus.DRAFT.value if is_above_threshold else PurchaseOrderStatus.ISSUED.value
 
@@ -83,6 +87,45 @@ class PurchaseOrderService:
         
         db.add(po)
         await db.flush()
+
+        # Phase 15: Formal Multi-Tier Approval Workflow
+        # When order remains in DRAFT (> 250,000 TRY, non-TRY, or invalid total),
+        # initialize required pending approval steps for Purchasing Director and CFO.
+        if po_status == PurchaseOrderStatus.DRAFT.value and org_id:
+            from app.models.order import POApprovalStep, POApprovalStepStatus
+            from app.models.user import UserRole
+
+            step_director = POApprovalStep(
+                organization_id=org_id,
+                purchase_order_id=po.id,
+                role=UserRole.PURCHASING_DIRECTOR.value,
+                status=POApprovalStepStatus.PENDING.value,
+            )
+            step_cfo = POApprovalStep(
+                organization_id=org_id,
+                purchase_order_id=po.id,
+                role=UserRole.CFO.value,
+                status=POApprovalStepStatus.PENDING.value,
+            )
+            db.add(step_director)
+            db.add(step_cfo)
+            await db.flush()
+
+            db.add(AuditEvent(
+                organization_id=org_id,
+                actor_id=approval.reviewer_id,
+                event_type="po_approval_workflow_initiated",
+                entity_type="purchase_order",
+                entity_id=po.id,
+                payload={
+                    "po_number": po.po_number,
+                    "required_roles": [UserRole.PURCHASING_DIRECTOR.value, UserRole.CFO.value],
+                    "quote_id": str(quote_id),
+                    "amount": str(quote_obj.total_price) if quote_obj and quote_obj.total_price is not None else None,
+                    "currency": quote_currency,
+                    "status": po.status,
+                }
+            ))
 
         db.add(AuditEvent(
             organization_id=org_id,

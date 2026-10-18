@@ -37,6 +37,16 @@ const ROLE_CONFIG: Record<UserRole, { label: string; desc: string; badgeClass: s
     desc: "Teklif onaylarını ve satınalma siparişlerini yönetir",
     badgeClass: "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20",
   },
+  purchasing_director: {
+    label: "Satın Alma Direktörü",
+    desc: "Yüksek tutarlı siparişleri ve kurumsal satınalma süreçlerini onaylar",
+    badgeClass: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20",
+  },
+  cfo: {
+    label: "Mali İşler Direktörü (CFO)",
+    desc: "250.000 TL üzerindeki harcamaların finansal uygunluğunu onaylar",
+    badgeClass: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/20",
+  },
   employee: {
     label: "Satın Alma Uzmanı",
     desc: "RFQ oluşturur, teklif yükler ve analiz çalıştırır",

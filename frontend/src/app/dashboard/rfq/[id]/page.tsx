@@ -30,7 +30,9 @@ import {
   PackageCheck,
   AlertCircle,
   Calendar,
-  DollarSign
+  DollarSign,
+  Copy,
+  ChevronRight
 } from "lucide-react";
 import { rfqsApi } from "@/lib/api/rfqs";
 import { ordersApi } from "@/lib/api/orders";
@@ -144,6 +146,8 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [inviteSuccess, setInviteSuccess] = useState<string | null>(null);
   const [retryingInvitationId, setRetryingInvitationId] = useState<string | null>(null);
+  const [revokingInvitationId, setRevokingInvitationId] = useState<string | null>(null);
+  const [copiedInvitationId, setCopiedInvitationId] = useState<string | null>(null);
 
   // Inline supplier creation in modal
   const [isCreatingSupplier, setIsCreatingSupplier] = useState(false);
@@ -515,6 +519,33 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
     }
   };
 
+  const handleRevokeInvitation = async (invitationId: string) => {
+    if (!confirm("Bu tedarikçi davetini iptal etmek istediğinizden emin misiniz? Tedarikçi artık portala erişemeyecek.")) {
+      return;
+    }
+    try {
+      setRevokingInvitationId(invitationId);
+      await rfqsApi.revokeRfqInvitation(rfqId, invitationId);
+      await fetchInvitations();
+    } catch (err: any) {
+      alert(`Davet iptal edilirken hata oluştu: ${err.message || err}`);
+    } finally {
+      setRevokingInvitationId(null);
+    }
+  };
+
+  const handleCopyPortalLink = async (invitationId: string, portalUrl?: string | null) => {
+    if (!portalUrl) return;
+    try {
+      const fullUrl = portalUrl.startsWith("http") ? portalUrl : `${window.location.origin}${portalUrl}`;
+      await navigator.clipboard.writeText(fullUrl);
+      setCopiedInvitationId(invitationId);
+      setTimeout(() => setCopiedInvitationId(null), 2000);
+    } catch (err) {
+      console.error("Failed to copy portal URL:", err);
+    }
+  };
+
   useEffect(() => {
     async function loadData() {
       try {
@@ -603,6 +634,11 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
   const statusBadge = getStatusBadge(rfq.status);
   const formattedStatus = rfq.status.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
 
+  // Active PO detection
+  const activePos = purchaseOrders.filter(p => p.status !== 'cancelled');
+  const hasActivePo = activePos.length > 0;
+  const firstActivePo = activePos[0] || null;
+
   // Policy Warnings count
   const warningsCount = analysis?.compliance_checks?.filter(c => c.result !== 'pass').length || 0;
 
@@ -666,6 +702,8 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
               title={
                 quotes.length < 2
                   ? "Karşılaştırmalı çoklu analiz için en az 2 tedarikçi teklifi yüklenmelidir."
+                  : hasActivePo
+                  ? `Mevcut aktif sipariş emri (${firstActivePo?.po_number}) korunur. Yeni analiz mevcut sipariş kaydını sıfırlamaz veya değiştirmez.`
                   : analysis
                   ? "Tüm teklifleri yeniden değerlendir ve TCO/uyum sonuçlarını güncelle"
                   : "Tüm teklifleri yan yana kıyaslayan yapay zeka analizini başlat"
@@ -675,6 +713,8 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                   ? "bg-surface border border-border text-text-muted opacity-50 cursor-not-allowed"
                   : isAnalyzing
                   ? "bg-primary/20 text-primary border border-primary/40 cursor-wait"
+                  : hasActivePo && !analysis?.is_stale
+                  ? "bg-surface-elevated border border-border hover:bg-bg text-text-secondary"
                   : "bg-primary hover:bg-primary-hover text-white"
               }`}
             >
@@ -687,7 +727,13 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                 <>
                   <Sparkles size={14} />
                   <span>
-                    {analysis ? "Analizi Yenile" : "Çoklu Analizi Başlat"}
+                    {hasActivePo
+                      ? analysis?.is_stale
+                        ? "Yeni Şartlarla Analiz Et"
+                        : "Yeniden Değerlendir"
+                      : analysis
+                      ? "Analizi Yenile"
+                      : "Çoklu Analizi Başlat"}
                     {quotes.length < 2 && ` (${quotes.length}/2)`}
                   </span>
                 </>
@@ -696,7 +742,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
           )}
 
           {/* Review & Decision Action */}
-          {analysis && rfq.status !== 'cancelled' && purchaseOrders.filter(p => p.status !== 'cancelled').length === 0 && (
+          {analysis && rfq.status !== 'cancelled' && !hasActivePo && (
             <button 
               onClick={() => {
                 setReviewQuoteId(selectedQuoteId || analysis.recommendation?.recommended_quote_id || quotes[0]?.id || null);
@@ -819,6 +865,8 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
           isStale={!!analysis.is_stale}
           isAnalyzing={isAnalyzing}
           onRerunAnalysis={handleRunAnalysis}
+          hasActivePo={hasActivePo}
+          poNumber={firstActivePo?.po_number}
         />
       )}
 
@@ -1171,6 +1219,8 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                 const isDelivered = po.status === 'delivered';
                 const isCompleted = po.status === 'completed';
                 const isIssued = po.status === 'issued';
+                const isDraft = po.status === 'draft';
+                const poQuote = quotes.find(q => q.id === po.quote_id);
                 const issues = poQualityIssuesMap[po.id] || [];
                 const isQualityExpanded = !!expandedPoQuality[po.id];
 
@@ -1206,6 +1256,8 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                   ? 'bg-emerald-950/20 border-emerald-500/30'
                   : isDelivered
                   ? 'bg-amber-950/20 border-amber-500/30'
+                  : isDraft
+                  ? 'bg-amber-950/20 border-amber-500/30'
                   : 'bg-primary/5 border-primary/30';
 
                 const statusBadgeClass = isPoCancelled
@@ -1213,6 +1265,8 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                   : isCompleted
                   ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
                   : isDelivered
+                  ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                  : isDraft
                   ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
                   : 'bg-primary/20 text-primary-light border-primary/40';
 
@@ -1238,10 +1292,15 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                             <Truck size={16} className="text-amber-400" />
                             <span className="text-amber-400">Teslim Alındı (Doğrulama Bekliyor)</span>
                           </>
+                        ) : isDraft ? (
+                          <>
+                            <Clock size={16} className="text-amber-400" />
+                            <span className="text-amber-400">Taslak Sipariş (Yetki Eşiği Bekliyor)</span>
+                          </>
                         ) : (
                           <>
                             <CheckCircle size={16} className="text-primary" />
-                            <span className="text-primary-light">Sipariş Aktif (Tedarikçide)</span>
+                            <span className="text-primary-light">Sipariş Onaylandı ve İletildi (Kilitli İşlem)</span>
                           </>
                         )}
                       </h2>
@@ -1250,11 +1309,44 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                       </span>
                     </div>
 
+                    {isDraft && (
+                      <div className="mb-3 p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs space-y-2">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-1.5 font-semibold text-amber-400">
+                            <AlertTriangle size={14} className="shrink-0" />
+                            <span>Tedarikçiye İletilmedi — Çok Kademeli Onay Bekliyor</span>
+                          </div>
+                          <Link
+                            href="/dashboard/approvals"
+                            className="inline-flex items-center gap-1 text-[11px] font-semibold px-2.5 py-1 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 transition-colors"
+                          >
+                            <span>Onay Kuyruğuna Git</span>
+                            <ChevronRight size={12} />
+                          </Link>
+                        </div>
+                        <p className="text-[11px] text-text-muted leading-relaxed">
+                          Bu sipariş 250.000 TRY harcama yetki sınırını aştığı için Satın Alma Direktörü ve CFO müşterek onayını beklemektedir. İki bağımsız onay tamamlanana kadar sipariş DRAFT statüsünde korunur; tedarikçiye bildirim e-postası gönderilmez ve teslimat işlemi yapılamaz.
+                        </p>
+                      </div>
+                    )}
+
                     <div className="bg-bg/60 rounded p-3 text-xs font-mono space-y-1.5 border border-border">
                       <div className="flex justify-between">
                         <span className="text-text-muted">PO No:</span>
                         <span className="font-semibold text-text-primary">{po.po_number}</span>
                       </div>
+                      <div className="flex justify-between">
+                        <span className="text-text-muted">Seçilen Teklif:</span>
+                        <span className="font-semibold text-text-primary">{poQuote?.supplier_name || po.quote_id.slice(0, 8)}</span>
+                      </div>
+                      {poQuote && (
+                        <div className="flex justify-between">
+                          <span className="text-text-muted">Sipariş Tutarı:</span>
+                          <span className="font-semibold text-text-primary">
+                            {new Intl.NumberFormat('tr-TR', { style: 'currency', currency: poQuote.currency || 'TRY' }).format(poQuote.total_price)}
+                          </span>
+                        </div>
+                      )}
                       <div className="flex justify-between">
                         <span className="text-text-muted">Oluşturulma:</span>
                         <span>{new Date(po.created_at).toLocaleDateString()}</span>
@@ -1497,12 +1589,18 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
 
                       let badgeClass = "bg-blue-500/10 text-blue-500 border-blue-500/20";
                       let badgeLabel = "Queued";
-                      if (isSending) {
+                      if (inv.is_revoked) {
+                        badgeClass = "bg-zinc-500/10 text-zinc-400 border-zinc-500/20 line-through";
+                        badgeLabel = "Davet İptal";
+                      } else if (inv.submitted_at || inv.submitted_quote_id) {
+                        badgeClass = "bg-emerald-500/15 text-emerald-400 border-emerald-500/30";
+                        badgeLabel = "✓ Teklif Alındı";
+                      } else if (isSending) {
                         badgeClass = "bg-amber-500/10 text-amber-500 border-amber-500/20";
                         badgeLabel = "Sending...";
                       } else if (isSent) {
                         badgeClass = "bg-emerald-500/10 text-emerald-500 border-emerald-500/20";
-                        badgeLabel = "Sent (Accepted)";
+                        badgeLabel = "Sent";
                       } else if (isDelivered) {
                         badgeClass = "bg-green-500/10 text-green-400 border-green-500/20";
                         badgeLabel = "Delivered";
@@ -1531,6 +1629,11 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                                 {inv.last_error}
                               </div>
                             )}
+                            {inv.submitted_at && (
+                              <div className="text-[10px] text-emerald-400/80 mt-0.5">
+                                {new Date(inv.submitted_at).toLocaleDateString()} tarihinde teklif iletildi
+                              </div>
+                            )}
                           </td>
                           <td className="px-3 py-2.5 text-text-muted">
                             {inv.attempt_count} / {inv.max_attempts}
@@ -1539,20 +1642,55 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                             {inv.sent_at ? new Date(inv.sent_at).toLocaleString() : new Date(inv.queued_at).toLocaleString()}
                           </td>
                           <td className="px-3 py-2.5 text-right">
-                            {isFailed && (
-                              <button
-                                onClick={() => handleRetryInvitation(inv.id)}
-                                disabled={retryingInvitationId === inv.id}
-                                className="px-2 py-1 rounded text-[11px] font-medium bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 transition-colors"
-                              >
-                                {retryingInvitationId === inv.id ? (
-                                  <Loader2 size={12} className="animate-spin inline mr-1" />
-                                ) : (
-                                  <RefreshCw size={12} className="inline mr-1" />
-                                )}
-                                Tekrar Dene
-                              </button>
-                            )}
+                            <div className="flex items-center justify-end gap-1.5">
+                              {inv.portal_url && !inv.is_revoked && (
+                                <button
+                                  onClick={() => handleCopyPortalLink(inv.id, inv.portal_url)}
+                                  className="px-2 py-1 rounded text-[11px] font-medium bg-surface hover:bg-surface-elevated text-text-secondary border border-border transition-colors flex items-center gap-1"
+                                  title="Tedarikçi portal linkini kopyala"
+                                >
+                                  {copiedInvitationId === inv.id ? (
+                                    <>
+                                      <Check size={12} className="text-emerald-400" />
+                                      <span className="text-emerald-400">Kopyalandı</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Copy size={12} />
+                                      <span>Link Kopyala</span>
+                                    </>
+                                  )}
+                                </button>
+                              )}
+                              {!inv.is_revoked && rfq.status !== "cancelled" && (
+                                <button
+                                  onClick={() => handleRevokeInvitation(inv.id)}
+                                  disabled={revokingInvitationId === inv.id}
+                                  className="px-2 py-1 rounded text-[11px] font-medium bg-amber-500/10 hover:bg-amber-500/20 text-amber-500 border border-amber-500/30 transition-colors"
+                                  title="Daveti iptal et (tedarikçi erişimini kaldırır)"
+                                >
+                                  {revokingInvitationId === inv.id ? (
+                                    <Loader2 size={12} className="animate-spin inline" />
+                                  ) : (
+                                    "İptal Et"
+                                  )}
+                                </button>
+                              )}
+                              {isFailed && (
+                                <button
+                                  onClick={() => handleRetryInvitation(inv.id)}
+                                  disabled={retryingInvitationId === inv.id}
+                                  className="px-2 py-1 rounded text-[11px] font-medium bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 transition-colors"
+                                >
+                                  {retryingInvitationId === inv.id ? (
+                                    <Loader2 size={12} className="animate-spin inline mr-1" />
+                                  ) : (
+                                    <RefreshCw size={12} className="inline mr-1" />
+                                  )}
+                                  Tekrar Dene
+                                </button>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       );

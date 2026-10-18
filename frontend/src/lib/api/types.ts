@@ -216,6 +216,37 @@ export interface CompletePORequest {
   completion_notes?: string | null;
 }
 
+export interface POApprovalStepResponse {
+  id: string;
+  purchase_order_id: string;
+  organization_id: string;
+  role: string;
+  status: "pending" | "approved" | "rejected";
+  approver_id?: string | null;
+  approver_name?: string | null;
+  decision_at?: string | null;
+  comment?: string | null;
+  rejection_reason?: string | null;
+  created_at: string;
+  updated_at?: string | null;
+}
+
+export interface PendingApprovalItemResponse {
+  step_id: string;
+  purchase_order_id: string;
+  po_number: string;
+  rfq_id: string;
+  rfq_title: string;
+  supplier_id: string;
+  supplier_name: string;
+  amount: number;
+  currency: string;
+  role: string;
+  step_status: "pending" | "approved" | "rejected";
+  created_at: string;
+  all_steps: POApprovalStepResponse[];
+}
+
 export interface PurchaseOrderDetailResponse extends PurchaseOrderResponse {
   rfq_id: string;
   rfq_title: string;
@@ -224,6 +255,7 @@ export interface PurchaseOrderDetailResponse extends PurchaseOrderResponse {
   currency: string;
   quoted_amount: number;
   quality_issues: POQualityIssueResponse[];
+  approval_steps?: POApprovalStepResponse[];
   allowed_actions: string[];
 }
 
@@ -383,7 +415,7 @@ export interface PaginatedSupplierHistoryResponse {
 
 // ── Team Management & Auth Types ─────────────────────────────────────────────
 
-export type UserRole = "admin" | "manager" | "employee" | "viewer";
+export type UserRole = "admin" | "manager" | "employee" | "viewer" | "purchasing_director" | "cfo";
 
 export interface OrganizationResponse {
   id: string;
