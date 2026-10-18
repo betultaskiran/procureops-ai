@@ -158,6 +158,10 @@ export const rfqsApi = {
 
   async retryRfqInvitation(rfqId: string, invitationId: string): Promise<EmailDeliveryResponse> {
     return apiClient.post<EmailDeliveryResponse>(`/api/v1/rfqs/${rfqId}/invitations/${invitationId}/retry`, {});
+  },
+
+  async revokeRfqInvitation(rfqId: string, invitationId: string): Promise<EmailDeliveryResponse> {
+    return apiClient.post<EmailDeliveryResponse>(`/api/v1/rfqs/${rfqId}/invitations/${invitationId}/revoke`, {});
   }
 };
 

@@ -2,11 +2,11 @@ import os
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Optional
+from typing import Optional, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status, BackgroundTasks
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import select
+from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -116,8 +116,62 @@ class EmailDeliveryResponse(BaseModel):
     queued_at: datetime
     sent_at: Optional[datetime] = None
     delivered_at: Optional[datetime] = None
+    is_revoked: bool = False
+    submitted_at: Optional[datetime] = None
+    submitted_quote_id: Optional[uuid.UUID] = None
+    portal_url: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+    @classmethod
+    def from_delivery(cls, delivery: Any) -> "EmailDeliveryResponse":
+        import json
+        meta = {}
+        if getattr(delivery, "metadata_json", None):
+            try:
+                meta = json.loads(delivery.metadata_json)
+            except Exception:
+                pass
+
+        sub_at = None
+        if meta.get("submitted_at"):
+            try:
+                sub_at = datetime.fromisoformat(meta["submitted_at"])
+            except Exception:
+                pass
+
+        sub_qid = None
+        if meta.get("submitted_quote_id"):
+            try:
+                sub_qid = uuid.UUID(str(meta["submitted_quote_id"]))
+            except Exception:
+                pass
+
+        return cls(
+            id=delivery.id,
+            organization_id=delivery.organization_id,
+            rfq_id=delivery.rfq_id,
+            supplier_id=delivery.supplier_id,
+            purchase_order_id=delivery.purchase_order_id,
+            recipient_email=delivery.recipient_email,
+            recipient_name=delivery.recipient_name,
+            subject=delivery.subject,
+            message_type=delivery.message_type,
+            idempotency_key=delivery.idempotency_key,
+            status=delivery.status,
+            attempt_count=delivery.attempt_count,
+            max_attempts=delivery.max_attempts,
+            last_error=delivery.last_error,
+            next_retry_at=delivery.next_retry_at,
+            provider_message_id=delivery.provider_message_id,
+            queued_at=delivery.queued_at,
+            sent_at=delivery.sent_at,
+            delivered_at=delivery.delivered_at,
+            is_revoked=bool(meta.get("is_revoked", False)),
+            submitted_at=sub_at,
+            submitted_quote_id=sub_qid,
+            portal_url=meta.get("portal_url"),
+        )
 
 
 # ── Metadata & Safe Deletion Validation ────────────────────────────────────────
@@ -961,7 +1015,7 @@ async def send_rfq_invitation(
     if is_new_or_requeued:
         background_tasks.add_task(EmailDeliveryService.dispatch_delivery, delivery.id)
 
-    return EmailDeliveryResponse.model_validate(delivery)
+    return EmailDeliveryResponse.from_delivery(delivery)
 
 
 @router.get(
@@ -994,7 +1048,7 @@ async def list_rfq_invitations(
         rfq_id=rfq_id,
         organization_id=current_user.organization_id,
     )
-    return [EmailDeliveryResponse.model_validate(d) for d in deliveries]
+    return [EmailDeliveryResponse.from_delivery(d) for d in deliveries]
 
 
 @router.post(
@@ -1031,8 +1085,49 @@ async def retry_rfq_invitation(
             delivery_id=invitation_id,
             organization_id=current_user.organization_id,
         )
+    except LookupError as err:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(err))
+    except ValueError as err:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(err))
+
+    background_tasks.add_task(EmailDeliveryService.dispatch_delivery, delivery.id)
+    return EmailDeliveryResponse.from_delivery(delivery)
+
+
+@router.post(
+    "/{rfq_id}/invitations/{invitation_id}/revoke",
+    response_model=EmailDeliveryResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Revoke an RFQ Supplier Invitation",
+)
+async def revoke_rfq_invitation(
+    rfq_id: uuid.UUID,
+    invitation_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_employee_or_above),
+) -> EmailDeliveryResponse:
+    """
+    Revokes an active invitation link so the supplier can no longer access or submit quotes.
+    """
+    from app.services.email.service import EmailDeliveryService
+
+    # Check RFQ belongs to tenant
+    rfq_res = await db.execute(
+        select(RFQ).where(and_(RFQ.id == rfq_id, RFQ.organization_id == current_user.organization_id))
+    )
+    if not rfq_res.scalars().first():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="RFQ not found or access denied for this organization.",
+        )
+
+    try:
+        delivery = await EmailDeliveryService.revoke_invitation(
+            db=db,
+            delivery_id=invitation_id,
+            organization_id=current_user.organization_id,
+        )
     except ValueError as err:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(err))
 
-    background_tasks.add_task(EmailDeliveryService.dispatch_delivery, delivery.id)
-    return EmailDeliveryResponse.model_validate(delivery)
+    return EmailDeliveryResponse.from_delivery(delivery)

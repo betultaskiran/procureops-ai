@@ -56,6 +56,7 @@ def render_rfq_invitation(
     organization_name: str,
     app_base_url: str,
     custom_message: str | None = None,
+    portal_url: str | None = None,
 ) -> tuple[str, str, str]:
     """
     Renders (subject, text_body, html_body) for an RFQ invitation to a supplier.
@@ -66,7 +67,7 @@ def render_rfq_invitation(
     clean_desc = rfq_description.strip() if rfq_description else "No additional description provided."
     qty_str = f"{required_quantity:,}" if required_quantity is not None else "As specified in requirements"
     deadline_str = required_date.strftime("%B %d, %Y") if required_date else "Open until fulfilled"
-    rfq_link = f"{app_base_url.rstrip('/')}/dashboard/rfq/{rfq_id}"
+    rfq_link = portal_url or f"{app_base_url.rstrip('/')}/portal/rfq/{rfq_id}"
 
     # Plain Text
     custom_text = f"\nNote from Procurement:\n{custom_message}\n" if custom_message else ""
@@ -163,12 +164,13 @@ def render_po_notification(
     currency: str,
     organization_name: str,
     app_base_url: str,
+    portal_url: str | None = None,
 ) -> tuple[str, str, str]:
     """
     Renders (subject, text_body, html_body) for a Purchase Order notification.
     """
     subject = sanitize_header_value(f"[{organization_name}] Official Purchase Order Issued: {po_number}")
-    po_link = f"{app_base_url.rstrip('/')}/dashboard/orders"
+    po_link = portal_url or f"{app_base_url.rstrip('/')}/portal/orders/{po_id}"
 
     text_body = f"""Dear {supplier_name} Team,
 

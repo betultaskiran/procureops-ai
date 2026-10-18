@@ -5,8 +5,10 @@ High-level business service orchestrating persistent email deliveries,
 idempotent queueing, background worker dispatch, and error handling (Phase 9).
 """
 
+import hashlib
 import json
 import logging
+import secrets
 import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Any
@@ -21,7 +23,7 @@ from app.models.email_delivery import (
     EmailDeliveryStatus,
     EmailMessageType,
 )
-from app.models.order import PurchaseOrder
+from app.models.order import PurchaseOrder, PurchaseOrderStatus
 from app.models.organization import Organization
 from app.models.rfq import RFQ
 from app.models.supplier import Supplier
@@ -69,6 +71,13 @@ class EmailDeliveryService:
         if not rfq:
             raise ValueError("RFQ not found or access denied for this organization.")
 
+        # Ineligible RFQ status check (Phase 13):
+        # Incomplete, cancelled or rejected RFQs cannot receive supplier invitations
+        if rfq.status == "cancelled":
+            raise ValueError("İptal edilmiş RFQ için tedarikçi daveti gönderilemez.")
+        if rfq.status == "rejected":
+            raise ValueError("Reddedilmiş RFQ için tedarikçi daveti gönderilemez.")
+
         # 3. If supplier_id provided, verify tenant ownership
         supplier_name = "Supplier"
         if supplier_id:
@@ -110,6 +119,24 @@ class EmailDeliveryService:
             existing.last_error = None
             existing.next_retry_at = None
             existing.queued_at = datetime.now(timezone.utc)
+
+            # Ensure metadata has valid token
+            ex_meta = {}
+            if existing.metadata_json:
+                try:
+                    ex_meta = json.loads(existing.metadata_json)
+                except Exception:
+                    pass
+            if not ex_meta.get("invitation_token_hash"):
+                raw_secret = secrets.token_urlsafe(32)
+                token_hash = hashlib.sha256(raw_secret.encode("utf-8")).hexdigest()
+                expires_at = datetime.now(timezone.utc) + timedelta(days=14)
+                ex_meta["invitation_token_hash"] = token_hash
+                ex_meta["token_expires_at"] = expires_at.isoformat()
+                ex_meta["is_revoked"] = False
+                ex_meta["portal_url"] = f"{settings.APP_BASE_URL.rstrip('/')}/portal/rfq/{existing.id}.{raw_secret}"
+                existing.metadata_json = json.dumps(ex_meta)
+
             await db.commit()
             await db.refresh(existing)
             logger.info(f"[EmailService] Re-queued previously failed delivery: id={existing.id}")
@@ -120,7 +147,27 @@ class EmailDeliveryService:
         org = org_res.scalars().first()
         org_name = org.name if org else "ProcureOps Organization"
 
-        # 7. Render message templates
+        # 7. Generate high-entropy, scoped invitation token (Phase 13)
+        delivery_id = uuid.uuid4()
+        raw_secret = secrets.token_urlsafe(32)
+        token_hash = hashlib.sha256(raw_secret.encode("utf-8")).hexdigest()
+        expires_at = datetime.now(timezone.utc) + timedelta(days=14)
+        participation_token = f"{delivery_id}.{raw_secret}"
+        portal_url = f"{settings.APP_BASE_URL.rstrip('/')}/portal/rfq/{participation_token}"
+
+        metadata = {
+            "rfq_title": rfq.title,
+            "supplier_name": supplier_name,
+            "custom_message": custom_message,
+            "app_base_url": settings.APP_BASE_URL,
+            "invitation_token_hash": token_hash,
+            "token_expires_at": expires_at.isoformat(),
+            "is_revoked": False,
+            "portal_url": portal_url,
+            "submitted_quote_id": None,
+        }
+
+        # 8. Render message templates with secure supplier portal link
         subject, text_body, html_body = render_rfq_invitation(
             rfq_id=rfq.id,
             rfq_title=rfq.title,
@@ -132,17 +179,12 @@ class EmailDeliveryService:
             organization_name=org_name,
             app_base_url=settings.APP_BASE_URL,
             custom_message=custom_message,
+            portal_url=portal_url,
         )
 
-        metadata = {
-            "rfq_title": rfq.title,
-            "supplier_name": supplier_name,
-            "custom_message": custom_message,
-            "app_base_url": settings.APP_BASE_URL,
-        }
-
-        # 8. Create persistent outbox record
+        # 9. Create persistent outbox record
         delivery = EmailDelivery(
+            id=delivery_id,
             organization_id=organization_id,
             rfq_id=rfq.id,
             supplier_id=supplier_id,
@@ -192,6 +234,9 @@ class EmailDeliveryService:
         po = po_res.scalars().first()
         if not po:
             raise ValueError("Purchase Order not found or access denied for this organization.")
+
+        if po.status != PurchaseOrderStatus.ISSUED.value:
+            raise ValueError(f"Cannot send notification for Purchase Order with status '{po.status}'. Only issued purchase orders can be sent to suppliers.")
 
         quote = po.quote
         supplier = quote.supplier
@@ -310,6 +355,7 @@ class EmailDeliveryService:
                     organization_name=org_name,
                     app_base_url=settings.APP_BASE_URL,
                     custom_message=metadata.get("custom_message"),
+                    portal_url=metadata.get("portal_url"),
                 )
             else:
                 # PO Notification
@@ -396,7 +442,51 @@ class EmailDeliveryService:
         res = await db.execute(stmt)
         delivery = res.scalars().first()
         if not delivery:
-            raise ValueError("Email delivery record not found or access denied.")
+            raise LookupError("Email delivery record not found or access denied.")
+
+        # Defense-in-depth safety checks (Phase 14):
+        # 1. Block retrying deliveries for cancelled RFQs
+        if delivery.rfq_id:
+            rfq_res = await db.execute(select(RFQ).where(RFQ.id == delivery.rfq_id))
+            rfq = rfq_res.scalars().first()
+            if rfq and rfq.status == "cancelled":
+                raise ValueError("İptal edilmiş bir RFQ'ya ait bildirim tekrar gönderilemez.")
+
+        # 2. Block retrying revoked invitations
+        meta = {}
+        if delivery.metadata_json:
+            try:
+                meta = json.loads(delivery.metadata_json)
+            except Exception:
+                pass
+
+        if meta.get("is_revoked") is True:
+            raise ValueError("İptal edilmiş (revoked) bir davet bağlantısı tekrar gönderilemez.")
+
+        # 3. Block retrying expired invitations
+        token_expires_at_str = meta.get("token_expires_at")
+        if token_expires_at_str:
+            is_expired = False
+            try:
+                token_expires_at = datetime.fromisoformat(token_expires_at_str)
+                if token_expires_at.tzinfo is None:
+                    token_expires_at = token_expires_at.replace(tzinfo=timezone.utc)
+                is_expired = datetime.now(timezone.utc) > token_expires_at
+            except (ValueError, TypeError):
+                pass
+            if is_expired:
+                raise ValueError("Süresi dolmuş (expired) bir davet bağlantısı tekrar gönderilemez.")
+
+        # 4. Block retrying PO notifications if PO is not in ISSUED status
+        if delivery.purchase_order_id:
+            po_res = await db.execute(select(PurchaseOrder).where(PurchaseOrder.id == delivery.purchase_order_id))
+            po = po_res.scalars().first()
+            if po and po.status != PurchaseOrderStatus.ISSUED.value:
+                raise ValueError(f"Sipariş durumu '{po.status}' iken tedarikçiye bildirim tekrar gönderilemez.")
+
+        # 5. Block duplicate sends for already sent or delivered messages
+        if delivery.status in (EmailDeliveryStatus.SENT.value, EmailDeliveryStatus.DELIVERED.value):
+            raise ValueError(f"Zaten başarıyla iletilmiş e-posta kaydı ({delivery.status}) mükerrer olarak tekrar gönderilemez.")
 
         delivery.status = EmailDeliveryStatus.QUEUED.value
         delivery.attempt_count = 0
@@ -430,3 +520,39 @@ class EmailDeliveryService:
         )
         res = await db.execute(stmt)
         return list(res.scalars().all())
+
+    @staticmethod
+    async def revoke_invitation(
+        db: AsyncSession,
+        delivery_id: uuid.UUID,
+        organization_id: uuid.UUID,
+    ) -> EmailDelivery:
+        """
+        Revokes a supplier invitation token so it can no longer be used to view or submit quotes.
+        """
+        stmt = select(EmailDelivery).where(
+            and_(
+                EmailDelivery.id == delivery_id,
+                EmailDelivery.organization_id == organization_id,
+                EmailDelivery.message_type == EmailMessageType.RFQ_INVITATION.value,
+            )
+        )
+        res = await db.execute(stmt)
+        delivery = res.scalars().first()
+        if not delivery:
+            raise ValueError(f"Invitation delivery {delivery_id} not found.")
+
+        meta = {}
+        if delivery.metadata_json:
+            try:
+                meta = json.loads(delivery.metadata_json)
+            except Exception:
+                pass
+        meta["is_revoked"] = True
+        meta["revoked_at"] = datetime.now(timezone.utc).isoformat()
+        delivery.metadata_json = json.dumps(meta)
+
+        await db.commit()
+        await db.refresh(delivery)
+        logger.info(f"[EmailService] Revoked invitation delivery_id={delivery_id}")
+        return delivery

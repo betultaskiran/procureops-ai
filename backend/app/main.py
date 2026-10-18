@@ -37,6 +37,7 @@ from app.api.v1.policies import router as policies_router
 from app.api.v1.auth import router as auth_router
 from app.api.v1.team import router as team_router
 from app.api.v1.orders import router as orders_router
+from app.api.v1.portal import router as portal_router
 from app.services.vector_store.qdrant import QdrantService
 
 # ── Initialize Logging Early ───────────────────────────────────────────────────
@@ -166,6 +167,7 @@ app.include_router(policies_router)
 app.include_router(auth_router)
 app.include_router(team_router)
 app.include_router(orders_router)
+app.include_router(portal_router)
 
 
 # ── Root endpoint ─────────────────────────────────────────────────────────────

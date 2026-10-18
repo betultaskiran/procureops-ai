@@ -469,6 +469,10 @@ export interface EmailDeliveryResponse {
   queued_at: string;
   sent_at: string | null;
   delivered_at: string | null;
+  is_revoked?: boolean;
+  submitted_at?: string | null;
+  submitted_quote_id?: string | null;
+  portal_url?: string | null;
 }
 
 export interface SendRFQInvitationRequest {
@@ -477,6 +481,98 @@ export interface SendRFQInvitationRequest {
   recipient_name?: string | null;
   custom_message?: string | null;
   idempotency_key?: string | null;
+}
+
+// ── Phase 13: Supplier Portal Types ───────────────────────────────────────────
+export interface PortalRFQItem {
+  line_number: number;
+  description: string;
+  quantity: number;
+  unit?: string | null;
+}
+
+export interface PortalExistingQuoteItem {
+  line_number: number;
+  description: string;
+  quantity: number;
+  unit?: string | null;
+  unit_price: number;
+  total_price: number;
+}
+
+export interface PortalExistingQuote {
+  id: string;
+  currency: string;
+  subtotal: number;
+  vat_rate?: number | null;
+  vat_amount?: number | null;
+  shipping_cost?: number | null;
+  discount_amount?: number | null;
+  other_costs?: number | null;
+  total_price: number;
+  delivery_days?: number | null;
+  payment_terms?: string | null;
+  warranty_months?: number | null;
+  valid_until?: string | null;
+  notes?: string | null;
+  items: PortalExistingQuoteItem[];
+  created_at: string;
+  updated_at?: string | null;
+}
+
+export interface PortalRFQResponse {
+  invitation_id: string;
+  organization_name: string;
+  supplier_name: string;
+  supplier_email: string;
+  rfq_id: string;
+  rfq_title: string;
+  rfq_description?: string | null;
+  required_quantity?: number | null;
+  required_date?: string | null;
+  max_delivery_days?: number | null;
+  min_warranty_months?: number | null;
+  payment_terms?: string | null;
+  items: PortalRFQItem[];
+  can_submit: boolean;
+  deadline_passed: boolean;
+  expires_at: string;
+  is_revoked: boolean;
+  existing_quote?: PortalExistingQuote | null;
+}
+
+export interface PortalQuoteItemSubmit {
+  line_number: number;
+  description: string;
+  quantity: number;
+  unit?: string;
+  unit_price: number;
+  total_price: number;
+}
+
+export interface PortalQuoteSubmitRequest {
+  currency: string;
+  subtotal: number;
+  vat_rate?: number;
+  vat_amount?: number;
+  shipping_cost?: number;
+  discount_amount?: number;
+  other_costs?: number;
+  delivery_days: number;
+  warranty_months: number;
+  payment_terms?: string;
+  valid_until?: string;
+  notes?: string;
+  items?: PortalQuoteItemSubmit[];
+}
+
+export interface PortalQuoteSubmitResponse {
+  success: boolean;
+  message: string;
+  quote_id: string;
+  total_price: number;
+  currency: string;
+  submitted_at: string;
 }
 
 
