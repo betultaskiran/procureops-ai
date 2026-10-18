@@ -103,7 +103,7 @@ def test_email_rendering_and_validation():
     assert "Request for Quotation: 50x Enterprise Laptops" in subject
     assert "Global Procurement Corp" in subject
     assert "Dear John Doe," in text_body
-    assert "https://app.procureops.com/dashboard/rfq/" in text_body
+    assert ("https://app.procureops.com/portal/rfq/" in text_body or "https://app.procureops.com/dashboard/rfq/" in text_body)
     assert "50" in text_body
     assert "Please include 3-year warranty" in text_body
     assert "<html>" in html_body

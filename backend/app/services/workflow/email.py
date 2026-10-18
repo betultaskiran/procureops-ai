@@ -60,9 +60,10 @@ class EmailService:
                 # Dispatch delivery immediately in background task
                 await EmailDeliveryService.dispatch_delivery(delivery.id)
                 logger.info(f"[EmailService] PO {po.po_number} email dispatched via outbox: delivery_id={delivery.id}")
+            except ValueError as exc:
+                logger.error(f"[EmailService] Validation failed for PO email: {exc}")
+                # Do NOT mark po.email_sent = True on validation failure (e.g. DRAFT status or missing email)
+                return
             except Exception as exc:
-                logger.warning(f"[EmailService] Outbox PO email creation fell back: {exc}")
-                # Fallback: ensure po.email_sent is still marked for legacy behavior
-                po.email_sent = True
-                po.email_sent_at = datetime.now(timezone.utc)
-                await db.commit()
+                logger.error(f"[EmailService] Unexpected error sending PO email: {exc}")
+                return

@@ -100,6 +100,13 @@ async def correlation_and_logging_middleware(request: Request, call_next):
         duration_ms = round((time.perf_counter() - start_time) * 1000, 2)
         response.headers["X-Correlation-ID"] = corr_id
 
+        # Security Hardening Headers (Phase 14)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        if request.url.path.startswith("/api/"):
+            response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+
         # Log requests; skip verbose logging for health checks unless failing
         if not request.url.path.startswith("/health") or response.status_code >= 400:
             req_logger.info(

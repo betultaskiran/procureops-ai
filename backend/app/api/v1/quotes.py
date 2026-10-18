@@ -162,6 +162,21 @@ def _validate_file_content(content: bytes, filename: str) -> None:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="File content does not match Excel (.xlsx) format or file is corrupt.",
             )
+        import io
+        import zipfile
+        try:
+            with zipfile.ZipFile(io.BytesIO(content)) as zf:
+                names = zf.namelist()
+                if not any("xl/workbook.xml" in n or "workbook.xml" in n for n in names):
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="File content does not match Excel (.xlsx) format or file is corrupt.",
+                    )
+        except zipfile.BadZipFile:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="File content does not match Excel (.xlsx) format or file is corrupt.",
+            )
     elif suffix == ".png":
         if not content.startswith(b"\x89PNG\r\n\x1a\n"):
             raise HTTPException(

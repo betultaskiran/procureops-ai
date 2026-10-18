@@ -115,7 +115,7 @@ async function handleResponse<T>(response: Response, path?: string): Promise<T> 
   if (!response.ok) {
     // If a protected route fails with 401 Unauthorized (and not a login attempt),
     // clear the invalid/expired token and inform auth subscribers
-    if (response.status === 401 && path !== "/api/v1/auth/login") {
+    if (response.status === 401 && path !== "/api/v1/auth/login" && !path?.startsWith("/api/v1/portal")) {
       removeAuthToken();
       if (typeof window !== "undefined") {
         window.dispatchEvent(new CustomEvent("auth:unauthorized", { detail: { path } }));
