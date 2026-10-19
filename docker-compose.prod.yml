@@ -29,6 +29,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    networks:
+      - procureops_internal
     restart: "no"
 
   # ── Production FastAPI Backend ──────────────────────────────────────────────
@@ -37,7 +39,9 @@ services:
       context: ./backend
       dockerfile: Dockerfile.prod
     ports:
-      - "8000:8000"
+      # Bound strictly to loopback (127.0.0.1); never exposed to 0.0.0.0.
+      # Reverse proxy (Nginx, Caddy, Cloudflare tunnel) on the host proxies traffic here.
+      - "127.0.0.1:8000:8000"
     env_file:
       - .env
     environment:
@@ -54,6 +58,14 @@ services:
         condition: service_started
       redis:
         condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://127.0.0.1:8000/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    networks:
+      - procureops_internal
     restart: always
 
   # ── Production Next.js 15 Standalone Frontend ───────────────────────────────
@@ -62,7 +74,9 @@ services:
       context: ./frontend
       dockerfile: Dockerfile.prod
     ports:
-      - "3000:3000"
+      # Bound strictly to loopback (127.0.0.1); never exposed to 0.0.0.0.
+      # Reverse proxy (Nginx, Caddy, Cloudflare tunnel) on the host proxies traffic here.
+      - "127.0.0.1:3000:3000"
     env_file:
       - .env
     environment:
@@ -71,13 +85,23 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://127.0.0.1:3000/login || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - procureops_internal
     restart: always
 
   # ── PostgreSQL 16 ───────────────────────────────────────────────────────────
   postgres:
     image: postgres:16-alpine
-    ports:
-      - "5432:5432"
+    # ZERO host port publishing. PostgreSQL is consumed exclusively over the internal
+    # Docker network (procureops_internal) by backend and migration services.
+    # To run ad-hoc psql or administrative tasks from the host:
+    #   docker compose -f docker-compose.prod.yml exec postgres psql -U ${POSTGRES_USER} -d ${POSTGRES_DB}
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -89,27 +113,37 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - procureops_internal
     restart: always
 
   # ── Qdrant Vector Database ──────────────────────────────────────────────────
   qdrant:
     image: qdrant/qdrant:v1.13.6
-    ports:
-      - "6333:6333"
-      - "6334:6334"
+    # ZERO host port publishing. Vector search and ingestion are consumed exclusively
+    # over the internal Docker network by the backend service.
     volumes:
       - qdrant_data:/qdrant/storage
+    networks:
+      - procureops_internal
     restart: always
 
   # ── Redis 7 ─────────────────────────────────────────────────────────────────
   redis:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
+    # ZERO host port publishing. Cache and rate limiting are consumed exclusively
+    # over the internal Docker network by the backend service.
     volumes:
       - redis_data:/data
     command: redis-server --appendonly yes
+    networks:
+      - procureops_internal
     restart: always
+
+networks:
+  procureops_internal:
+    name: procureops_prod_network
+    driver: bridge
 
 volumes:
   postgres_data:
