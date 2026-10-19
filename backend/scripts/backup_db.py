@@ -82,11 +82,18 @@ def run_backup(
         print("[*] Dry run enabled; skipping actual pg_dump execution.")
         return target_path
 
-    # Command executes pg_dump inside the postgres container using docker compose exec
-    cmd = [
-        "docker", "compose", "exec", "-T", "postgres",
-        "pg_dump", "-U", db_user, "-d", db_name, "-Fc", "--no-owner", "--no-acl"
-    ]
+    # Command executes pg_dump inside the postgres container using docker exec or docker compose
+    container = os.getenv("PG_CONTAINER")
+    if container:
+        cmd = [
+            "docker", "exec", container,
+            "pg_dump", "-U", db_user, "-d", db_name, "-Fc", "--no-owner", "--no-acl"
+        ]
+    else:
+        cmd = [
+            "docker", "compose", "exec", "-T", "postgres",
+            "pg_dump", "-U", db_user, "-d", db_name, "-Fc", "--no-owner", "--no-acl"
+        ]
 
     try:
         with open(target_path, "wb") as f_out:

@@ -508,9 +508,11 @@ class RAGService:
                     continue
                 c_overlap = c.get("_clause_overlaps", [])[clause_idx] if "_clause_overlaps" in c else 0.0
                 if c_overlap >= min_topical_overlap:
-                    sc = float(c.get("score") or 0.0)
-                    if sc > best_cand_score:
-                        best_cand_score = sc
+                    # Alt ifadeye en uygun adayı belirlerken hem konusal örtüşme oranını (overlap)
+                    # hem de anlamsal skoru (score) birlikte değerlendir
+                    clause_metric = c_overlap * 2.0 + float(c.get("score") or 0.0)
+                    if clause_metric > best_cand_score:
+                        best_cand_score = clause_metric
                         best_cand_for_clause = c
             if best_cand_for_clause:
                 cand_key = f"{best_cand_for_clause.get('doc_id')}_{best_cand_for_clause.get('chunk_index')}"

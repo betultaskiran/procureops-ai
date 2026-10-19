@@ -39,7 +39,9 @@ Thumbs.db
 # ─── Uploads / local data ────────────────────────────────────────────────────
 uploads/
 *.pdf
+!backend/tests/fixtures/*.pdf
 *.xlsx
+!backend/tests/fixtures/*.xlsx
 scratch/
 backups/
 *.dump
