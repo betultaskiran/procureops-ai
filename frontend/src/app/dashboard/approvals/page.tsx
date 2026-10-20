@@ -21,9 +21,12 @@ import {
 import { useAuth } from "@/lib/auth/AuthContext";
 import { ordersApi } from "@/lib/api/orders";
 import { PendingApprovalItemResponse } from "@/lib/api/types";
+import { useTranslation } from "@/lib/i18n";
+import { formatCurrency as fmtCurrency, formatDate as fmtDate } from "@/lib/i18n/formatters";
 
 export default function ApprovalsQueuePage() {
   const { user } = useAuth();
+  const { t, locale } = useTranslation();
   const [items, setItems] = useState<PendingApprovalItemResponse[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -46,7 +49,7 @@ export default function ApprovalsQueuePage() {
       const data = await ordersApi.getPendingApprovals();
       setItems(data);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Onay kuyruğu yüklenirken bir hata oluştu.";
+      const msg = err instanceof Error ? err.message : "Error loading approval queue.";
       setError(msg);
     } finally {
       setIsLoading(false);
@@ -67,12 +70,12 @@ export default function ApprovalsQueuePage() {
         approvingItem.step_id,
         approveComment
       );
-      setSuccessMsg(`${approvingItem.po_number} numaralı sipariş için onay adımı başarıyla kaydedildi.`);
+      setSuccessMsg(t("approvals_page.toast_approved", { po: approvingItem.po_number }));
       setApprovingItem(null);
       setApproveComment("");
       await fetchApprovals();
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Onaylama işlemi başarısız oldu.";
+      const msg = err instanceof Error ? err.message : "Approval operation failed.";
       setError(msg);
     } finally {
       setIsSubmittingApprove(false);
@@ -82,7 +85,7 @@ export default function ApprovalsQueuePage() {
   const handleReject = async () => {
     if (!rejectingItem) return;
     if (!rejectReason.trim() || rejectReason.trim().length < 3) {
-      setRejectError("Lütfen en az 3 karakterlik geçerli bir red gerekçesi belirtiniz.");
+      setRejectError(t("approvals_page.err_min_reject_length"));
       return;
     }
     setIsSubmittingReject(true);
@@ -93,12 +96,12 @@ export default function ApprovalsQueuePage() {
         rejectingItem.step_id,
         rejectReason.trim()
       );
-      setSuccessMsg(`${rejectingItem.po_number} numaralı sipariş reddedildi ve iş akışı durduruldu.`);
+      setSuccessMsg(t("approvals_page.toast_rejected", { po: rejectingItem.po_number }));
       setRejectingItem(null);
       setRejectReason("");
       await fetchApprovals();
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Red işlemi başarısız oldu.";
+      const msg = err instanceof Error ? err.message : "Rejection failed.";
       setRejectError(msg);
     } finally {
       setIsSubmittingReject(false);
@@ -106,21 +109,23 @@ export default function ApprovalsQueuePage() {
   };
 
   const formatCurrency = (val: number, cur: string) => {
-    return new Intl.NumberFormat("tr-TR", {
-      style: "currency",
-      currency: cur || "TRY",
-      maximumFractionDigits: 2,
-    }).format(val);
+    return fmtCurrency(val, cur || "TRY", locale);
   };
 
   const getRoleLabel = (role: string) => {
     switch (role) {
       case "purchasing_director":
-        return "Satın Alma Direktörü";
+        return t("approvals_page.roles.purchasing_director");
       case "cfo":
-        return "Mali İşler Direktörü (CFO)";
+        return t("approvals_page.roles.cfo");
       case "admin":
-        return "Sistem Yöneticisi";
+        return t("approvals_page.roles.admin");
+      case "manager":
+        return t("approvals_page.roles.manager");
+      case "employee":
+        return t("approvals_page.roles.employee");
+      case "viewer":
+        return t("approvals_page.roles.viewer");
       default:
         return role;
     }
@@ -137,10 +142,10 @@ export default function ApprovalsQueuePage() {
             </div>
             <div>
               <h1 className="text-2xl font-bold text-text-primary tracking-tight">
-                Satın Alma Onay Kuyruğu
+                {t("approvals_page.title")}
               </h1>
               <p className="text-sm text-text-muted mt-1">
-                250.000 TL üzerindeki ve çift onay gerektiren kurumsal siparişlerin yönetim ve onay merkezi.
+                {t("approvals_page.subtitle")}
               </p>
             </div>
           </div>
@@ -150,7 +155,7 @@ export default function ApprovalsQueuePage() {
         {user && (
           <div className="flex items-center gap-2 self-start md:self-auto px-3.5 py-1.5 rounded-full border border-border bg-surface-elevated text-xs font-medium text-text-primary">
             <UserCheck size={14} className="text-primary" />
-            <span>Yetkiniz:</span>
+            <span>{t("approvals_page.your_authority")}</span>
             <span className="font-semibold text-primary">{getRoleLabel(user.role)}</span>
           </div>
         )}
@@ -161,11 +166,11 @@ export default function ApprovalsQueuePage() {
         <div className="p-4 rounded-lg bg-rose-500/10 border border-rose-500/20 text-rose-600 dark:text-rose-400 text-sm flex items-start gap-3">
           <AlertTriangle size={18} className="shrink-0 mt-0.5" />
           <div className="flex-1">
-            <p className="font-medium">İşlem Hatası</p>
+            <p className="font-medium">{t("approvals_page.error_title")}</p>
             <p className="text-xs mt-0.5">{error}</p>
           </div>
           <button onClick={() => setError(null)} className="text-rose-500 hover:text-rose-700 text-xs">
-            Kapat
+            {t("approvals_page.close")}
           </button>
         </div>
       )}
@@ -174,11 +179,11 @@ export default function ApprovalsQueuePage() {
         <div className="p-4 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-sm flex items-start gap-3">
           <CheckCircle2 size={18} className="shrink-0 mt-0.5" />
           <div className="flex-1">
-            <p className="font-medium">İşlem Tamamlandı</p>
+            <p className="font-medium">{t("approvals_page.success_title")}</p>
             <p className="text-xs mt-0.5">{successMsg}</p>
           </div>
           <button onClick={() => setSuccessMsg(null)} className="text-emerald-500 hover:text-emerald-700 text-xs">
-            Kapat
+            {t("approvals_page.close")}
           </button>
         </div>
       )}
@@ -187,7 +192,7 @@ export default function ApprovalsQueuePage() {
       {isLoading ? (
         <div className="p-16 flex flex-col items-center justify-center gap-3 bg-surface rounded-xl border border-border">
           <Loader2 size={32} className="animate-spin text-primary" />
-          <span className="text-sm text-text-muted">Onay kuyruğundaki bekleyen siparişler yükleniyor...</span>
+          <span className="text-sm text-text-muted">{t("approvals_page.loading_queue")}</span>
         </div>
       ) : items.length === 0 ? (
         <div className="p-16 flex flex-col items-center justify-center gap-4 bg-surface rounded-xl border border-border text-center">
@@ -195,25 +200,25 @@ export default function ApprovalsQueuePage() {
             <CheckCircle2 size={32} />
           </div>
           <div>
-            <h3 className="text-lg font-semibold text-text-primary">Onay Bekleyen Sipariş Bulunmuyor</h3>
+            <h3 className="text-lg font-semibold text-text-primary">{t("approvals_page.empty_title")}</h3>
             <p className="text-sm text-text-muted max-w-md mt-1">
               {user?.role === "purchasing_director" || user?.role === "cfo" || user?.role === "admin"
-                ? "Şu anda rolünüze atanmış ve onayınızı bekleyen herhangi bir satın alma siparişi bulunmamaktadır."
-                : "Mevcut kullanıcı rolünüz onay kuyruğunda işlem yapmaya yetkili değildir. Onay işlemleri yalnızca Satın Alma Direktörü, CFO veya Sistem Yöneticisi tarafından yürütülür."}
+                ? t("approvals_page.empty_desc_approver")
+                : t("approvals_page.empty_desc_unauthorized")}
             </p>
           </div>
           <Link
             href="/dashboard/quotes"
             className="mt-2 inline-flex items-center gap-2 text-xs font-semibold px-4 py-2 rounded-md bg-surface-elevated hover:bg-border text-text-primary transition-colors"
           >
-            Tüm Teklif ve RFQ&apos;ları İncele
+            {t("approvals_page.view_all_quotes")}
           </Link>
         </div>
       ) : (
         <div className="space-y-4">
           <div className="text-xs font-medium text-text-muted px-1 flex items-center justify-between">
-            <span>Onayınızı Bekleyen {items.length} Kayıt Bulundu</span>
-            <span className="text-amber-500 font-semibold">Tüm onaylar tamamlanana kadar sipariş DRAFT durumunda korunur</span>
+            <span>{t("approvals_page.pending_count_info", { count: items.length })}</span>
+            <span className="text-amber-500 font-semibold">{t("approvals_page.draft_notice")}</span>
           </div>
 
           <div className="grid grid-cols-1 gap-4">
@@ -230,7 +235,7 @@ export default function ApprovalsQueuePage() {
                     </span>
                     <span className="text-xs px-2.5 py-0.5 rounded-full border bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20 font-medium flex items-center gap-1.5">
                       <Clock size={12} />
-                      {getRoleLabel(item.role)} Onayı Bekliyor
+                      {t("approvals_page.awaiting_role_approval", { role: getRoleLabel(item.role) })}
                     </span>
                   </div>
 
@@ -238,14 +243,14 @@ export default function ApprovalsQueuePage() {
                     <div className="text-lg font-bold text-text-primary">
                       {formatCurrency(item.amount, item.currency)}
                     </div>
-                    <span className="text-[11px] text-text-muted">Toplam Sipariş Tutarı</span>
+                    <span className="text-[11px] text-text-muted">{t("approvals_page.total_order_amount")}</span>
                   </div>
                 </div>
 
                 {/* Details Grid */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 text-xs">
                   <div>
-                    <span className="text-text-muted block mb-1">Tedarikçi</span>
+                    <span className="text-text-muted block mb-1">{t("approvals_page.supplier_label")}</span>
                     <span className="font-semibold text-text-primary flex items-center gap-1.5 text-sm">
                       <Building2 size={14} className="text-text-muted shrink-0" />
                       {item.supplier_name}
@@ -253,7 +258,7 @@ export default function ApprovalsQueuePage() {
                   </div>
 
                   <div>
-                    <span className="text-text-muted block mb-1">Bağlı RFQ Talebi</span>
+                    <span className="text-text-muted block mb-1">{t("approvals_page.linked_rfq_label")}</span>
                     <Link
                       href={`/dashboard/rfq/${item.rfq_id}`}
                       className="font-semibold text-primary hover:underline flex items-center gap-1 text-sm"
@@ -264,15 +269,9 @@ export default function ApprovalsQueuePage() {
                   </div>
 
                   <div>
-                    <span className="text-text-muted block mb-1">Talep Oluşturulma Tarihi</span>
+                    <span className="text-text-muted block mb-1">{t("approvals_page.request_created_date")}</span>
                     <span className="text-text-primary font-medium">
-                      {new Date(item.created_at).toLocaleDateString("tr-TR", {
-                        year: "numeric",
-                        month: "long",
-                        day: "numeric",
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })}
+                      {fmtDate(item.created_at, locale)}
                     </span>
                   </div>
                 </div>
@@ -280,7 +279,7 @@ export default function ApprovalsQueuePage() {
                 {/* Multi-Tier Progress Indicator */}
                 <div className="pt-2 border-t border-border/40">
                   <span className="text-[11px] font-semibold text-text-muted uppercase tracking-wider block mb-2">
-                    Onay Kademeleri İlerlemesi
+                    {t("approvals_page.tiers_progress_title")}
                   </span>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     {item.all_steps.map((step) => {
@@ -313,21 +312,20 @@ export default function ApprovalsQueuePage() {
                               <div className="font-semibold">{getRoleLabel(step.role)}</div>
                               <div className="text-[10px] text-text-muted">
                                 {isApproved
-                                  ? `Onaylayan: ${step.approver_name || "Yetkili"} • ${
-                                      step.decision_at
-                                        ? new Date(step.decision_at).toLocaleDateString("tr-TR")
-                                        : ""
-                                    }`
+                                  ? t("approvals_page.approver_note", {
+                                      name: step.approver_name || "Yetkili",
+                                      date: step.decision_at ? fmtDate(step.decision_at, locale) : ""
+                                    })
                                   : isRejected
-                                  ? `Reddedildi: ${step.rejection_reason || ""}`
-                                  : "Beklemede"}
+                                  ? t("approvals_page.rejected_note", { reason: step.rejection_reason || "" })
+                                  : t("approvals_page.pending_step")}
                               </div>
                             </div>
                           </div>
 
                           {isTarget && (
                             <span className="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-700 dark:text-amber-300">
-                              Sizin Onayınız
+                              {t("approvals_page.your_step")}
                             </span>
                           )}
                         </div>
@@ -347,7 +345,7 @@ export default function ApprovalsQueuePage() {
                     className="px-4 py-2 rounded-lg text-xs font-semibold border border-rose-500/20 text-rose-600 dark:text-rose-400 hover:bg-rose-500/10 transition-colors flex items-center gap-1.5"
                   >
                     <XCircle size={14} />
-                    Siparişi Reddet
+                    {t("approvals_page.reject_order_btn")}
                   </button>
 
                   <button
@@ -358,7 +356,7 @@ export default function ApprovalsQueuePage() {
                     className="px-4 py-2 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white transition-colors flex items-center gap-1.5 shadow-sm"
                   >
                     <CheckCircle2 size={14} />
-                    Onayla ({getRoleLabel(item.role)})
+                    {t("approvals_page.approve_role_btn", { role: getRoleLabel(item.role) })}
                   </button>
                 </div>
               </div>
@@ -376,26 +374,26 @@ export default function ApprovalsQueuePage() {
                 <ShieldCheck size={22} />
               </div>
               <div>
-                <h3 className="text-base font-bold text-text-primary">Satın Alma Siparişini Onayla</h3>
+                <h3 className="text-base font-bold text-text-primary">{t("approvals_page.modal_approve_title")}</h3>
                 <p className="text-xs text-text-muted">
-                  {approvingItem.po_number} • {getRoleLabel(approvingItem.role)} Yetkisiyle
+                  {t("approvals_page.modal_approve_subtitle", { po: approvingItem.po_number, role: getRoleLabel(approvingItem.role) })}
                 </p>
               </div>
             </div>
 
             <div className="p-3 rounded-lg bg-surface-elevated border border-border text-xs space-y-1.5">
               <div className="flex justify-between">
-                <span className="text-text-muted">Tedarikçi:</span>
+                <span className="text-text-muted">{t("approvals_page.supplier_label")}:</span>
                 <span className="font-semibold text-text-primary">{approvingItem.supplier_name}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-text-muted">Tutar:</span>
+                <span className="text-text-muted">{t("approvals_page.total_order_amount")}:</span>
                 <span className="font-semibold text-text-primary">
                   {formatCurrency(approvingItem.amount, approvingItem.currency)}
                 </span>
               </div>
               <div className="flex justify-between">
-                <span className="text-text-muted">Onay Rolü:</span>
+                <span className="text-text-muted">{t("approvals_page.modal_role_label")}</span>
                 <span className="font-semibold text-emerald-600 dark:text-emerald-400">
                   {getRoleLabel(approvingItem.role)}
                 </span>
@@ -403,17 +401,17 @@ export default function ApprovalsQueuePage() {
             </div>
 
             <p className="text-xs text-text-muted">
-              Bu onay adımı kaydedilecek ve audit log kütüğüne yazılacaktır. Eğer diğer tüm onay kademeleri tamamlanmışsa sipariş otomatik olarak <strong>ISSUED</strong> durumuna geçecek ve tedarikçiye resmi bildirim iletilecektir.
+              {t("approvals_page.modal_approve_legal_note")}
             </p>
 
             <div>
               <label className="text-xs font-semibold text-text-primary block mb-1">
-                Onay Notu / Açıklama (Opsiyonel)
+                {t("approvals_page.modal_approve_note_label")}
               </label>
               <textarea
                 value={approveComment}
                 onChange={(e) => setApproveComment(e.target.value)}
-                placeholder="Örn: Bütçe ve tedarik şartları incelendi, onay uygundur."
+                placeholder={t("approvals_page.modal_approve_note_placeholder")}
                 rows={3}
                 className="w-full text-xs p-3 rounded-lg bg-surface-elevated border border-border focus:outline-none focus:ring-1 focus:ring-primary text-text-primary"
               />
@@ -426,7 +424,7 @@ export default function ApprovalsQueuePage() {
                 disabled={isSubmittingApprove}
                 className="px-4 py-2 rounded-lg text-xs font-medium border border-border text-text-muted hover:text-text-primary hover:bg-surface-elevated transition-colors"
               >
-                Vazgeç
+                {t("approvals_page.modal_cancel_btn")}
               </button>
               <button
                 type="button"
@@ -437,12 +435,12 @@ export default function ApprovalsQueuePage() {
                 {isSubmittingApprove ? (
                   <>
                     <Loader2 size={14} className="animate-spin" />
-                    <span>Onaylanıyor...</span>
+                    <span>{t("approvals_page.modal_approving_btn")}</span>
                   </>
                 ) : (
                   <>
                     <CheckCircle2 size={14} />
-                    <span>Onayı Tamamla</span>
+                    <span>{t("approvals_page.modal_confirm_approve_btn")}</span>
                   </>
                 )}
               </button>
@@ -460,23 +458,23 @@ export default function ApprovalsQueuePage() {
                 <ShieldAlert size={22} />
               </div>
               <div>
-                <h3 className="text-base font-bold text-text-primary">Satın Alma Siparişini Reddet</h3>
+                <h3 className="text-base font-bold text-text-primary">{t("approvals_page.modal_reject_title")}</h3>
                 <p className="text-xs text-text-muted">
-                  {rejectingItem.po_number} • {getRoleLabel(rejectingItem.role)} Yetkisiyle
+                  {t("approvals_page.modal_reject_subtitle", { po: rejectingItem.po_number, role: getRoleLabel(rejectingItem.role) })}
                 </p>
               </div>
             </div>
 
             <div className="p-3 rounded-lg bg-rose-500/5 border border-rose-500/20 text-xs text-rose-600 dark:text-rose-400 space-y-1">
-              <p className="font-semibold">Dikkat: Bu işlem geri alınamaz!</p>
+              <p className="font-semibold">{t("approvals_page.modal_reject_warning_title")}</p>
               <p>
-                Siparişin reddedilmesi durumunda iş akışı durdurulacak, sipariş CANCELLED statüsüne alınacak ve bekleyen diğer onay kademeleri iptal edilecektir.
+                {t("approvals_page.modal_reject_warning_desc")}
               </p>
             </div>
 
             <div>
               <label className="text-xs font-semibold text-text-primary block mb-1">
-                Zorunlu Red Gerekçesi (En az 3 karakter) <span className="text-rose-500">*</span>
+                {t("approvals_page.modal_reject_reason_label")} <span className="text-rose-500">*</span>
               </label>
               <textarea
                 value={rejectReason}
@@ -484,7 +482,7 @@ export default function ApprovalsQueuePage() {
                   setRejectReason(e.target.value);
                   if (rejectError) setRejectError(null);
                 }}
-                placeholder="Örn: Bütçe aşımı nedeniyle onaylanmadı veya tedarik şartları şirket politikasına aykırı."
+                placeholder={t("approvals_page.modal_reject_reason_placeholder")}
                 rows={3}
                 className="w-full text-xs p-3 rounded-lg bg-surface-elevated border border-border focus:outline-none focus:ring-1 focus:ring-rose-500 text-text-primary"
               />
@@ -498,7 +496,7 @@ export default function ApprovalsQueuePage() {
                 disabled={isSubmittingReject}
                 className="px-4 py-2 rounded-lg text-xs font-medium border border-border text-text-muted hover:text-text-primary hover:bg-surface-elevated transition-colors"
               >
-                Vazgeç
+                {t("approvals_page.modal_cancel_btn")}
               </button>
               <button
                 type="button"
@@ -509,12 +507,12 @@ export default function ApprovalsQueuePage() {
                 {isSubmittingReject ? (
                   <>
                     <Loader2 size={14} className="animate-spin" />
-                    <span>Reddediliyor...</span>
+                    <span>{t("approvals_page.modal_rejecting_btn")}</span>
                   </>
                 ) : (
                   <>
                     <XCircle size={14} />
-                    <span>Reddet ve Durdur</span>
+                    <span>{t("approvals_page.modal_confirm_reject_btn")}</span>
                   </>
                 )}
               </button>

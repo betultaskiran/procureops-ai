@@ -19,6 +19,8 @@ import {
   Check
 } from "lucide-react";
 import { AnalysisResponse, Quote } from "@/lib/api/types";
+import { useTranslation } from "@/lib/i18n";
+import { formatCurrency as fmtCurrency } from "@/lib/i18n/formatters";
 
 interface EvidencePanelProps {
   analysis: AnalysisResponse;
@@ -31,6 +33,7 @@ export const EvidencePanel: React.FC<EvidencePanelProps> = ({
   quotes,
   onOpenReviewModal,
 }) => {
+  const { t, locale } = useTranslation();
   const [isRulesExpanded, setIsRulesExpanded] = useState(false);
   const [selectedEvidenceIdx, setSelectedEvidenceIdx] = useState<number | null>(null);
 
@@ -44,7 +47,7 @@ export const EvidencePanel: React.FC<EvidencePanelProps> = ({
       case "verified":
       case "passed":
         return {
-          label: "Doğrulandı (Verified)",
+          label: t("analysis.evidence.v_status_verified"),
           bg: "bg-emerald-500/15",
           border: "border-emerald-500/30",
           text: "text-emerald-400",
@@ -53,7 +56,7 @@ export const EvidencePanel: React.FC<EvidencePanelProps> = ({
       case "failed":
       case "overridden":
         return {
-          label: "Doğrulama Başarısız (Failed / Overridden)",
+          label: t("analysis.evidence.v_status_failed"),
           bg: "bg-red-500/15",
           border: "border-red-500/30",
           text: "text-red-400",
@@ -61,7 +64,7 @@ export const EvidencePanel: React.FC<EvidencePanelProps> = ({
         };
       case "inconclusive":
         return {
-          label: "Yetersiz Kanıt / Sonuçsuz (Inconclusive)",
+          label: t("analysis.evidence.v_status_inconclusive"),
           bg: "bg-amber-500/15",
           border: "border-amber-500/30",
           text: "text-amber-400",
@@ -69,7 +72,7 @@ export const EvidencePanel: React.FC<EvidencePanelProps> = ({
         };
       case "exception_required":
         return {
-          label: "İstisna Onayı Gerekiyor (Exception Required)",
+          label: t("analysis.evidence.v_status_exception_required"),
           bg: "bg-red-500/15",
           border: "border-red-500/30",
           text: "text-red-400",
@@ -77,7 +80,7 @@ export const EvidencePanel: React.FC<EvidencePanelProps> = ({
         };
       default:
         return {
-          label: "İnceleme Bekliyor (Pending)",
+          label: t("analysis.evidence.v_status_pending"),
           bg: "bg-amber-500/15",
           border: "border-amber-500/30",
           text: "text-amber-400",
@@ -100,33 +103,33 @@ export const EvidencePanel: React.FC<EvidencePanelProps> = ({
   // 6 Pipeline Stages definition
   const defaultStages = [
     {
-      name: "1. Doğrulama",
-      fullName: "Girdi & Doküman Doğrulama",
-      type: "Deterministik Python",
+      name: t("analysis.evidence.stage_1_name"),
+      fullName: t("analysis.evidence.stage_1_desc"),
+      type: t("analysis.evidence.stage_1_type"),
       status: "completed",
     },
     {
-      name: "2. TCO & Kurallar",
-      fullName: "TCO & Kesin Kurallar",
-      type: "Deterministik Python",
+      name: t("analysis.evidence.stage_2_name"),
+      fullName: t("analysis.evidence.stage_2_desc"),
+      type: t("analysis.evidence.stage_2_type"),
       status: "completed",
     },
     {
-      name: "3. Politika Uyumu",
-      fullName: "Kurumsal RAG Analizi",
-      type: "Qdrant RAG",
+      name: t("analysis.evidence.stage_3_name"),
+      fullName: t("analysis.evidence.stage_3_desc"),
+      type: t("analysis.evidence.stage_3_type"),
       status: analysis.evidence_items && analysis.evidence_items.length > 0 ? "completed" : "inconclusive",
     },
     {
-      name: "4. LLM Önerisi",
-      fullName: "Tedarikçi Öneri Ajanı",
-      type: "LLM Danışman",
+      name: t("analysis.evidence.stage_4_name"),
+      fullName: t("analysis.evidence.stage_4_desc"),
+      type: t("analysis.evidence.stage_4_type"),
       status: recommendation ? "completed" : "pending",
     },
     {
-      name: "5. Doğrulama",
-      fullName: "Bağımsız Doğrulama Katmanı",
-      type: "Doğrulama Motoru",
+      name: t("analysis.evidence.stage_5_name"),
+      fullName: t("analysis.evidence.stage_5_desc"),
+      type: t("analysis.evidence.stage_5_type"),
       status: recommendation?.verification_status?.toLowerCase() === "failed" || recommendation?.verification_status?.toLowerCase() === "overridden"
         ? "failed"
         : recommendation?.verification_status?.toLowerCase() === "inconclusive"
@@ -134,9 +137,9 @@ export const EvidencePanel: React.FC<EvidencePanelProps> = ({
         : "completed",
     },
     {
-      name: "6. İnsan Onayı",
-      fullName: "Yönetici İncelemesi & PO",
-      type: "Human-in-the-Loop",
+      name: t("analysis.evidence.stage_6_name"),
+      fullName: t("analysis.evidence.stage_6_desc"),
+      type: t("analysis.evidence.stage_6_type"),
       status: "pending",
     },
   ];
@@ -149,11 +152,11 @@ export const EvidencePanel: React.FC<EvidencePanelProps> = ({
           <div className="flex items-center gap-2">
             <Layers size={16} className="text-primary" />
             <h3 className="text-xs font-semibold uppercase tracking-wider text-text-primary">
-              6 Aşamalı Karar & Doğrulama Hattı (Pipeline Architecture)
+              {t("analysis.evidence.pipeline_title")}
             </h3>
           </div>
           <span className="text-[11px] text-text-muted">
-            Deterministik kurallar, RAG ve LLM ayrımı
+            {t("analysis.evidence.pipeline_subtitle")}
           </span>
         </div>
 
@@ -214,10 +217,10 @@ export const EvidencePanel: React.FC<EvidencePanelProps> = ({
             </div>
             <div>
               <h2 className="text-sm font-semibold uppercase tracking-wider text-text-primary">
-                Yapay Zeka Karar & Öneri Motoru
+                {t("analysis.evidence.engine_title")}
               </h2>
               <span className="text-xs text-text-muted">
-                TCO optimizasyonu ve kurumsal politika uyumu değerlendirmesi
+                {t("analysis.evidence.engine_subtitle")}
               </span>
             </div>
           </div>
@@ -237,7 +240,7 @@ export const EvidencePanel: React.FC<EvidencePanelProps> = ({
           <div className="mb-5 p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-center gap-2.5">
             <AlertTriangle size={16} className="text-amber-400 shrink-0" />
             <span>
-              <strong>Analiz Güncel Değil (Stale):</strong> RFQ veya tekliflerde yapılan değişiklikler nedeniyle bu analiz geçersizdir. Karar vermeden önce analizi yeniden çalıştırınız.
+              {t("analysis.evidence.stale_warning")}
             </span>
           </div>
         )}
@@ -280,20 +283,20 @@ export const EvidencePanel: React.FC<EvidencePanelProps> = ({
                     : "text-text-muted"
                 }`}>
                   {analysis.is_stale
-                    ? "ESKİ ANALİZ ÖNERİSİ (STALE)"
+                    ? t("analysis.evidence.badge_stale")
                     : recommendation?.verification_status?.toLowerCase() === "failed" || recommendation?.verification_status?.toLowerCase() === "overridden"
-                    ? "DOĞRULANAMAYAN TEDARİKÇİ ÖNERİSİ (FAILED)"
+                    ? t("analysis.evidence.badge_failed")
                     : recommendation?.verification_status?.toLowerCase() === "inconclusive"
-                    ? "ŞARTLI / GEÇİCİ TEDARİKÇİ ÖNERİSİ (INCONCLUSIVE)"
-                    : "ÖNERİLEN EN UYGUN TEDARİKÇİ"}
+                    ? t("analysis.evidence.badge_inconclusive")
+                    : t("analysis.evidence.badge_recommended")}
                 </span>
                 <span className="text-base font-bold text-text-primary">
-                  {recommendedQuote.supplier_name || "Bilinmeyen Tedarikçi"}
+                  {recommendedQuote.supplier_name || t("analysis.matrix.unknown_supplier")}
                 </span>
                 <span className="text-xs text-text-muted block mt-0.5">
-                  Toplam Fiyat: {new Intl.NumberFormat("tr-TR", { style: "currency", currency: recommendedQuote.currency || "TRY" }).format(recommendedQuote.total_price)}
-                  {recommendedQuote.delivery_days ? ` • ${recommendedQuote.delivery_days} Gün Teslimat` : ""}
-                  {recommendedQuote.warranty_months ? ` • ${recommendedQuote.warranty_months} Ay Garanti` : ""}
+                  {t("analysis.evidence.total_price_label", { price: fmtCurrency(recommendedQuote.total_price, recommendedQuote.currency || "TRY", locale) })}
+                  {recommendedQuote.delivery_days ? ` • ${t("analysis.matrix.days_unit", { count: recommendedQuote.delivery_days })}` : ""}
+                  {recommendedQuote.warranty_months ? ` • ${t("analysis.matrix.months_unit", { count: recommendedQuote.warranty_months })}` : ""}
                 </span>
               </div>
             </div>
@@ -314,22 +317,22 @@ export const EvidencePanel: React.FC<EvidencePanelProps> = ({
                 {analysis.is_stale ? (
                   <>
                     <Clock size={14} />
-                    Analiz Güncel Değil
+                    {t("analysis.evidence.btn_stale")}
                   </>
                 ) : recommendation?.verification_status?.toLowerCase() === "inconclusive" ? (
                   <>
                     <ShieldAlert size={14} />
-                    Öneriyi İncele & Karar Ver
+                    {t("analysis.evidence.btn_inconclusive")}
                   </>
                 ) : recommendation?.verification_status?.toLowerCase() === "failed" || recommendation?.verification_status?.toLowerCase() === "overridden" ? (
                   <>
                     <XCircle size={14} />
-                    İhlali İncele & Karar Ver
+                    {t("analysis.evidence.btn_violation")}
                   </>
                 ) : (
                   <>
                     <CheckCircle size={14} />
-                    Öneriyi Değerlendir & Onayla
+                    {t("analysis.evidence.btn_approve")}
                   </>
                 )}
               </button>
@@ -337,17 +340,17 @@ export const EvidencePanel: React.FC<EvidencePanelProps> = ({
           </div>
         ) : (
           <div className="mb-5 p-4 rounded-lg bg-amber-500/10 border border-amber-500/20 text-xs text-amber-300">
-            Otomatik önerilen bir teklif belirlenmedi. Lütfen matristeki seçenekleri inceleyiniz.
+            {t("analysis.evidence.no_recommendation")}
           </div>
         )}
 
         {/* Reasoning Text */}
         <div className="mb-5">
           <h3 className="text-xs font-semibold uppercase tracking-wider text-text-muted mb-2">
-            Karar Gerekçesi (LLM Reasoning)
+            {t("analysis.evidence.reasoning_title")}
           </h3>
           <div className="p-4 rounded-lg bg-surface/40 border border-border text-xs text-text-secondary leading-relaxed">
-            {recommendation?.reasoning || "Gerekçe açıklaması oluşturulmadı."}
+            {recommendation?.reasoning || t("analysis.evidence.no_reasoning")}
           </div>
         </div>
 
@@ -357,7 +360,7 @@ export const EvidencePanel: React.FC<EvidencePanelProps> = ({
             <div className="p-4 rounded-lg bg-amber-500/5 border border-amber-500/20">
               <h4 className="text-xs font-semibold text-amber-400 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
                 <AlertTriangle size={13} />
-                Tespit Edilen Riskler & Uyarılar
+                {t("analysis.evidence.risks_title")}
               </h4>
               <p className="text-xs text-text-muted leading-relaxed">
                 {recommendation.risks}
@@ -369,7 +372,7 @@ export const EvidencePanel: React.FC<EvidencePanelProps> = ({
             <div className="p-4 rounded-lg bg-surface/40 border border-border">
               <h4 className="text-xs font-semibold text-text-primary uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
                 <FileText size={13} className="text-primary" />
-                Alternatif Senaryolar & Notlar
+                {t("analysis.evidence.alternatives_title")}
               </h4>
               <p className="text-xs text-text-muted leading-relaxed">
                 {recommendation.alternative_notes}
@@ -380,7 +383,7 @@ export const EvidencePanel: React.FC<EvidencePanelProps> = ({
 
         {recommendation?.verification_notes && (
           <div className="text-xs text-text-muted border-t border-border pt-3">
-            <span className="font-semibold text-text-primary">Doğrulama Notu: </span>
+            <span className="font-semibold text-text-primary">{t("analysis.evidence.verification_notes_prefix")}</span>
             {recommendation.verification_notes}
           </div>
         )}
@@ -393,11 +396,11 @@ export const EvidencePanel: React.FC<EvidencePanelProps> = ({
             <div className="flex items-center gap-2">
               <FileText size={16} className="text-primary" />
               <h3 className="text-sm font-semibold uppercase tracking-wider text-text-primary">
-                Dayanak Politika Maddeleri & Kanıtlar ({analysis.evidence_items.length})
+                {t("analysis.evidence.rag_citations_heading", { count: analysis.evidence_items.length })}
               </h3>
             </div>
             <span className="text-xs text-text-muted">
-              Kurumsal hafızadan getirilen RAG kanıtları
+              {t("analysis.evidence.rag_citations_subheading")}
             </span>
           </div>
 
@@ -433,10 +436,10 @@ export const EvidencePanel: React.FC<EvidencePanelProps> = ({
             <Lock size={16} className="text-primary" />
             <div>
               <h3 className="text-sm font-semibold uppercase tracking-wider text-text-primary">
-                Deterministik Kural Kontrolleri (Hard-Rule Compliance)
+                {t("analysis.evidence.hard_rules_title")}
               </h3>
               <span className="text-xs text-text-muted">
-                Bütçe, teslimat, garanti ve ödeme kurallarının kesin matematiksel kontrolü
+                {t("analysis.evidence.hard_rules_subtitle")}
               </span>
             </div>
           </div>
@@ -447,12 +450,12 @@ export const EvidencePanel: React.FC<EvidencePanelProps> = ({
           >
             {isRulesExpanded ? (
               <>
-                <span>Detayları Daralt</span>
+                <span>{t("analysis.evidence.collapse_rules")}</span>
                 <ChevronUp size={14} />
               </>
             ) : (
               <>
-                <span>Tüm Kuralları İncele</span>
+                <span>{t("analysis.evidence.expand_rules")}</span>
                 <ChevronDown size={14} />
               </>
             )}
@@ -462,9 +465,9 @@ export const EvidencePanel: React.FC<EvidencePanelProps> = ({
         {/* Safety Guardrail Notice */}
         <div className="p-3.5 rounded-lg bg-surface/60 border border-border text-xs text-text-muted leading-relaxed mb-4">
           <span className="font-semibold text-text-primary block mb-0.5">
-            🔒 Değiştirilemez Politika Kuralı:
+            {t("analysis.evidence.guardrail_notice_title")}
           </span>
-          Deterministik kurallardan kalan veya ihlal eden teklifler, yapay zeka tarafından önerilse dahi standart onayla ilerletilemez. Yönetici tarafından bilinçli bir &ldquo;İstisna Onayı&rdquo; verilmesi ve kural ihlalinin açıkça teyit edilmesi zorunludur.
+          {t("analysis.evidence.guardrail_notice_body")}
         </div>
 
         {isRulesExpanded && (
@@ -473,16 +476,16 @@ export const EvidencePanel: React.FC<EvidencePanelProps> = ({
               <div key={quote.id} className="border border-border rounded-lg overflow-hidden bg-surface/30">
                 <div className="p-3 bg-surface/60 border-b border-border flex items-center justify-between">
                   <span className="text-xs font-bold text-text-primary">
-                    {quote.supplier_name || "Bilinmeyen Tedarikçi"}
+                    {quote.supplier_name || t("analysis.matrix.unknown_supplier")}
                   </span>
                   <span className="text-[11px] text-text-muted">
-                    {checks.length} Kural Denetlendi
+                    {t("analysis.evidence.rules_inspected_count", { count: checks.length })}
                   </span>
                 </div>
 
                 <div className="divide-y divide-border">
                   {checks.length === 0 ? (
-                    <div className="p-3 text-xs text-text-muted">Kural kaydı bulunamadı.</div>
+                    <div className="p-3 text-xs text-text-muted">{t("analysis.evidence.no_rule_records")}</div>
                   ) : (
                     checks.map((check, idx) => {
                       const isPass = check.result === "pass";
@@ -519,9 +522,9 @@ export const EvidencePanel: React.FC<EvidencePanelProps> = ({
                             <p className="text-text-muted mt-0.5">{check.notes}</p>
                             
                             <div className="mt-1 flex items-center gap-3 text-[11px] text-text-muted font-mono">
-                              <span>Gerçekleşen: <strong className="text-text-primary">{check.actual_value}</strong></span>
+                              <span>{t("analysis.evidence.actual_value_label")}<strong className="text-text-primary">{check.actual_value}</strong></span>
                               <span>•</span>
-                              <span>Beklenen Kural: <strong className="text-text-primary">{check.required_value}</strong></span>
+                              <span>{t("analysis.evidence.required_value_label")}<strong className="text-text-primary">{check.required_value}</strong></span>
                             </div>
                           </div>
                         </div>

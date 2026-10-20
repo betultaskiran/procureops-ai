@@ -33,9 +33,13 @@ import {
 } from "lucide-react";
 import { rfqsApi } from "@/lib/api/rfqs";
 import { RFQ, Quote } from "@/lib/api/types";
+import { useTranslation } from "@/lib/i18n";
+import { formatCurrency as fmtCurrency, formatDate as fmtDate, formatNumber as fmtNumber } from "@/lib/i18n/formatters";
+import { getLocalizedApiError } from "@/lib/i18n/apiErrorMap";
 
 export default function QuotesAndRfqsPage() {
   const router = useRouter();
+  const { t, locale } = useTranslation();
   const [rfqs, setRfqs] = useState<RFQ[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -120,7 +124,7 @@ export default function QuotesAndRfqsPage() {
       setError(null);
     } catch (err: any) {
       setRfqs([]);
-      setError(err.message || "Talepler yüklenirken hata oluştu.");
+      setError(getLocalizedApiError(err, locale));
     } finally {
       setIsLoading(false);
     }
@@ -183,11 +187,11 @@ export default function QuotesAndRfqsPage() {
         delete next[rfqToDelete.id];
         return next;
       });
-      setFeedback({ type: "success", message: res.message || "RFQ talebi başarıyla silindi." });
+      setFeedback({ type: "success", message: t("quotes_page.toast_rfq_deleted") });
       setRfqToDelete(null);
       await fetchRfqs(page, pageSize, statusFilter, debouncedSearch);
     } catch (err: any) {
-      setDeleteError(err.message || "RFQ silinirken bir hata oluştu.");
+      setDeleteError(getLocalizedApiError(err, locale));
     } finally {
       setIsDeleting(false);
     }
@@ -224,10 +228,10 @@ export default function QuotesAndRfqsPage() {
         return r;
       }) : []));
 
-      setFeedback({ type: "success", message: res.message || "Teklif başarıyla silindi." });
+      setFeedback({ type: "success", message: t("quotes_page.toast_quote_deleted") });
       setQuoteToDelete(null);
     } catch (err: any) {
-      setDeleteError(err.message || "Teklif silinirken bir hata oluştu.");
+      setDeleteError(getLocalizedApiError(err, locale));
     } finally {
       setIsDeleting(false);
     }
@@ -236,7 +240,7 @@ export default function QuotesAndRfqsPage() {
   // Handle RFQ Creation
   const handleCreateRfq = async () => {
     if (!createTitle.trim()) {
-      setCreateError("Lütfen bir RFQ başlığı girin.");
+      setCreateError(t("quotes_page.err_title_required"));
       return;
     }
     try {
@@ -262,11 +266,11 @@ export default function QuotesAndRfqsPage() {
       });
 
       setIsCreateOpen(false);
-      setFeedback({ type: "success", message: `RFQ '#RFQ-${newRfq.id.slice(0, 8).toUpperCase()}' oluşturuldu.` });
+      setFeedback({ type: "success", message: t("quotes_page.toast_rfq_created") });
       // Redirect to newly created RFQ detail page
       router.push(`/dashboard/rfq/${newRfq.id}`);
     } catch (err: any) {
-      setCreateError(err.message || "RFQ oluşturulurken hata meydana geldi.");
+      setCreateError(getLocalizedApiError(err, locale));
     } finally {
       setIsCreating(false);
     }
@@ -280,23 +284,23 @@ export default function QuotesAndRfqsPage() {
   const getStatusBadge = (status: string, hasPo?: boolean) => {
     switch (status) {
       case "draft":
-        return <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-zinc-500/10 text-zinc-400 border border-zinc-500/20"><Clock size={12} /> Taslak</span>;
+        return <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-zinc-500/10 text-zinc-400 border border-zinc-500/20"><Clock size={12} /> {t("quotes_page.status.draft")}</span>;
       case "collecting_quotes":
-        return <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-blue-500/10 text-blue-400 border border-blue-500/20"><Layers size={12} /> Teklif Toplanıyor</span>;
+        return <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-blue-500/10 text-blue-400 border border-blue-500/20"><Layers size={12} /> {t("quotes_page.status.collecting_quotes")}</span>;
       case "analyzing":
-        return <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-purple-500/10 text-purple-400 border border-purple-500/20"><Sparkles size={12} /> Analiz Ediliyor</span>;
+        return <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-purple-500/10 text-purple-400 border border-purple-500/20"><Sparkles size={12} /> {t("quotes_page.status.analyzing")}</span>;
       case "pending_approval":
-        return <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20"><AlertCircle size={12} /> Onay Bekliyor</span>;
+        return <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20"><AlertCircle size={12} /> {t("quotes_page.status.pending_approval")}</span>;
       case "approved":
         return (
           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-            <CheckCircle2 size={12} /> {hasPo ? "PO Oluşturuldu" : "Onaylandı"}
+            <CheckCircle2 size={12} /> {hasPo ? t("quotes_page.status.po_created") : t("quotes_page.status.approved")}
           </span>
         );
       case "rejected":
-        return <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-red-500/10 text-red-400 border border-red-500/20"><ShieldAlert size={12} /> Reddedildi</span>;
+        return <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-red-500/10 text-red-400 border border-red-500/20"><ShieldAlert size={12} /> {t("quotes_page.status.rejected")}</span>;
       case "cancelled":
-        return <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-zinc-700/30 text-zinc-400 border border-zinc-700/50"><Ban size={12} /> İptal Edildi</span>;
+        return <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-zinc-700/30 text-zinc-400 border border-zinc-700/50"><Ban size={12} /> {t("quotes_page.status.cancelled")}</span>;
       default:
         return <span className="px-2.5 py-1 rounded-full text-xs font-medium bg-surface-elevated text-text-muted">{status}</span>;
     }
@@ -328,13 +332,13 @@ export default function QuotesAndRfqsPage() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-border pb-6">
         <div>
           <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold tracking-tight text-text-primary">Quotes & RFQs</h1>
+            <h1 className="text-2xl font-bold tracking-tight text-text-primary">{t("quotes_page.title")}</h1>
             <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
-              {totalCount} Talep
+              {t("quotes_page.total_rfqs", { count: totalCount })}
             </span>
           </div>
           <p className="text-sm text-text-muted mt-1">
-            Satın alma taleplerini (RFQ), bağlı tedarikçi tekliflerini ve yaşam döngülerini yönetin.
+            {t("quotes_page.subtitle")}
           </p>
         </div>
 
@@ -343,7 +347,7 @@ export default function QuotesAndRfqsPage() {
           className="flex items-center gap-2 bg-primary hover:bg-primary-hover text-white px-4 py-2.5 rounded-lg text-sm font-medium transition-colors shadow-sm self-start sm:self-auto"
         >
           <Plus size={16} />
-          Yeni RFQ Talebi
+          {t("quotes_page.create_rfq")}
         </button>
       </div>
 
@@ -353,7 +357,7 @@ export default function QuotesAndRfqsPage() {
           <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
           <input 
             type="text" 
-            placeholder="RFQ başlığı, talep no veya ürün açıklaması ara..." 
+            placeholder={t("quotes_page.search_placeholder")} 
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full pl-10 pr-4 py-2 text-sm bg-bg border border-border rounded-lg text-text-primary placeholder:text-text-muted focus:outline-none focus:border-primary transition-colors"
@@ -362,15 +366,15 @@ export default function QuotesAndRfqsPage() {
 
         <div className="flex items-center gap-2 overflow-x-auto pb-1 md:pb-0">
           <Filter size={15} className="text-text-muted shrink-0 ml-1" />
-          <span className="text-xs text-text-muted shrink-0 mr-1">Durum:</span>
+          <span className="text-xs text-text-muted shrink-0 mr-1">{t("quotes_page.filter_label")}</span>
           {[
-            { id: "all", label: "Tümü" },
-            { id: "draft", label: "Taslak" },
-            { id: "collecting_quotes", label: "Teklif Toplanıyor" },
-            { id: "pending_approval", label: "Onay Bekliyor" },
-            { id: "approved", label: "Onaylandı" },
-            { id: "cancelled", label: "İptal Edilenler" },
-            { id: "archived", label: "Arşivlenenler" }
+            { id: "all", label: t("quotes_page.filter_all") },
+            { id: "draft", label: t("quotes_page.status.draft") },
+            { id: "collecting_quotes", label: t("quotes_page.filter_collecting") },
+            { id: "pending_approval", label: t("quotes_page.status.pending_approval") },
+            { id: "approved", label: t("quotes_page.status.approved") },
+            { id: "cancelled", label: t("quotes_page.filter_cancelled") },
+            { id: "archived", label: t("quotes_page.filter_archived") }
           ].map((tab) => (
             <button
               key={tab.id}
@@ -391,29 +395,29 @@ export default function QuotesAndRfqsPage() {
       {isLoading ? (
         <div className="bg-surface border border-border rounded-xl p-12 flex flex-col items-center justify-center gap-3 text-text-muted">
           <Loader2 size={32} className="animate-spin text-primary" />
-          <p className="text-sm">Talepler ve teklifler yükleniyor...</p>
+          <p className="text-sm">{t("quotes_page.loading")}</p>
         </div>
       ) : error ? (
         <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-8 flex items-center justify-center gap-3 text-red-400">
           <AlertTriangle size={24} />
           <span className="text-sm font-medium">{error}</span>
-          <button onClick={() => fetchRfqs()} className="ml-4 underline text-xs">Yeniden Dene</button>
+          <button onClick={() => fetchRfqs()} className="ml-4 underline text-xs">{t("quotes_page.retry")}</button>
         </div>
       ) : rfqList.length === 0 ? (
         <div className="bg-surface border border-border rounded-xl p-12 text-center flex flex-col items-center justify-center">
           <FileText size={40} className="text-text-muted mb-3 opacity-50" />
-          <h3 className="text-base font-semibold text-text-primary">Uygun Talep Bulunamadı</h3>
+          <h3 className="text-base font-semibold text-text-primary">{searchQuery || statusFilter !== "all" ? t("quotes_page.no_results_title") : t("quotes_page.empty_initial_title")}</h3>
           <p className="text-sm text-text-muted mt-1 max-w-sm">
             {debouncedSearch || statusFilter !== "all" 
-              ? "Arama kriterlerinize uyan bir RFQ kaydı bulunmuyor." 
-              : "Henüz oluşturulmuş bir satın alma talebi (RFQ) yok. Yeni bir talep oluşturarak başlayabilirsiniz."}
+              ? t("quotes_page.no_results_desc") 
+              : t("quotes_page.empty_initial_desc")}
           </p>
           {!debouncedSearch && statusFilter === "all" && (
             <button
               onClick={() => setIsCreateOpen(true)}
               className="mt-4 flex items-center gap-2 bg-primary hover:bg-primary-hover text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
             >
-              <Plus size={16} /> İlk RFQ Talebini Oluştur
+              <Plus size={16} /> {t("quotes_page.empty_create_btn")}
             </button>
           )}
         </div>
@@ -426,7 +430,7 @@ export default function QuotesAndRfqsPage() {
             const shortId = `RFQ-${rfq.id.slice(0, 8).toUpperCase()}`;
             const itemsSummary = rfq.items && rfq.items.length > 0
               ? `${rfq.items.length} Kalem: ${rfq.items.map(i => i.description).slice(0, 2).join(", ")}${rfq.items.length > 2 ? "..." : ""}`
-              : "Kalem belirtilmemiş";
+              : t("quotes_page.no_items_specified");
 
             return (
               <div 
@@ -445,12 +449,12 @@ export default function QuotesAndRfqsPage() {
                       {getStatusBadge(rfq.status, rfq.has_po)}
                       {rfq.is_archived && (
                         <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-zinc-800 text-zinc-300 border border-zinc-700 flex items-center gap-1">
-                          <Archive size={11} /> Arşivlendi
+                          <Archive size={11} /> {t("quotes_page.status.archived")}
                         </span>
                       )}
                       {rfq.has_po && (
                         <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                          Sipariş Kesildi
+                          {t("quotes_page.status.po_created")}
                         </span>
                       )}
                     </div>
@@ -469,7 +473,7 @@ export default function QuotesAndRfqsPage() {
                       </span>
                       <span className="flex items-center gap-1">
                         <Calendar size={13} className="opacity-70" />
-                        {new Date(rfq.created_at).toLocaleDateString("tr-TR")}
+                        {fmtDate(rfq.created_at, locale)}
                       </span>
                       <span className="text-text-secondary truncate max-w-xs sm:max-w-md">
                         {itemsSummary}
@@ -480,14 +484,14 @@ export default function QuotesAndRfqsPage() {
                   {/* Middle Column: Financials & Metrics */}
                   <div className="flex items-center gap-6 self-start lg:self-center shrink-0 border-t lg:border-t-0 pt-3 lg:pt-0 border-border">
                     <div className="flex flex-col">
-                      <span className="text-[11px] font-medium text-text-muted">Hedef Bütçe</span>
+                      <span className="text-[11px] font-medium text-text-muted">{t("quotes_page.table_total_price")}</span>
                       <span className="text-sm font-semibold text-text-primary">
                         {rfq.budget ? `₺${rfq.budget.toLocaleString("tr-TR")}` : "Belirtilmedi"}
                       </span>
                     </div>
 
                     <div className="flex flex-col">
-                      <span className="text-[11px] font-medium text-text-muted">Teklif Sayısı</span>
+                      <span className="text-[11px] font-medium text-text-muted">{t("quotes_page.quotes_count", { count: quotes.length })}</span>
                       <button
                         onClick={() => toggleExpandRfq(rfq.id)}
                         className="inline-flex items-center gap-1 text-sm font-semibold text-primary hover:underline"
@@ -515,13 +519,13 @@ export default function QuotesAndRfqsPage() {
                         onClick={async () => {
                           try {
                             await rfqsApi.unarchiveRfq(rfq.id);
-                            setFeedback({ type: "success", message: `RFQ '${rfq.title}' arşivden çıkarıldı.` });
+                            setFeedback({ type: "success", message: t("quotes_page.toast_rfq_unarchived", { title: rfq.title }) });
                             fetchRfqs();
                           } catch (e: any) {
-                            setFeedback({ type: "error", message: e.message || "Arşivden çıkarma hatası" });
+                            setFeedback({ type: "error", message: getLocalizedApiError(e, locale) });
                           }
                         }}
-                        title="Arşivden Çıkar"
+                        title={t("quotes_page.unarchive_tooltip")}
                         className="p-2 rounded-lg text-xs text-text-muted hover:text-text-primary hover:bg-surface-elevated transition-colors border border-border"
                       >
                         <ArchiveRestore size={15} />
@@ -531,13 +535,13 @@ export default function QuotesAndRfqsPage() {
                         onClick={async () => {
                           try {
                             await rfqsApi.archiveRfq(rfq.id);
-                            setFeedback({ type: "success", message: `RFQ '${rfq.title}' arşivlendi.` });
+                            setFeedback({ type: "success", message: t("quotes_page.toast_rfq_archived", { title: rfq.title }) });
                             fetchRfqs();
                           } catch (e: any) {
-                            setFeedback({ type: "error", message: e.message || "Arşivleme hatası" });
+                            setFeedback({ type: "error", message: getLocalizedApiError(e, locale) });
                           }
                         }}
-                        title="Arşivle (Aktif listeden kaldır)"
+                        title={t("quotes_page.archive_tooltip")}
                         className="p-2 rounded-lg text-xs text-text-muted hover:text-text-primary hover:bg-surface-elevated transition-colors border border-border"
                       >
                         <Archive size={15} />
@@ -553,7 +557,7 @@ export default function QuotesAndRfqsPage() {
                         }
                       }}
                       disabled={!rfq.can_delete}
-                      title={rfq.can_delete ? "Bu RFQ talebini sil" : (rfq.delete_block_reason || "Onaylanmış veya PO oluşturulmuş kayıt silinemez")}
+                      title={rfq.can_delete ? t("quotes_page.delete_rfq_title") : (rfq.delete_block_reason || t("quotes_page.delete_rfq_blocked"))}
                       className={`p-2 rounded-lg text-xs transition-colors ${
                         rfq.can_delete
                           ? "text-text-muted hover:text-red-400 hover:bg-red-500/10"
@@ -573,14 +577,14 @@ export default function QuotesAndRfqsPage() {
                       <div className="flex items-center gap-2">
                         <FileCheck2 size={16} className="text-primary" />
                         <h4 className="text-xs font-semibold text-text-primary uppercase tracking-wider">
-                          Bağlı Tedarikçi Teklifleri ({quotes.length})
+                          {t("quotes_page.connected_quotes_title", { count: quotes.length })}
                         </h4>
                       </div>
                       <Link
                         href={`/dashboard/rfq/${rfq.id}`}
                         className="text-xs text-primary hover:underline flex items-center gap-1"
                       >
-                        + Yeni Teklif Belgesi Yükle
+                        {t("quotes_page.upload_quote_btn")}
                       </Link>
                     </div>
 
@@ -591,9 +595,9 @@ export default function QuotesAndRfqsPage() {
                       </div>
                     ) : quotes.length === 0 ? (
                       <div className="p-4 rounded-lg bg-surface border border-border text-center text-xs text-text-muted">
-                        Bu RFQ talebi için henüz tedarikçi teklifi yüklenmemiş.
+                        {t("quotes_page.empty_connected_quotes")}
                         <Link href={`/dashboard/rfq/${rfq.id}`} className="text-primary underline ml-1">
-                          Teklif yüklemek için RFQ detayına gidin.
+                          {t("quotes_page.empty_connected_quotes_action")}
                         </Link>
                       </div>
                     ) : (
@@ -601,29 +605,29 @@ export default function QuotesAndRfqsPage() {
                         <table className="w-full text-left text-xs">
                           <thead className="bg-surface-elevated border-b border-border text-text-muted uppercase tracking-wider text-[11px]">
                             <tr>
-                              <th className="px-3.5 py-2.5 font-semibold">Tedarikçi</th>
-                              <th className="px-3.5 py-2.5 font-semibold">Toplam Fiyat</th>
-                              <th className="px-3.5 py-2.5 font-semibold">Teslimat</th>
-                              <th className="px-3.5 py-2.5 font-semibold">Garanti</th>
-                              <th className="px-3.5 py-2.5 font-semibold">Ödeme Vadesi</th>
-                              <th className="px-3.5 py-2.5 font-semibold">Uyum</th>
-                              <th className="px-3.5 py-2.5 font-semibold text-right">İşlem</th>
+                              <th className="px-3.5 py-2.5 font-semibold">{t("quotes_page.table_supplier")}</th>
+                              <th className="px-3.5 py-2.5 font-semibold">{t("quotes_page.table_total_price")}</th>
+                              <th className="px-3.5 py-2.5 font-semibold">{t("quotes_page.table_delivery")}</th>
+                              <th className="px-3.5 py-2.5 font-semibold">{t("quotes_page.table_warranty")}</th>
+                              <th className="px-3.5 py-2.5 font-semibold">{t("quotes_page.table_payment")}</th>
+                              <th className="px-3.5 py-2.5 font-semibold">{t("quotes_page.table_compliance")}</th>
+                              <th className="px-3.5 py-2.5 font-semibold text-right">{t("quotes_page.table_action")}</th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-border text-text-primary">
                             {quotes.map((q) => (
                               <tr key={q.id} className="hover:bg-bg/40 transition-colors">
                                 <td className="px-3.5 py-2.5 font-medium">
-                                  {q.supplier_name || q.extracted_supplier_name || "Tedarikçi"}
+                                  {q.supplier_name || q.extracted_supplier_name || t("quotes_page.table_supplier")}
                                 </td>
                                 <td className="px-3.5 py-2.5 font-semibold text-emerald-400">
                                   ₺{Number(q.total_price).toLocaleString("tr-TR")} {q.currency}
                                 </td>
                                 <td className="px-3.5 py-2.5 text-text-secondary">
-                                  {q.delivery_days ? `${q.delivery_days} gün` : "-"}
+                                  {q.delivery_days ? t("rfq_detail.days_unit", { count: q.delivery_days }) : "-"}
                                 </td>
                                 <td className="px-3.5 py-2.5 text-text-secondary">
-                                  {q.warranty_months ? `${q.warranty_months} ay` : "-"}
+                                  {q.warranty_months ? `${q.warranty_months} ${locale === "tr" ? "ay" : "mo"}` : "-"}
                                 </td>
                                 <td className="px-3.5 py-2.5 text-text-secondary">
                                   {q.payment_terms || "-"}
@@ -631,15 +635,15 @@ export default function QuotesAndRfqsPage() {
                                 <td className="px-3.5 py-2.5">
                                   {q.is_compliant === true ? (
                                     <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
-                                      <CheckCircle2 size={11} /> Uyumlu
+                                      <CheckCircle2 size={11} /> {t("quotes_page.compliant")}
                                     </span>
                                   ) : q.is_compliant === false ? (
                                     <span className="inline-flex items-center gap-1 text-[11px] font-medium text-red-400 bg-red-500/10 px-2 py-0.5 rounded border border-red-500/20">
-                                      <AlertTriangle size={11} /> Uyumsuz
+                                      <AlertTriangle size={11} /> {t("quotes_page.non_compliant")}
                                     </span>
                                   ) : (
                                     <span className="text-[11px] text-text-muted bg-surface-elevated px-2 py-0.5 rounded">
-                                      İncelenmedi
+                                      {t("quotes_page.not_reviewed")}
                                     </span>
                                   )}
                                 </td>
@@ -648,7 +652,7 @@ export default function QuotesAndRfqsPage() {
                                     <Link
                                       href={`/dashboard/rfq/${rfq.id}`}
                                       className="p-1.5 text-text-muted hover:text-text-primary rounded hover:bg-surface-elevated transition-colors"
-                                      title="Teklifi RFQ sayfasında incele"
+                                      title={t("quotes_page.view_quote_tooltip")}
                                     >
                                       <ExternalLink size={14} />
                                     </Link>
@@ -662,7 +666,7 @@ export default function QuotesAndRfqsPage() {
                                         }
                                       }}
                                       disabled={!q.can_delete}
-                                      title={q.can_delete ? "Bu teklifi sil" : (q.delete_block_reason || "Onaylanmış veya PO oluşturulmuş teklif silinemez")}
+                                      title={q.can_delete ? t("quotes_page.delete_quote_title") : (q.delete_block_reason || t("quotes_page.delete_quote_blocked"))}
                                       className={`p-1.5 rounded transition-colors ${
                                         q.can_delete
                                           ? "text-text-muted hover:text-red-400 hover:bg-red-500/10"
@@ -694,11 +698,11 @@ export default function QuotesAndRfqsPage() {
           <div className="flex items-center gap-4 text-text-muted">
             <span>
               {totalCount === 0 
-                ? "0 kayıt" 
-                : `${(page - 1) * pageSize + 1}–${Math.min(page * pageSize, totalCount)} / ${totalCount} kayıt gösteriliyor`}
+                ? t("quotes_page.no_records") 
+                : t("quotes_page.records_showing", { start: (page - 1) * pageSize + 1, end: Math.min(page * pageSize, totalCount), total: totalCount })}
             </span>
             <div className="flex items-center gap-2 border-l border-border pl-4">
-              <span className="text-xs">Sayfa başına:</span>
+              <span className="text-xs">{t("quotes_page.per_page")}</span>
               <select
                 value={pageSize}
                 onChange={(e) => {
@@ -722,7 +726,7 @@ export default function QuotesAndRfqsPage() {
               className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-border bg-surface-elevated text-text-primary text-xs font-medium hover:bg-border disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
               <ChevronLeft size={14} />
-              Önceki
+              {t("quotes_page.pagination.prev")}
             </button>
 
             {/* Page number buttons */}
@@ -763,7 +767,7 @@ export default function QuotesAndRfqsPage() {
               disabled={page >= totalPages || totalPages === 0}
               className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-border bg-surface-elevated text-text-primary text-xs font-medium hover:bg-border disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
-              Sonraki
+              {t("quotes_page.pagination.next")}
               <ChevronRight size={14} />
             </button>
           </div>
@@ -779,25 +783,25 @@ export default function QuotesAndRfqsPage() {
                 <div className="p-2.5 rounded-full bg-red-500/10 border border-red-500/20">
                   <AlertTriangle size={22} />
                 </div>
-                <h3 className="text-base font-semibold text-text-primary">RFQ Talebini Sil</h3>
+                <h3 className="text-base font-semibold text-text-primary">{t("quotes_page.delete_rfq_title")}</h3>
               </div>
 
               <p className="text-sm text-text-muted">
-                Aşağıdaki satın alma talebini ve sisteme yüklenmiş tüm bağlı teklifleri silmek istediğinizden emin misiniz?
+                {t("quotes_page.delete_rfq_warning")}
               </p>
 
               <div className="mt-4 p-3.5 rounded-lg bg-bg border border-border">
                 <span className="font-mono text-xs text-text-muted">#RFQ-{rfqToDelete.id.slice(0, 8).toUpperCase()}</span>
                 <p className="text-sm font-semibold text-text-primary mt-0.5">{rfqToDelete.title}</p>
                 <div className="flex items-center gap-2 mt-2 text-xs text-text-secondary">
-                  <span>{rfqToDelete.quotes_count ?? 0} Bağlı Teklif</span>
+                  <span>{t("quotes_page.quotes_count", { count: rfqToDelete.quotes_count ?? 0 })}</span>
                   <span>•</span>
-                  <span>Bütçe: {rfqToDelete.budget ? `₺${rfqToDelete.budget.toLocaleString("tr-TR")}` : "-"}</span>
+                  <span>{t("quotes_page.target_budget", { budget: rfqToDelete.budget ? fmtCurrency(rfqToDelete.budget, "TRY", locale) : "-" })}</span>
                 </div>
               </div>
 
               <div className="mt-3 text-xs text-amber-400/90 bg-amber-500/10 border border-amber-500/20 p-2.5 rounded-md">
-                <strong>Dikkat:</strong> Bu işlem kalıcıdır. Yüklenmiş ham PDF/belge dosyaları diskten ve veritabanı kayıtlarından temizlenecektir.
+                {t("quotes_page.delete_rfq_caution")}
               </div>
 
               {deleteError && (
@@ -813,7 +817,7 @@ export default function QuotesAndRfqsPage() {
                 disabled={isDeleting}
                 className="px-4 py-2 text-xs font-medium text-text-muted hover:text-text-primary transition-colors disabled:opacity-50"
               >
-                Vazgeç
+                {t("quotes_page.cancel_btn")}
               </button>
               <button
                 onClick={confirmDeleteRfq}
@@ -837,28 +841,28 @@ export default function QuotesAndRfqsPage() {
                 <div className="p-2.5 rounded-full bg-red-500/10 border border-red-500/20">
                   <AlertTriangle size={22} />
                 </div>
-                <h3 className="text-base font-semibold text-text-primary">Tedarikçi Teklifini Sil</h3>
+                <h3 className="text-base font-semibold text-text-primary">{t("quotes_page.delete_quote_title")}</h3>
               </div>
 
               <p className="text-sm text-text-muted">
-                <strong>{quoteToDelete.rfqTitle}</strong> talebine ait bu tedarikçi teklifini silmek istediğinizden emin misiniz?
+                {t("quotes_page.delete_quote_confirm", { supplier: quoteToDelete.quote.supplier_name || quoteToDelete.quote.extracted_supplier_name || "Supplier" })}
               </p>
 
               <div className="mt-4 p-3.5 rounded-lg bg-bg border border-border">
                 <p className="text-sm font-semibold text-text-primary">
-                  {quoteToDelete.quote.supplier_name || quoteToDelete.quote.extracted_supplier_name || "Tedarikçi Teklifi"}
+                  {quoteToDelete.quote.supplier_name || quoteToDelete.quote.extracted_supplier_name || t("quotes_page.table_supplier")}
                 </p>
                 <div className="flex items-center gap-2 mt-2 text-xs text-text-secondary">
                   <span className="font-semibold text-emerald-400">
                     ₺{Number(quoteToDelete.quote.total_price).toLocaleString("tr-TR")} {quoteToDelete.quote.currency}
                   </span>
                   <span>•</span>
-                  <span>{quoteToDelete.quote.delivery_days ? `${quoteToDelete.quote.delivery_days} gün` : "Süre belirtilmedi"}</span>
+                  <span>{quoteToDelete.quote.delivery_days ? t("rfq_detail.days_unit", { count: quoteToDelete.quote.delivery_days }) : "-"}</span>
                 </div>
               </div>
 
               <div className="mt-3 text-xs text-text-muted bg-surface-elevated p-2.5 rounded-md border border-border">
-                Teklif silindiğinde ilişkili ham belge diski ve analiz TCO kayıtları temizlenir.
+                {t("quotes_page.delete_quote_caution")}
               </div>
 
               {deleteError && (
@@ -874,7 +878,7 @@ export default function QuotesAndRfqsPage() {
                 disabled={isDeleting}
                 className="px-4 py-2 text-xs font-medium text-text-muted hover:text-text-primary transition-colors disabled:opacity-50"
               >
-                Vazgeç
+                {t("quotes_page.cancel_btn")}
               </button>
               <button
                 onClick={confirmDeleteQuote}
@@ -895,8 +899,8 @@ export default function QuotesAndRfqsPage() {
           <div className="bg-surface border border-border rounded-xl shadow-2xl max-w-xl w-full max-h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150">
             <div className="p-6 border-b border-border flex items-center justify-between">
               <div>
-                <h3 className="text-lg font-bold text-text-primary">Yeni RFQ Talebi Oluştur</h3>
-                <p className="text-xs text-text-muted mt-0.5">Satın alma talebinizi ve ticari şartları belirleyin</p>
+                <h3 className="text-lg font-bold text-text-primary">{t("quotes_page.create_modal_title")}</h3>
+                <p className="text-xs text-text-muted mt-0.5">{t("quotes_page.create_modal_subtitle")}</p>
               </div>
               <button 
                 onClick={() => setIsCreateOpen(false)}
@@ -914,10 +918,10 @@ export default function QuotesAndRfqsPage() {
               )}
 
               <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-semibold text-text-primary">Talep Başlığı *</label>
+                <label className="text-xs font-semibold text-text-primary">{t("quotes_page.create_modal_title_label")} *</label>
                 <input
                   type="text"
-                  placeholder="örn: 50 Adet İş İstasyonu ve Sunucu Donanımı"
+                  placeholder={t("quotes_page.create_modal_title_placeholder")}
                   value={createTitle}
                   onChange={(e) => setCreateTitle(e.target.value)}
                   className="px-3 py-2 text-sm bg-bg border border-border rounded-lg text-text-primary focus:outline-none focus:border-primary"
@@ -925,9 +929,9 @@ export default function QuotesAndRfqsPage() {
               </div>
 
               <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-semibold text-text-primary">Açıklama</label>
+                <label className="text-xs font-semibold text-text-primary">{t("quotes_page.create_modal_desc_label")}</label>
                 <textarea
-                  placeholder="Satın alma talebine dair ek detaylar, gereksinimler..."
+                  placeholder={t("quotes_page.create_modal_desc_placeholder")}
                   rows={2}
                   value={createDescription}
                   onChange={(e) => setCreateDescription(e.target.value)}
@@ -938,13 +942,13 @@ export default function QuotesAndRfqsPage() {
               {/* Items Section */}
               <div className="space-y-2 pt-2 border-t border-border">
                 <div className="flex items-center justify-between">
-                  <label className="text-xs font-semibold text-text-primary uppercase tracking-wider">İstenen Kalemler</label>
+                  <label className="text-xs font-semibold text-text-primary uppercase tracking-wider">{t("quotes_page.create_modal_items_title")}</label>
                   <button 
                     type="button"
                     onClick={() => setCreateItems(prev => [...prev, { description: "", quantity: "1", unit: "Adet" }])}
                     className="text-xs text-primary hover:underline flex items-center gap-1 font-medium"
                   >
-                    <Plus size={13} /> Kalem Ekle
+                    <Plus size={13} /> {t("quotes_page.create_modal_add_item")}
                   </button>
                 </div>
 
@@ -953,7 +957,7 @@ export default function QuotesAndRfqsPage() {
                     <div key={idx} className="flex gap-2 items-center">
                       <input 
                         type="text" 
-                        placeholder="Kalem açıklaması (örn. Sunucu Node)"
+                        placeholder={t("quotes_page.create_modal_item_desc_placeholder")}
                         value={item.description}
                         onChange={(e) => {
                           const next = [...createItems];
@@ -1001,10 +1005,10 @@ export default function QuotesAndRfqsPage() {
               {/* Conditions / Budget */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-border">
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-medium text-text-secondary">Hedef Bütçe (TRY)</label>
+                  <label className="text-xs font-medium text-text-secondary">{t("quotes_page.create_modal_budget_label")}</label>
                   <input 
                     type="number"
-                    placeholder="örn: 750000"
+                    placeholder={t("quotes_page.create_modal_budget_placeholder")}
                     value={createBudget}
                     onChange={(e) => setCreateBudget(e.target.value)}
                     className="px-3 py-2 text-sm bg-bg border border-border rounded-lg text-text-primary focus:outline-none focus:border-primary"
@@ -1012,10 +1016,10 @@ export default function QuotesAndRfqsPage() {
                 </div>
 
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-medium text-text-secondary">Maksimum Teslimat (Gün)</label>
+                  <label className="text-xs font-medium text-text-secondary">{t("quotes_page.create_modal_max_delivery_label")}</label>
                   <input 
                     type="number"
-                    placeholder="örn: 20"
+                    placeholder={t("quotes_page.create_modal_delivery_placeholder")}
                     value={createMaxDeliveryDays}
                     onChange={(e) => setCreateMaxDeliveryDays(e.target.value)}
                     className="px-3 py-2 text-sm bg-bg border border-border rounded-lg text-text-primary focus:outline-none focus:border-primary"
@@ -1023,10 +1027,10 @@ export default function QuotesAndRfqsPage() {
                 </div>
 
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-medium text-text-secondary">Minimum Garanti (Ay)</label>
+                  <label className="text-xs font-medium text-text-secondary">{t("quotes_page.create_modal_min_warranty_label")}</label>
                   <input 
                     type="number"
-                    placeholder="örn: 24"
+                    placeholder={t("quotes_page.create_modal_warranty_placeholder")}
                     value={createMinWarrantyMonths}
                     onChange={(e) => setCreateMinWarrantyMonths(e.target.value)}
                     className="px-3 py-2 text-sm bg-bg border border-border rounded-lg text-text-primary focus:outline-none focus:border-primary"
@@ -1034,10 +1038,10 @@ export default function QuotesAndRfqsPage() {
                 </div>
 
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-medium text-text-secondary">Ödeme Vadesi</label>
+                  <label className="text-xs font-medium text-text-secondary">{t("quotes_page.create_modal_payment_terms_label")}</label>
                   <input 
                     type="text"
-                    placeholder="örn: net-30, peşin"
+                    placeholder={t("quotes_page.create_modal_payment_placeholder")}
                     value={createPaymentTerms}
                     onChange={(e) => setCreatePaymentTerms(e.target.value)}
                     className="px-3 py-2 text-sm bg-bg border border-border rounded-lg text-text-primary focus:outline-none focus:border-primary"
@@ -1052,7 +1056,7 @@ export default function QuotesAndRfqsPage() {
                 disabled={isCreating}
                 className="px-4 py-2 text-xs font-medium text-text-muted hover:text-text-primary transition-colors disabled:opacity-50"
               >
-                Vazgeç
+                {t("quotes_page.cancel_btn")}
               </button>
               <button 
                 onClick={handleCreateRfq}
@@ -1060,7 +1064,7 @@ export default function QuotesAndRfqsPage() {
                 className="flex items-center gap-2 bg-primary hover:bg-primary-hover text-white px-4 py-2 rounded-lg text-xs font-medium transition-colors shadow-sm disabled:opacity-50"
               >
                 {isCreating && <Loader2 size={13} className="animate-spin" />}
-                {isCreating ? "Oluşturuluyor..." : "RFQ Talebi Oluştur"}
+                {isCreating ? t("quotes_page.create_modal_submitting") : t("quotes_page.create_modal_submit")}
               </button>
             </div>
           </div>

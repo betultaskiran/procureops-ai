@@ -8,24 +8,27 @@ import {
   ArrowDownRight, 
   FileText, 
   Clock, 
-  ShieldAlert,
-  Search,
-  Filter,
-  X,
-  UploadCloud,
-  ChevronLeft,
-  ChevronRight,
-  FilterX,
-  Loader2,
-  FileIcon,
-  Plus,
-  Trash2
+  ShieldAlert, 
+  Search, 
+  Filter, 
+  X, 
+  UploadCloud, 
+  ChevronLeft, 
+  ChevronRight, 
+  FilterX, 
+  Loader2, 
+  FileIcon, 
+  Plus, 
+  Trash2 
 } from "lucide-react";
 import { rfqsApi } from "@/lib/api/rfqs";
 import { DashboardRFQResponse, SupplierResponse } from "@/lib/api/types";
+import { useTranslation } from "@/lib/i18n/I18nContext";
+import { formatCurrency, formatDate } from "@/lib/i18n/formatters";
 
 export default function DashboardPage() {
   const router = useRouter();
+  const { t, locale } = useTranslation();
   const [rfqs, setRfqs] = useState<DashboardRFQResponse[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -65,7 +68,7 @@ export default function DashboardPage() {
 
   const handleCreateSubmit = async () => {
     if (!uploadTitle.trim()) {
-      setUploadError("Please enter an RFQ title.");
+      setUploadError(t("dashboard_home.create_modal.title_required_error"));
       return;
     }
     
@@ -120,20 +123,34 @@ export default function DashboardPage() {
     }
   };
 
+  const getStatusLabel = (status: string) => {
+    switch(status) {
+      case 'approved': return t("common.status.approved");
+      case 'rejected': return t("common.status.rejected");
+      case 'pending_approval': return t("common.status.pending");
+      case 'draft': return t("common.status.draft");
+      default: return status;
+    }
+  };
+
   return (
     <div className="flex flex-col gap-8">
       
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-text-primary">Dashboard</h1>
-          <p className="text-sm text-text-muted mt-1">Overview of your procurement activities and AI analyses.</p>
+          <h1 className="text-2xl font-semibold tracking-tight text-text-primary">
+            {t("dashboard_home.title")}
+          </h1>
+          <p className="text-sm text-text-muted mt-1">
+            {t("dashboard_home.subtitle")}
+          </p>
         </div>
         <div className="flex items-center gap-3">
           <button 
             onClick={() => setIsUploadOpen(true)}
             className="bg-primary hover:bg-primary-hover text-white px-4 py-2 rounded text-sm font-medium transition-colors shadow-sm"
           >
-            New RFQ
+            {t("dashboard_home.new_rfq")}
           </button>
         </div>
       </div>
@@ -144,7 +161,7 @@ export default function DashboardPage() {
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" size={18} />
             <input 
               type="text" 
-              placeholder="Search RFQs, suppliers..." 
+              placeholder={t("dashboard_home.search_placeholder")} 
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full pl-10 pr-4 py-2 text-sm bg-background border border-border rounded-lg text-text-primary focus:outline-none focus:border-primary transition-colors"
@@ -156,11 +173,11 @@ export default function DashboardPage() {
               onChange={(e) => setStatusFilter(e.target.value || null)}
               className="px-3 py-2 text-sm bg-background border border-border rounded-lg text-text-primary focus:outline-none focus:border-primary transition-colors"
             >
-              <option value="">All Statuses</option>
-              <option value="draft">Draft</option>
-              <option value="pending_approval">Pending</option>
-              <option value="approved">Approved</option>
-              <option value="rejected">Rejected</option>
+              <option value="">{t("dashboard_home.all_statuses")}</option>
+              <option value="draft">{t("common.status.draft")}</option>
+              <option value="pending_approval">{t("common.status.pending")}</option>
+              <option value="approved">{t("common.status.approved")}</option>
+              <option value="rejected">{t("common.status.rejected")}</option>
             </select>
           </div>
         </div>
@@ -169,29 +186,31 @@ export default function DashboardPage() {
           {isLoading ? (
             <div className="flex flex-col items-center justify-center h-full py-12 text-text-muted">
               <Loader2 className="animate-spin mb-4" size={32} />
-              <p>Loading RFQs...</p>
+              <p>{t("dashboard_home.loading_rfqs")}</p>
             </div>
           ) : error ? (
             <div className="flex flex-col items-center justify-center h-full py-12 text-danger">
               <ShieldAlert size={32} className="mb-4" />
               <p>{error}</p>
-              <button onClick={() => window.location.reload()} className="mt-4 px-4 py-2 bg-surface border border-border rounded hover:bg-surface-hover text-text-primary text-sm">Retry</button>
+              <button onClick={() => window.location.reload()} className="mt-4 px-4 py-2 bg-surface border border-border rounded hover:bg-surface-hover text-text-primary text-sm">
+                {t("dashboard_home.retry")}
+              </button>
             </div>
           ) : filteredRFQs.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full py-12 text-text-muted">
               <FileText size={32} className="mb-4 opacity-50" />
-              <p>No RFQs found.</p>
+              <p>{t("dashboard_home.no_rfqs_found")}</p>
             </div>
           ) : (
             <table className="w-full text-sm text-left">
               <thead className="text-xs text-text-muted uppercase bg-surface/50 border-b border-border">
                 <tr>
-                  <th className="px-6 py-4 font-medium">RFQ ID</th>
-                  <th className="px-6 py-4 font-medium">Created</th>
-                  <th className="px-6 py-4 font-medium">Title & Supplier</th>
-                  <th className="px-6 py-4 font-medium">Recommended TCO</th>
-                  <th className="px-6 py-4 font-medium">Status</th>
-                  <th className="px-6 py-4 font-medium text-right">Action</th>
+                  <th className="px-6 py-4 font-medium">{t("dashboard_home.table.rfq_id")}</th>
+                  <th className="px-6 py-4 font-medium">{t("dashboard_home.table.created")}</th>
+                  <th className="px-6 py-4 font-medium">{t("dashboard_home.table.title_supplier")}</th>
+                  <th className="px-6 py-4 font-medium">{t("dashboard_home.table.recommended_tco")}</th>
+                  <th className="px-6 py-4 font-medium">{t("dashboard_home.table.status")}</th>
+                  <th className="px-6 py-4 font-medium text-right">{t("dashboard_home.table.action")}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
@@ -204,21 +223,25 @@ export default function DashboardPage() {
                         {rfq.id.split('-')[0]}...
                       </td>
                       <td className="px-6 py-4 text-text-secondary whitespace-nowrap">
-                        {new Date(rfq.created_at).toLocaleDateString()}
-                      </td>
-                      <td className="px-6 py-4">
-                        <div className="font-medium text-text-primary">{rfq.title || "Untitled RFQ"}</div>
-                        <div className="text-text-muted text-xs mt-0.5">{rfq.recommended_supplier_name || "No Quotes Yet"}</div>
+                        {formatDate(rfq.created_at, locale)}
                       </td>
                       <td className="px-6 py-4">
                         <div className="font-medium text-text-primary">
-                          {rfq.recommended_tco ? new Intl.NumberFormat('tr-TR', { style: 'currency', currency: 'TRY' }).format(rfq.recommended_tco) : "-"}
+                          {rfq.title || t("dashboard_home.table.untitled")}
+                        </div>
+                        <div className="text-text-muted text-xs mt-0.5">
+                          {rfq.recommended_supplier_name || t("dashboard_home.table.no_quotes")}
+                        </div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="font-medium text-text-primary">
+                          {formatCurrency(rfq.recommended_tco, "TRY", locale)}
                         </div>
                       </td>
                       <td className="px-6 py-4">
                         <span className={`inline-flex items-center gap-1.5 ${statusBadge.bg} ${statusBadge.text} px-2.5 py-1 rounded-full text-[11px] font-medium border ${statusBadge.border}`}>
                           <span className={`w-1.5 h-1.5 rounded-full ${statusBadge.dot}`}></span>
-                          {rfq.status.replace('_', ' ').replace(/\w/g, l => l.toUpperCase())}
+                          {getStatusLabel(rfq.status)}
                         </span>
                       </td>
                       <td className="px-6 py-4 text-right">
@@ -226,7 +249,7 @@ export default function DashboardPage() {
                           href={`/dashboard/rfq/${rfq.id}`}
                           className="inline-flex items-center justify-center text-primary font-medium hover:text-primary-hover transition-colors text-xs"
                         >
-                          View Details
+                          {t("dashboard_home.table.view_details")}
                         </Link>
                       </td>
                     </tr>
@@ -244,8 +267,12 @@ export default function DashboardPage() {
           <div className="bg-surface-elevated border border-border rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
             <div className="px-6 py-4 border-b border-border flex items-center justify-between bg-surface/50">
               <div>
-                <h2 className="font-semibold text-text-primary text-lg">Create New RFQ</h2>
-                <p className="text-xs text-text-muted mt-0.5">Define your procurement requirements and line items.</p>
+                <h2 className="font-semibold text-text-primary text-lg">
+                  {t("dashboard_home.create_modal.title")}
+                </h2>
+                <p className="text-xs text-text-muted mt-0.5">
+                  {t("dashboard_home.create_modal.subtitle")}
+                </p>
               </div>
               <button onClick={() => { setIsUploadOpen(false); setUploadError(null); }} className="text-text-muted hover:text-text-primary transition-colors">
                 <X size={20} />
@@ -262,23 +289,27 @@ export default function DashboardPage() {
               {/* Basic Info */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="sm:col-span-2 flex flex-col gap-1.5">
-                  <label className="text-xs font-semibold text-text-primary">RFQ Title <span className="text-red-500">*</span></label>
+                  <label className="text-xs font-semibold text-text-primary">
+                    {t("dashboard_home.create_modal.title_label")} <span className="text-red-500">*</span>
+                  </label>
                   <input 
                     type="text" 
                     value={uploadTitle}
                     onChange={(e) => setUploadTitle(e.target.value)}
-                    placeholder="e.g. Server & Workstation Procurement 2026" 
+                    placeholder={t("dashboard_home.create_modal.title_placeholder")} 
                     className="px-3 py-2 text-sm bg-bg border border-border rounded-md text-text-primary focus:outline-none focus:border-primary transition-colors"
                   />
                 </div>
 
                 <div className="sm:col-span-2 flex flex-col gap-1.5">
-                  <label className="text-xs font-semibold text-text-primary">Description</label>
+                  <label className="text-xs font-semibold text-text-primary">
+                    {t("dashboard_home.create_modal.desc_label")}
+                  </label>
                   <textarea 
                     rows={2}
                     value={uploadDescription}
                     onChange={(e) => setUploadDescription(e.target.value)}
-                    placeholder="Brief description of the procurement goal and requirements..." 
+                    placeholder={t("dashboard_home.create_modal.desc_placeholder")} 
                     className="px-3 py-2 text-sm bg-bg border border-border rounded-md text-text-primary focus:outline-none focus:border-primary transition-colors resize-none"
                   />
                 </div>
@@ -288,14 +319,14 @@ export default function DashboardPage() {
               <div className="flex flex-col gap-3">
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-semibold text-text-primary uppercase tracking-wider">
-                    Requested Items / Requirements ({uploadItems.length})
+                    {t("dashboard_home.create_modal.items_header", { count: uploadItems.length })}
                   </label>
                   <button 
                     type="button"
                     onClick={() => setUploadItems([...uploadItems, { description: "", quantity: "1", unit: "Adet" }])}
                     className="flex items-center gap-1 text-xs text-primary hover:text-primary-hover font-medium transition-colors"
                   >
-                    <Plus size={14} /> Add Item
+                    <Plus size={14} /> {t("dashboard_home.create_modal.add_item")}
                   </button>
                 </div>
 
@@ -305,7 +336,7 @@ export default function DashboardPage() {
                       <div className="flex-1">
                         <input 
                           type="text"
-                          placeholder={`Item description (e.g. Dell PowerEdge R760)`}
+                          placeholder={t("dashboard_home.create_modal.item_desc_placeholder")}
                           value={item.description}
                           onChange={(e) => {
                             const updated = [...uploadItems];
@@ -319,7 +350,7 @@ export default function DashboardPage() {
                         <input 
                           type="number"
                           min="1"
-                          placeholder="Qty"
+                          placeholder={t("dashboard_home.create_modal.qty_placeholder")}
                           value={item.quantity}
                           onChange={(e) => {
                             const updated = [...uploadItems];
@@ -332,7 +363,7 @@ export default function DashboardPage() {
                       <div className="w-20">
                         <input 
                           type="text"
-                          placeholder="Unit"
+                          placeholder={t("dashboard_home.create_modal.unit_placeholder")}
                           value={item.unit}
                           onChange={(e) => {
                             const updated = [...uploadItems];
@@ -358,13 +389,17 @@ export default function DashboardPage() {
 
               {/* Conditions / Budget */}
               <div className="flex flex-col gap-3 pt-2 border-t border-border">
-                <label className="text-xs font-semibold text-text-primary uppercase tracking-wider">Commercial & Delivery Conditions</label>
+                <label className="text-xs font-semibold text-text-primary uppercase tracking-wider">
+                  {t("dashboard_home.create_modal.commercial_conditions")}
+                </label>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="flex flex-col gap-1.5">
-                    <label className="text-xs text-text-secondary">Target Budget (TRY)</label>
+                    <label className="text-xs text-text-secondary">
+                      {t("dashboard_home.create_modal.target_budget")}
+                    </label>
                     <input 
                       type="number"
-                      placeholder="e.g. 500000"
+                      placeholder={t("dashboard_home.create_modal.budget_placeholder")}
                       value={uploadBudget}
                       onChange={(e) => setUploadBudget(e.target.value)}
                       className="px-3 py-2 text-sm bg-bg border border-border rounded-md text-text-primary focus:outline-none focus:border-primary"
@@ -372,10 +407,12 @@ export default function DashboardPage() {
                   </div>
 
                   <div className="flex flex-col gap-1.5">
-                    <label className="text-xs text-text-secondary">Max Delivery Days</label>
+                    <label className="text-xs text-text-secondary">
+                      {t("dashboard_home.create_modal.max_delivery_days")}
+                    </label>
                     <input 
                       type="number"
-                      placeholder="e.g. 15"
+                      placeholder={t("dashboard_home.create_modal.days_placeholder")}
                       value={uploadMaxDeliveryDays}
                       onChange={(e) => setUploadMaxDeliveryDays(e.target.value)}
                       className="px-3 py-2 text-sm bg-bg border border-border rounded-md text-text-primary focus:outline-none focus:border-primary"
@@ -383,10 +420,12 @@ export default function DashboardPage() {
                   </div>
 
                   <div className="flex flex-col gap-1.5">
-                    <label className="text-xs text-text-secondary">Min Warranty (Months)</label>
+                    <label className="text-xs text-text-secondary">
+                      {t("dashboard_home.create_modal.min_warranty")}
+                    </label>
                     <input 
                       type="number"
-                      placeholder="e.g. 24"
+                      placeholder={t("dashboard_home.create_modal.warranty_placeholder")}
                       value={uploadMinWarrantyMonths}
                       onChange={(e) => setUploadMinWarrantyMonths(e.target.value)}
                       className="px-3 py-2 text-sm bg-bg border border-border rounded-md text-text-primary focus:outline-none focus:border-primary"
@@ -394,10 +433,12 @@ export default function DashboardPage() {
                   </div>
 
                   <div className="flex flex-col gap-1.5">
-                    <label className="text-xs text-text-secondary">Payment Terms</label>
+                    <label className="text-xs text-text-secondary">
+                      {t("dashboard_home.create_modal.payment_terms")}
+                    </label>
                     <input 
                       type="text"
-                      placeholder="e.g. net-30, advance, etc."
+                      placeholder={t("dashboard_home.create_modal.payment_placeholder")}
                       value={uploadPaymentTerms}
                       onChange={(e) => setUploadPaymentTerms(e.target.value)}
                       className="px-3 py-2 text-sm bg-bg border border-border rounded-md text-text-primary focus:outline-none focus:border-primary"
@@ -413,7 +454,7 @@ export default function DashboardPage() {
                 disabled={isUploading}
                 className="px-4 py-2 text-sm font-medium text-text-muted hover:text-text-primary transition-colors disabled:opacity-50"
               >
-                Cancel
+                {t("common.actions.cancel")}
               </button>
               <button 
                 onClick={handleCreateSubmit}
@@ -421,7 +462,7 @@ export default function DashboardPage() {
                 className="flex items-center gap-2 bg-primary hover:bg-primary-hover text-white px-5 py-2 rounded text-sm font-medium transition-colors shadow-sm disabled:opacity-70"
               >
                 {isUploading && <Loader2 size={14} className="animate-spin" />}
-                {isUploading ? "Creating..." : "Create RFQ"}
+                {isUploading ? t("dashboard_home.create_modal.creating") : t("dashboard_home.create_modal.create_btn")}
               </button>
             </div>
           </div>

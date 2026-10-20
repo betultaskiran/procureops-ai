@@ -16,34 +16,19 @@ import {
   CheckSquare
 } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { LanguageToggle } from "@/components/language-toggle";
 import { useAuth } from "@/lib/auth/AuthContext";
+import { useTranslation } from "@/lib/i18n/I18nContext";
+import { TranslationKey } from "@/lib/i18n/types";
 import { UserRole } from "@/lib/api/types";
 
-const ROLE_BADGES: Record<UserRole, { label: string; badgeClass: string }> = {
-  admin: {
-    label: "Admin",
-    badgeClass: "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20",
-  },
-  manager: {
-    label: "Manager",
-    badgeClass: "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20",
-  },
-  purchasing_director: {
-    label: "Satın Alma Direktörü",
-    badgeClass: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20",
-  },
-  cfo: {
-    label: "CFO",
-    badgeClass: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/20",
-  },
-  employee: {
-    label: "Uzman",
-    badgeClass: "bg-teal-500/10 text-teal-600 dark:text-teal-400 border-teal-500/20",
-  },
-  viewer: {
-    label: "Gözlemci",
-    badgeClass: "bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-500/20",
-  },
+const ROLE_BADGE_CLASSES: Record<UserRole, string> = {
+  admin: "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20",
+  manager: "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20",
+  purchasing_director: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20",
+  cfo: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/20",
+  employee: "bg-teal-500/10 text-teal-600 dark:text-teal-400 border-teal-500/20",
+  viewer: "bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-500/20",
 };
 
 export default function DashboardLayout({
@@ -54,6 +39,7 @@ export default function DashboardLayout({
   const pathname = usePathname();
   const router = useRouter();
   const { user, isLoading, isAuthenticated, logout } = useAuth();
+  const { t } = useTranslation();
 
   // Route protection guard: redirect unauthenticated users to /login
   useEffect(() => {
@@ -73,12 +59,12 @@ export default function DashboardLayout({
     return (
       <div className="min-h-screen bg-bg flex flex-col items-center justify-center gap-3 font-sans">
         <Loader2 size={32} className="animate-spin text-primary" />
-        <p className="text-xs text-text-muted">Kullanıcı oturumu doğrulanıyor...</p>
+        <p className="text-xs text-text-muted">{t("nav.session_verifying")}</p>
       </div>
     );
   }
 
-  const roleConfig = user?.role ? ROLE_BADGES[user.role] : null;
+  const roleBadgeClass = user?.role ? ROLE_BADGE_CLASSES[user.role] : null;
 
   return (
     <div className="min-h-screen bg-bg flex font-sans">
@@ -108,15 +94,15 @@ export default function DashboardLayout({
                   <span className="font-semibold text-xs text-text-primary truncate" title={user.full_name}>
                     {user.full_name}
                   </span>
-                  {roleConfig && (
-                    <span className={`text-[10px] px-1.5 py-0.2 rounded border font-medium shrink-0 ${roleConfig.badgeClass}`}>
-                      {roleConfig.label}
+                  {roleBadgeClass && user?.role && (
+                    <span className={`text-[10px] px-1.5 py-0.2 rounded border font-medium shrink-0 ${roleBadgeClass}`}>
+                      {t(`roles.${user.role}` as TranslationKey)}
                     </span>
                   )}
                 </div>
                 <div className="text-[11px] text-text-muted truncate flex items-center gap-1 mt-0.5">
                   <Building2 size={11} className="shrink-0" />
-                  <span className="truncate">{user.organization?.name || "Organizasyon"}</span>
+                  <span className="truncate">{user.organization?.name || t("common.labels.organization")}</span>
                 </div>
               </div>
             </div>
@@ -126,7 +112,7 @@ export default function DashboardLayout({
         {/* Navigation */}
         <nav className="flex-1 py-4 px-4 flex flex-col gap-1 overflow-y-auto">
           <div className="text-[10px] font-semibold text-text-muted uppercase tracking-wider mb-2 px-3">
-            Menu
+            {t("nav.menu")}
           </div>
           
           <Link 
@@ -138,7 +124,7 @@ export default function DashboardLayout({
             }`}
           >
             <LayoutDashboard size={18} />
-            Dashboard
+            {t("nav.dashboard")}
           </Link>
           
           <Link 
@@ -150,7 +136,7 @@ export default function DashboardLayout({
             }`}
           >
             <FileText size={18} />
-            Quotes & RFQs
+            {t("nav.quotes")}
           </Link>
           
           <Link 
@@ -162,7 +148,7 @@ export default function DashboardLayout({
             }`}
           >
             <ShieldCheck size={18} />
-            Policies
+            {t("nav.policies")}
           </Link>
 
           <Link
@@ -174,7 +160,7 @@ export default function DashboardLayout({
             }`}
           >
             <CheckSquare size={18} />
-            Approvals
+            {t("nav.approvals")}
           </Link>
 
           <Link
@@ -186,14 +172,19 @@ export default function DashboardLayout({
             }`}
           >
             <Users size={18} />
-            Team
+            {t("nav.team")}
           </Link>
         </nav>
 
         {/* Footer Settings & Logout */}
         <div className="p-4 border-t border-border flex flex-col gap-1">
-          <div className="flex items-center justify-between px-3 py-2 mb-2">
-            <span className="text-sm font-medium text-text-muted">Theme</span>
+          <div className="flex items-center justify-between px-3 py-1.5">
+            <span className="text-sm font-medium text-text-muted">{t("nav.language")}</span>
+            <LanguageToggle />
+          </div>
+
+          <div className="flex items-center justify-between px-3 py-1.5 mb-2">
+            <span className="text-sm font-medium text-text-muted">{t("nav.theme")}</span>
             <ThemeToggle />
           </div>
 
@@ -202,7 +193,7 @@ export default function DashboardLayout({
             className="flex items-center gap-3 px-3 py-2 rounded-md text-text-muted hover:bg-rose-500/10 hover:text-rose-600 dark:hover:text-rose-400 font-medium text-sm transition-colors w-full text-left"
           >
             <LogOut size={18} />
-            <span>Oturumu Kapat</span>
+            <span>{t("nav.logout")}</span>
           </button>
         </div>
       </aside>
@@ -216,12 +207,13 @@ export default function DashboardLayout({
             <div className="h-8 w-8 rounded bg-primary flex items-center justify-center text-white font-bold text-lg">P</div>
             <span className="font-semibold text-sm">{user?.organization?.name}</span>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <LanguageToggle />
             <ThemeToggle />
             <button 
               onClick={handleLogout} 
               className="p-2 text-text-muted hover:text-rose-500" 
-              title="Çıkış Yap"
+              title={t("nav.logout")}
             >
               <LogOut size={18} />
             </button>

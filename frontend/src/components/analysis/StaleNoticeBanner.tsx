@@ -2,6 +2,7 @@
 
 import React from "react";
 import { AlertTriangle, RefreshCw, Loader2 } from "lucide-react";
+import { useTranslation } from "@/lib/i18n/I18nContext";
 
 interface StaleNoticeBannerProps {
   isStale: boolean;
@@ -18,6 +19,8 @@ export const StaleNoticeBanner: React.FC<StaleNoticeBannerProps> = ({
   hasActivePo = false,
   poNumber = null,
 }) => {
+  const { t } = useTranslation();
+
   if (!isStale) return null;
 
   return (
@@ -26,18 +29,10 @@ export const StaleNoticeBanner: React.FC<StaleNoticeBannerProps> = ({
         <AlertTriangle size={18} className="text-amber-400 shrink-0 mt-0.5" />
         <div>
           <span className="font-semibold text-amber-300 block text-sm mb-0.5">
-            Analiz Güncel Değil (Stale Analysis)
+            {t("analysis.stale.title")}
           </span>
           <p className="text-text-muted leading-relaxed">
-            {hasActivePo ? (
-              <>
-                Bu satın alma talebi için onaylanmış bir Sipariş Emri {poNumber ? `(${poNumber})` : ""} bulunmaktadır. Teklif veya talep şartlarında yapılan değişiklikler mevcut siparişi değiştirmez; yeni koşullar için yeni bir analiz çalıştırabilirsiniz.
-              </>
-            ) : (
-              <>
-                Bu RFQ&apos;ya ait malzeme şartlarında, teklif kayıtlarında veya teklif sayısında son analizden sonra değişiklik yapılmıştır. Mevcut karşılaştırma matrisi ve yapay zeka tavsiyesi eski verileri yansıtmaktadır.
-              </>
-            )}
+            {t("analysis.stale.desc")} {poNumber ? `(${poNumber})` : ""}
           </p>
         </div>
       </div>
@@ -50,12 +45,12 @@ export const StaleNoticeBanner: React.FC<StaleNoticeBannerProps> = ({
         {isAnalyzing ? (
           <>
             <Loader2 size={14} className="animate-spin" />
-            <span>Analiz Güncelleniyor...</span>
+            <span>{t("analysis.stale.recalculating")}</span>
           </>
         ) : (
           <>
             <RefreshCw size={14} />
-            <span>{hasActivePo ? "Yeni Şartlarla Analiz Et" : "Analizi Yeniden Çalıştır"}</span>
+            <span>{t("analysis.stale.recalculate_btn")}</span>
           </>
         )}
       </button>

@@ -53,9 +53,13 @@ import { EvidencePanel } from "@/components/analysis/EvidencePanel";
 import { StaleNoticeBanner } from "@/components/analysis/StaleNoticeBanner";
 import { ReviewModal } from "@/components/analysis/ReviewModal";
 import { SupplierPerformanceDrawer } from "@/components/analysis/SupplierPerformanceDrawer";
+import { useTranslation } from "@/lib/i18n";
+import { formatCurrency as fmtCurrency, formatDate as fmtDate, formatNumber as fmtNumber } from "@/lib/i18n/formatters";
+import { getLocalizedApiError } from "@/lib/i18n/apiErrorMap";
 
 export default function RFQDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const router = useRouter();
+  const { t, locale } = useTranslation();
   const [isDeleteRfqOpen, setIsDeleteRfqOpen] = useState(false);
   const [quoteToDelete, setQuoteToDelete] = useState<Quote | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -172,7 +176,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
 
   const handleCancelRfq = async () => {
     if (!rfqCancelReason.trim() || rfqCancelReason.trim().length < 3) {
-      setCancelRfqError("Lütfen en az 3 karakterlik bir iptal gerekçesi girin.");
+      setCancelRfqError(t("rfq_detail.validation.err_cancel_reason_min"));
       return;
     }
     try {
@@ -185,7 +189,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
       const updatedPos = await rfqsApi.getPurchaseOrders(rfqId);
       setPurchaseOrders(updatedPos);
     } catch (err: any) {
-      setCancelRfqError(err.message || "RFQ iptal edilirken bir hata oluştu.");
+      setCancelRfqError(getLocalizedApiError(err, locale));
     } finally {
       setIsCancellingRfq(false);
     }
@@ -218,7 +222,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
   const handleCancelPo = async () => {
     if (!poToCancel) return;
     if (!poCancelReason.trim() || poCancelReason.trim().length < 3) {
-      setCancelPoError("Lütfen en az 3 karakterlik bir iptal gerekçesi girin.");
+      setCancelPoError(t("rfq_detail.validation.err_cancel_reason_min"));
       return;
     }
     try {
@@ -231,7 +235,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
       const updatedRfq = await rfqsApi.getRfq(rfqId);
       setRfq(updatedRfq);
     } catch (err: any) {
-      setCancelPoError(err.message || "Sipariş iptal edilirken bir hata oluştu.");
+      setCancelPoError(getLocalizedApiError(err, locale));
     } finally {
       setIsCancellingPo(false);
     }
@@ -272,7 +276,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
       setDeliverDate("");
       setDeliverNotes("");
     } catch (err: any) {
-      setDeliverPoError(err.message || "Sipariş teslim alınırken bir hata oluştu.");
+      setDeliverPoError(getLocalizedApiError(err, locale));
     } finally {
       setIsDeliveringPo(false);
     }
@@ -295,7 +299,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
       setFinalAmount("");
       setCompletionNotes("");
     } catch (err: any) {
-      setCompletePoError(err.message || "Sipariş tamamlanırken bir hata oluştu.");
+      setCompletePoError(getLocalizedApiError(err, locale));
     } finally {
       setIsCompletingPo(false);
     }
@@ -304,7 +308,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
   const handleSaveQualityIssue = async () => {
     if (!poForQuality) return;
     if (!qualityDescription.trim() || qualityDescription.trim().length < 3) {
-      setQualityError("Lütfen en az 3 karakterlik bir açıklama girin.");
+      setQualityError(t("rfq_detail.validation.err_quality_desc_min"));
       return;
     }
     try {
@@ -325,7 +329,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
       setQualityIssueType("defect");
       setQualitySeverity("medium");
     } catch (err: any) {
-      setQualityError(err.message || "Kalite kaydı eklenirken bir hata oluştu.");
+      setQualityError(getLocalizedApiError(err, locale));
     } finally {
       setIsSavingQuality(false);
     }
@@ -338,7 +342,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
       await rfqsApi.deleteRfq(rfqId);
       router.push("/dashboard/quotes");
     } catch (err: any) {
-      setDeleteError(err.message || "RFQ silinirken bir hata oluştu.");
+      setDeleteError(getLocalizedApiError(err, locale));
       setIsDeleting(false);
     }
   };
@@ -359,7 +363,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
       // Refresh analysis to reflect updated staleness
       rfqsApi.getAnalysis(rfqId).then(setAnalysis).catch(() => {});
     } catch (err: any) {
-      setDeleteError(err.message || "Teklif silinirken bir hata oluştu.");
+      setDeleteError(getLocalizedApiError(err, locale));
     } finally {
       setIsDeleting(false);
     }
@@ -367,7 +371,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
 
   const handleCreateSupplier = async () => {
     if (!newSupplierName.trim()) {
-      setSupplierCreateError("Lütfen tedarikçi adını girin.");
+      setSupplierCreateError(t("rfq_detail.validation.err_supplier_name_required"));
       return;
     }
     try {
@@ -387,7 +391,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
       setNewSupplierPhone("");
       setNewSupplierCity("");
     } catch (err: any) {
-      setSupplierCreateError(err.message || "Tedarikçi eklenirken hata oluştu.");
+      setSupplierCreateError(getLocalizedApiError(err, locale));
     } finally {
       setIsSavingSupplier(false);
     }
@@ -395,7 +399,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
 
   const handleUploadSupplierQuote = async () => {
     if (!uploadFile || !uploadSupplierId) {
-      setUploadError("Lütfen bir dosya ve tedarikçi seçin.");
+      setUploadError(t("rfq_detail.validation.err_file_and_supplier_required"));
       return;
     }
     try {
@@ -419,9 +423,9 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
     } catch (err: any) {
       console.error("Quote upload error:", err);
       if (err?.message?.includes("Authentication credentials") || err?.status === 401) {
-        setUploadError("Oturum kimlik bilgileriniz doğrulanamadı. Tarayıcınızda oturum süresi dolmuş olabilir; lütfen sayfayı yenileyip (F5) tekrar giriş yapın.");
+        setUploadError(t("rfq_detail.validation.err_session_expired"));
       } else {
-        setUploadError(err.message || "Dosya yüklenirken bir hata oluştu.");
+        setUploadError(getLocalizedApiError(err, locale));
       }
     } finally {
       setIsUploading(false);
@@ -442,7 +446,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
       setRfq(updatedRfq);
       setQuotes(updatedQuotes);
     } catch (err: any) {
-      setAnalysisError(err.message || "Analiz çalıştırılırken bir hata oluştu.");
+      setAnalysisError(getLocalizedApiError(err, locale));
     } finally {
       setIsAnalyzing(false);
     }
@@ -480,7 +484,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
   const handleSendInvitation = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!inviteEmail.trim()) {
-      setInviteError("Lütfen geçerli bir e-posta adresi girin.");
+      setInviteError(t("rfq_detail.validation.err_email_invalid"));
       return;
     }
     try {
@@ -493,7 +497,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
         recipient_name: inviteName.trim() || undefined,
         custom_message: inviteCustomMessage.trim() || undefined,
       });
-      setInviteSuccess(`Davet kuyruğa eklendi: ${res.recipient_email} (${res.status})`);
+      setInviteSuccess(t("rfq_detail.invitations_section.invite_queued_success", { email: res.recipient_email, status: res.status }));
       setIsInviteModalOpen(false);
       setInviteEmail("");
       setInviteName("");
@@ -501,7 +505,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
       setInviteSupplierId("");
       await fetchInvitations();
     } catch (err: any) {
-      setInviteError(err.message || "Davet gönderilirken bir hata oluştu.");
+      setInviteError(getLocalizedApiError(err, locale));
     } finally {
       setIsSendingInvite(false);
     }
@@ -520,7 +524,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
   };
 
   const handleRevokeInvitation = async (invitationId: string) => {
-    if (!confirm("Bu tedarikçi davetini iptal etmek istediğinizden emin misiniz? Tedarikçi artık portala erişemeyecek.")) {
+    if (!confirm(t("rfq_detail.validation.confirm_revoke_invite"))) {
       return;
     }
     try {
@@ -603,9 +607,9 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
     return (
       <div className="flex flex-col items-center justify-center h-[60vh] text-red-500 gap-3">
         <ShieldAlert size={48} />
-        <h2 className="text-xl font-semibold">Error Loading RFQ</h2>
+        <h2 className="text-xl font-semibold">{t("rfq_detail.error_loading_title")}</h2>
         <p className="text-sm font-medium">{error || "RFQ not found."}</p>
-        <button onClick={handleBack} className="text-sm text-primary hover:underline mt-4">Quotes & RFQs Sayfasına Dön</button>
+        <button onClick={handleBack} className="text-sm text-primary hover:underline mt-4">{t("rfq_detail.header.back_to_quotes")}</button>
       </div>
     );
   }
@@ -650,7 +654,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
         <div className="flex items-center gap-4">
           <button 
             onClick={handleBack}
-            title="Quotes & RFQs Sayfasına Dön"
+            title={t("rfq_detail.header.back_to_quotes")}
             className="w-8 h-8 rounded-full border border-border flex items-center justify-center text-text-muted hover:bg-surface-elevated hover:text-text-primary transition-colors"
           >
             <ArrowLeft size={16} />
@@ -665,11 +669,11 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
               {rfq.is_archived && (
                 <span className="inline-flex items-center gap-1.5 bg-zinc-800 text-zinc-300 px-2.5 py-1 rounded-full text-[11px] font-medium border border-zinc-700">
                   <Archive size={12} />
-                  Arşivlendi
+                  {t("rfq_detail.header.archived_badge")}
                 </span>
               )}
             </div>
-            <p className="text-sm text-text-muted mt-1">Uploaded on {new Date(rfq.created_at).toLocaleDateString()}</p>
+            <p className="text-sm text-text-muted mt-1">{fmtDate(rfq.created_at, locale)}</p>
           </div>
         </div>
         
@@ -680,7 +684,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
               className="flex items-center gap-2 bg-surface-elevated border border-border hover:bg-bg text-primary px-3.5 py-2 rounded text-xs font-medium transition-colors shadow-sm"
             >
               <Plus size={15} />
-              Add Supplier Quote
+              {t("rfq_detail.actions.upload_quote")}
             </button>
           )}
 
@@ -690,7 +694,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
               className="flex items-center gap-2 bg-surface-elevated border border-border hover:bg-bg text-blue-600 dark:text-blue-400 px-3.5 py-2 rounded text-xs font-medium transition-colors shadow-sm"
             >
               <Mail size={15} />
-              Invite Supplier (Email)
+              {t("rfq_detail.actions.invite_supplier")}
             </button>
           )}
 
@@ -701,12 +705,12 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
               disabled={isAnalyzing || quotes.length < 2}
               title={
                 quotes.length < 2
-                  ? "Karşılaştırmalı çoklu analiz için en az 2 tedarikçi teklifi yüklenmelidir."
+                  ? t("rfq_detail.header.analyze_tooltip_min")
                   : hasActivePo
-                  ? `Mevcut aktif sipariş emri (${firstActivePo?.po_number}) korunur. Yeni analiz mevcut sipariş kaydını sıfırlamaz veya değiştirmez.`
+                  ? t("rfq_detail.header.analyze_tooltip_po", { po: firstActivePo?.po_number || "" })
                   : analysis
-                  ? "Tüm teklifleri yeniden değerlendir ve TCO/uyum sonuçlarını güncelle"
-                  : "Tüm teklifleri yan yana kıyaslayan yapay zeka analizini başlat"
+                  ? t("rfq_detail.header.analyze_tooltip_update")
+                  : t("rfq_detail.header.analyze_tooltip_start")
               }
               className={`flex items-center gap-1.5 px-3.5 py-2 rounded text-xs font-semibold transition-colors shadow-sm ${
                 quotes.length < 2
@@ -729,11 +733,11 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                   <span>
                     {hasActivePo
                       ? analysis?.is_stale
-                        ? "Yeni Şartlarla Analiz Et"
-                        : "Yeniden Değerlendir"
+                        ? t("rfq_detail.header.btn_analyze_new_rules")
+                        : t("rfq_detail.header.btn_re_evaluate")
                       : analysis
-                      ? "Analizi Yenile"
-                      : "Çoklu Analizi Başlat"}
+                      ? t("rfq_detail.actions.recalculate")
+                      : t("rfq_detail.header.btn_start_multi_analysis")}
                     {quotes.length < 2 && ` (${quotes.length}/2)`}
                   </span>
                 </>
@@ -760,21 +764,21 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
             <button
               onClick={handleUnarchiveRfq}
               disabled={isArchiving}
-              title="Bu RFQ'yu arşivden çıkarıp aktif listeye al"
+              title={t("rfq_detail.header.unarchive_title")}
               className="flex items-center gap-1.5 px-3 py-2 rounded bg-surface-elevated border border-border hover:bg-bg text-xs font-medium text-text-secondary transition-colors"
             >
               <ArchiveRestore size={14} />
-              Arşivden Çıkar
+              {t("rfq_detail.header.unarchive_btn")}
             </button>
           ) : (
             <button
               onClick={handleArchiveRfq}
               disabled={isArchiving}
-              title="Bu RFQ'yu arşivle (aktif listeden kaldır)"
+              title={t("rfq_detail.header.archive_title")}
               className="flex items-center gap-1.5 px-3 py-2 rounded bg-surface-elevated border border-border hover:bg-bg text-xs font-medium text-text-muted hover:text-text-primary transition-colors"
             >
               <Archive size={14} />
-              Arşivle
+              {t("rfq_detail.header.archive_btn")}
             </button>
           )}
 
@@ -786,11 +790,11 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                 setCancelRfqError(null);
                 setRfqCancelReason("");
               }}
-              title="Bu RFQ iş akışını gerekçe belirterek iptal et"
+              title={t("rfq_detail.header.cancel_title")}
               className="flex items-center gap-1.5 px-3 py-2 rounded border border-amber-500/30 text-amber-500 hover:bg-amber-500/10 text-xs font-medium transition-colors"
             >
               <Ban size={14} />
-              İptal Et
+              {t("rfq_detail.header.cancel_btn")}
             </button>
           )}
           
@@ -810,7 +814,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
               }
             }}
             disabled={!rfq.can_delete}
-            title={rfq.can_delete ? "Bu RFQ talebini sil" : (rfq.delete_block_reason || "Onaylanmış veya PO oluşturulmuş RFQ silinemez")}
+            title={rfq.can_delete ? t("rfq_detail.header.delete_title") : (rfq.delete_block_reason || t("rfq_detail.header.delete_blocked"))}
             className={`p-2 rounded border border-border transition-colors ${
               rfq.can_delete
                 ? "text-text-muted hover:text-red-400 hover:bg-red-500/10"
@@ -883,25 +887,25 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
 
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 p-4 bg-surface/50 rounded-lg border border-border mb-4 text-xs">
           <div>
-            <span className="text-text-muted block">Target Budget</span>
+            <span className="text-text-muted block">{t("rfq_detail.target_budget")}</span>
             <span className="font-semibold text-text-primary mt-0.5 block">
-              {rfq.budget ? new Intl.NumberFormat('tr-TR', { style: 'currency', currency: 'TRY' }).format(rfq.budget) : 'Not specified'}
+              {rfq.budget ? fmtCurrency(rfq.budget, 'TRY', locale) : 'Not specified'}
             </span>
           </div>
           <div>
-            <span className="text-text-muted block">Max Delivery</span>
+            <span className="text-text-muted block">{t("rfq_detail.max_delivery")}</span>
             <span className="font-semibold text-text-primary mt-0.5 block">
               {rfq.max_delivery_days ? `${rfq.max_delivery_days} days` : 'Not specified'}
             </span>
           </div>
           <div>
-            <span className="text-text-muted block">Min Warranty</span>
+            <span className="text-text-muted block">{t("rfq_detail.min_warranty")}</span>
             <span className="font-semibold text-text-primary mt-0.5 block">
               {rfq.min_warranty_months ? `${rfq.min_warranty_months} months` : 'Not specified'}
             </span>
           </div>
           <div>
-            <span className="text-text-muted block">Payment Terms</span>
+            <span className="text-text-muted block">{t("rfq_detail.payment_terms")}</span>
             <span className="font-semibold text-text-primary mt-0.5 block">
               {rfq.payment_terms || 'Not specified'}
             </span>
@@ -947,10 +951,10 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
             </div>
             <div>
               <h3 className="text-xs font-semibold text-text-primary uppercase tracking-wider">
-                Çoklu Karşılaştırma Beklemede (1 / 2 Teklif)
+                {t("rfq_detail.quotes_section.pending_comparison_title")}
               </h3>
               <p className="text-xs text-text-muted mt-0.5">
-                Tedarikçileri yan yana kıyaslamak ve yapay zeka analizini çalıştırmak için en az bir teklif daha eklenmelidir.
+                {t("rfq_detail.quotes_section.pending_comparison_desc")}
               </p>
             </div>
           </div>
@@ -959,7 +963,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
               onClick={() => setIsUploadQuoteOpen(true)}
               className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-primary hover:bg-primary-hover text-white transition-colors shrink-0"
             >
-              + İkinci Teklifi Yükle
+              {t("rfq_detail.quotes_section.btn_upload_second_quote")}
             </button>
           )}
         </div>
@@ -969,9 +973,9 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
             <UploadCloud size={20} />
           </div>
           <div>
-            <h3 className="text-sm font-semibold text-text-primary">Henüz Teklif Eklenmedi</h3>
+            <h3 className="text-sm font-semibold text-text-primary">{t("rfq_detail.quotes_section.empty_quotes_title")}</h3>
             <p className="text-xs text-text-muted mt-1 max-w-sm mx-auto">
-              Bu satın alma talebi için tedarikçilerden gelen teklif belgelerini yükleyerek otomatik veri çıkarımı ve çoklu TCO analizi başlatabilirsiniz.
+              {t("rfq_detail.quotes_section.empty_quotes_desc")}
             </p>
           </div>
           {rfq.status !== "cancelled" && (
@@ -980,7 +984,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
               className="px-4 py-2 rounded-lg text-xs font-semibold bg-primary hover:bg-primary-hover text-white transition-colors inline-flex items-center gap-1.5"
             >
               <Plus size={14} />
-              İlk Teklifi Ekle
+              {t("rfq_detail.quotes_section.btn_add_first_quote")}
             </button>
           )}
         </div>
@@ -1000,12 +1004,12 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
             <table className="w-full text-sm text-left">
               <thead className="text-xs text-text-muted uppercase bg-surface/50 border-b border-border">
                 <tr>
-                  <th className="px-4 py-3 font-medium">Supplier</th>
-                  <th className="px-4 py-3 font-medium">Total Price</th>
-                  <th className="px-4 py-3 font-medium">Delivery</th>
-                  <th className="px-4 py-3 font-medium">Warranty</th>
-                  <th className="px-4 py-3 font-medium">Status</th>
-                  <th className="px-4 py-3 font-medium text-right">Action</th>
+                  <th className="px-4 py-3 font-medium">{t("quotes_page.table_supplier")}</th>
+                  <th className="px-4 py-3 font-medium">{t("quotes_page.table_total_price")}</th>
+                  <th className="px-4 py-3 font-medium">{t("quotes_page.table_delivery")}</th>
+                  <th className="px-4 py-3 font-medium">{t("quotes_page.table_warranty")}</th>
+                  <th className="px-4 py-3 font-medium">{t("rfq_detail.table_status")}</th>
+                  <th className="px-4 py-3 font-medium text-right">{t("quotes_page.table_action")}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
@@ -1033,8 +1037,8 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                         <div className="flex items-center justify-end gap-1.5">
                           <button
                             type="button"
-                            onClick={() => setDrawerSupplier({ id: q.supplier_id, name: q.supplier_name || 'Tedarikçi' })}
-                            title="Tedarikçi performans karnesi ve geçmiş siparişlerini incele"
+                            onClick={() => setDrawerSupplier({ id: q.supplier_id, name: q.supplier_name || 'Supplier' })}
+                            title={t("rfq_detail.quotes_section.supplier_scorecard_tooltip")}
                             className="p-1.5 rounded text-text-muted hover:text-text-primary hover:bg-surface border border-transparent hover:border-border transition-colors"
                           >
                             <Clock size={13} />
@@ -1059,7 +1063,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                               }
                             }}
                             disabled={!q.can_delete}
-                            title={q.can_delete ? "Bu teklifi sil" : (q.delete_block_reason || "Onaylanmış teklif silinemez")}
+                            title={q.can_delete ? t("quotes_page.delete_quote_title") : (q.delete_block_reason || t("rfq_detail.quotes_section.delete_quote_blocked"))}
                             className={`p-1 rounded transition-colors ${
                               q.can_delete
                                 ? "text-text-muted hover:text-red-400 hover:bg-red-500/10"
@@ -1114,19 +1118,19 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
               <>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mb-6">
                   <div>
-                    <div className="text-xs text-text-muted mb-1">Supplier</div>
+                    <div className="text-xs text-text-muted mb-1">{t("quotes_page.table_supplier")}</div>
                     <div className="text-sm font-medium text-text-primary">{displayQuote.supplier_name || displayQuote.supplier_id}</div>
                   </div>
                   <div>
-                    <div className="text-xs text-text-muted mb-1">Payment Terms</div>
+                    <div className="text-xs text-text-muted mb-1">{t("quotes_page.table_payment")}</div>
                     <div className="text-sm font-medium text-text-primary">{displayQuote.payment_terms || 'N/A'}</div>
                   </div>
                   <div>
-                    <div className="text-xs text-text-muted mb-1">Delivery Time</div>
+                    <div className="text-xs text-text-muted mb-1">{t("rfq_detail.delivery_time")}</div>
                     <div className="text-sm font-medium text-text-primary">{displayQuote.delivery_days ? `${displayQuote.delivery_days} Days` : 'N/A'}</div>
                   </div>
                   <div>
-                    <div className="text-xs text-text-muted mb-1">Warranty</div>
+                    <div className="text-xs text-text-muted mb-1">{t("quotes_page.table_warranty")}</div>
                     <div className="text-sm font-medium text-text-primary">{displayQuote.warranty_months ? `${displayQuote.warranty_months} Months` : 'N/A'}</div>
                   </div>
                 </div>
@@ -1136,10 +1140,10 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                   <table className="w-full text-left text-sm">
                     <thead className="bg-bg text-text-muted text-xs uppercase border-b border-border">
                       <tr>
-                        <th className="px-4 py-3 font-medium">Item Description</th>
-                        <th className="px-4 py-3 font-medium text-right">Qty</th>
-                        <th className="px-4 py-3 font-medium text-right">Unit Price</th>
-                        <th className="px-4 py-3 font-medium text-right">Total</th>
+                        <th className="px-4 py-3 font-medium">{t("rfq_detail.item_description")}</th>
+                        <th className="px-4 py-3 font-medium text-right">{t("rfq_detail.qty")}</th>
+                        <th className="px-4 py-3 font-medium text-right">{t("rfq_detail.unit_price")}</th>
+                        <th className="px-4 py-3 font-medium text-right">{t("rfq_detail.total")}</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border">
@@ -1163,18 +1167,18 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                 {/* Calculation Summary */}
                 <div className="mt-6 flex flex-col items-end gap-2 text-sm">
                   <div className="flex justify-between w-64 text-text-muted">
-                    <span>Subtotal:</span>
+                    <span>{t("rfq_detail.subtotal_label")}</span>
                     <span>₺ {displayQuote.subtotal?.toLocaleString('en-US') || 0}</span>
                   </div>
                   {displayQuote.discount_amount != null && displayQuote.discount_amount > 0 && (
                     <div className="flex justify-between w-64 text-text-muted">
-                      <span>Discount:</span>
+                      <span>{t("rfq_detail.discount_label")}</span>
                       <span className="text-success">- ₺ {displayQuote.discount_amount.toLocaleString('en-US')}</span>
                     </div>
                   )}
                   <div className="flex justify-between w-64 text-text-muted border-b border-border pb-2">
                     <span>
-                      VAT ({displayQuote.vat_rate != null ? `${(displayQuote.vat_rate * 100).toFixed(0)}%` : "Belirtilmemiş"}):
+                      VAT ({displayQuote.vat_rate != null ? `${(displayQuote.vat_rate * 100).toFixed(0)}%` : t("rfq_detail.quotes_section.vat_not_specified")}):
                     </span>
                     <span>
                       {displayQuote.vat_amount != null
@@ -1183,14 +1187,14 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                     </span>
                   </div>
                   <div className="flex justify-between w-64 font-semibold text-text-primary text-base pt-1">
-                    <span>Total Quote:</span>
+                    <span>{t("rfq_detail.total_quote_label")}</span>
                     <span>₺ {displayQuote.total_price?.toLocaleString('en-US') || 0}</span>
                   </div>
                   
                   {displayTCO && (
                     <>
                       <div className="flex justify-between w-64 font-semibold text-amber-500 text-base pt-2 border-t border-border mt-2">
-                        <span>Computed TCO:</span>
+                        <span>{t("rfq_detail.computed_tco_label")}</span>
                         <span>₺ {displayTCO.total_tco.toLocaleString('en-US')}</span>
                       </div>
                       <div className="flex items-center justify-end gap-1.5 text-xs text-primary mt-2 bg-primary/10 px-2 py-1 rounded w-64">
@@ -1231,13 +1235,13 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                   const act = new Date(po.actual_delivery_date).getTime();
                   const diffDays = Math.round((act - exp) / (1000 * 60 * 60 * 24));
                   if (diffDays > 0) {
-                    delayText = `+${diffDays} gün gecikmeli`;
+                    delayText = t("rfq_detail.orders_section.delay_late", { days: diffDays });
                     delayBadgeClass = "bg-red-500/15 text-red-400 border border-red-500/30";
                   } else if (diffDays < 0) {
-                    delayText = `${Math.abs(diffDays)} gün erken`;
+                    delayText = t("rfq_detail.orders_section.delay_early", { days: Math.abs(diffDays) });
                     delayBadgeClass = "bg-emerald-500/15 text-emerald-400 border border-emerald-500/30";
                   } else {
-                    delayText = "Tam gününde";
+                    delayText = t("rfq_detail.orders_section.delay_on_time");
                     delayBadgeClass = "bg-emerald-500/15 text-emerald-400 border border-emerald-500/30";
                   }
                 } else if (po.expected_delivery_date && !po.actual_delivery_date && !isPoCancelled) {
@@ -1245,7 +1249,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                   const now = new Date().getTime();
                   if (now > exp) {
                     const overDays = Math.round((now - exp) / (1000 * 60 * 60 * 24));
-                    delayText = `Gecikmede (+${overDays} gün)`;
+                    delayText = t("rfq_detail.orders_section.delay_overdue", { days: overDays });
                     delayBadgeClass = "bg-amber-500/15 text-amber-400 border border-amber-500/30";
                   }
                 }
@@ -1280,27 +1284,27 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                         {isPoCancelled ? (
                           <>
                             <Ban size={16} className="text-red-400" />
-                            <span className="text-red-400">Sipariş İptal Edildi</span>
+                            <span className="text-red-400">{t("rfq_detail.orders_section.status_cancelled")}</span>
                           </>
                         ) : isCompleted ? (
                           <>
                             <PackageCheck size={16} className="text-emerald-400" />
-                            <span className="text-emerald-400">Sipariş Tamamlandı</span>
+                            <span className="text-emerald-400">{t("rfq_detail.orders_section.status_completed")}</span>
                           </>
                         ) : isDelivered ? (
                           <>
                             <Truck size={16} className="text-amber-400" />
-                            <span className="text-amber-400">Teslim Alındı (Doğrulama Bekliyor)</span>
+                            <span className="text-amber-400">{t("rfq_detail.orders_section.status_delivered")}</span>
                           </>
                         ) : isDraft ? (
                           <>
                             <Clock size={16} className="text-amber-400" />
-                            <span className="text-amber-400">Taslak Sipariş (Yetki Eşiği Bekliyor)</span>
+                            <span className="text-amber-400">{t("rfq_detail.orders_section.status_draft_threshold")}</span>
                           </>
                         ) : (
                           <>
                             <CheckCircle size={16} className="text-primary" />
-                            <span className="text-primary-light">Sipariş Onaylandı ve İletildi (Kilitli İşlem)</span>
+                            <span className="text-primary-light">{t("rfq_detail.orders_section.status_approved_sent")}</span>
                           </>
                         )}
                       </h2>
@@ -1314,45 +1318,45 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-1.5 font-semibold text-amber-400">
                             <AlertTriangle size={14} className="shrink-0" />
-                            <span>Tedarikçiye İletilmedi — Çok Kademeli Onay Bekliyor</span>
+                            <span>{t("rfq_detail.orders_section.pending_authority_banner_title")}</span>
                           </div>
                           <Link
                             href="/dashboard/approvals"
                             className="inline-flex items-center gap-1 text-[11px] font-semibold px-2.5 py-1 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 transition-colors"
                           >
-                            <span>Onay Kuyruğuna Git</span>
+                            <span>{t("rfq_detail.orders_section.pending_authority_go_to_queue")}</span>
                             <ChevronRight size={12} />
                           </Link>
                         </div>
                         <p className="text-[11px] text-text-muted leading-relaxed">
-                          Bu sipariş 250.000 TRY harcama yetki sınırını aştığı için Satın Alma Direktörü ve CFO müşterek onayını beklemektedir. İki bağımsız onay tamamlanana kadar sipariş DRAFT statüsünde korunur; tedarikçiye bildirim e-postası gönderilmez ve teslimat işlemi yapılamaz.
+                          {t("rfq_detail.orders_section.pending_authority_desc")}
                         </p>
                       </div>
                     )}
 
                     <div className="bg-bg/60 rounded p-3 text-xs font-mono space-y-1.5 border border-border">
                       <div className="flex justify-between">
-                        <span className="text-text-muted">PO No:</span>
+                        <span className="text-text-muted">{t("rfq_detail.po_number_label")}</span>
                         <span className="font-semibold text-text-primary">{po.po_number}</span>
                       </div>
                       <div className="flex justify-between">
-                        <span className="text-text-muted">Seçilen Teklif:</span>
+                        <span className="text-text-muted">{t("rfq_detail.orders_section.label_selected_quote")}</span>
                         <span className="font-semibold text-text-primary">{poQuote?.supplier_name || po.quote_id.slice(0, 8)}</span>
                       </div>
                       {poQuote && (
                         <div className="flex justify-between">
-                          <span className="text-text-muted">Sipariş Tutarı:</span>
+                          <span className="text-text-muted">{t("rfq_detail.orders_section.label_order_amount")}</span>
                           <span className="font-semibold text-text-primary">
                             {new Intl.NumberFormat('tr-TR', { style: 'currency', currency: poQuote.currency || 'TRY' }).format(poQuote.total_price)}
                           </span>
                         </div>
                       )}
                       <div className="flex justify-between">
-                        <span className="text-text-muted">Oluşturulma:</span>
+                        <span className="text-text-muted">{t("rfq_detail.orders_section.label_created_at")}</span>
                         <span>{new Date(po.created_at).toLocaleDateString()}</span>
                       </div>
                       <div className="flex justify-between">
-                        <span className="text-text-muted">Beklenen Teslimat:</span>
+                        <span className="text-text-muted">{t("rfq_detail.expected_delivery_label")}</span>
                         <span>{po.expected_delivery_date || "-"}</span>
                       </div>
                       <div className="flex justify-between items-center">
@@ -1368,20 +1372,20 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                       </div>
                       {po.final_amount != null && (
                         <div className="flex justify-between text-emerald-400 pt-1 border-t border-border">
-                          <span className="text-text-muted">Kesinleşen Tutar:</span>
+                          <span className="text-text-muted">{t("rfq_detail.orders_section.label_final_amount")}</span>
                           <span className="font-semibold">₺ {Number(po.final_amount).toLocaleString('tr-TR')}</span>
                         </div>
                       )}
                       {po.delivery_notes && (
                         <div className="pt-1 text-text-secondary text-[11px] border-t border-border">
-                          <span className="text-text-muted block text-[10px] uppercase font-semibold">Notlar:</span>
+                          <span className="text-text-muted block text-[10px] uppercase font-semibold">{t("rfq_detail.notes_label")}</span>
                           <span className="block mt-0.5 whitespace-pre-line">{po.delivery_notes}</span>
                         </div>
                       )}
                       {isPoCancelled && (
                         <div className="pt-1 text-red-300 text-xs border-t border-border">
-                          <span className="text-text-muted block text-[10px] uppercase font-semibold">İptal Gerekçesi ({po.cancelled_at ? new Date(po.cancelled_at).toLocaleDateString() : "-"}):</span>
-                          <span className="italic block mt-0.5">{po.cancellation_reason || "Gerekçe belirtilmedi"}</span>
+                          <span className="text-text-muted block text-[10px] uppercase font-semibold">{t("rfq_detail.orders_section.label_cancellation_reason", { by: po.cancelled_at ? fmtDate(po.cancelled_at, locale) : "-" })}</span>
+                          <span className="italic block mt-0.5">{po.cancellation_reason || t("rfq_detail.orders_section.reason_unspecified")}</span>
                         </div>
                       )}
                     </div>
@@ -1395,8 +1399,8 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                           className="flex items-center gap-1.5 font-medium text-text-secondary hover:text-text-primary transition-colors"
                         >
                           <AlertCircle size={13} className={issues.length > 0 ? "text-amber-400" : "text-text-muted"} />
-                          <span>Kalite & İade Kayıtları ({issues.length})</span>
-                          <span className="text-[10px] text-text-muted">[{isQualityExpanded ? "Gizle" : "Göster"}]</span>
+                          <span>{t("rfq_detail.orders_section.quality_records_title", { count: issues.length })}</span>
+                          <span className="text-[10px] text-text-muted">[{isQualityExpanded ? t("rfq_detail.orders_section.btn_hide") : t("rfq_detail.orders_section.btn_show")}]</span>
                         </button>
 
                         {!isPoCancelled && (
@@ -1412,7 +1416,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                             }}
                             className="text-[11px] font-medium text-amber-400 hover:text-amber-300 transition-colors"
                           >
-                            + Kalite Kaydı Ekle
+                            {t("rfq_detail.orders_section.btn_add_quality_record")}
                           </button>
                         )}
                       </div>
@@ -1421,7 +1425,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                         <div className="mt-2 space-y-1.5">
                           {issues.length === 0 ? (
                             <p className="text-[11px] text-text-muted italic bg-bg/40 p-2 rounded">
-                              Bu sipariş için henüz bir kalite veya fire kaydı girilmedi.
+                              {t("rfq_detail.orders_section.empty_quality_records")}
                             </p>
                           ) : (
                             issues.map(qi => (
@@ -1443,13 +1447,13 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                                   </div>
                                   {qi.rejection_count > 0 && (
                                     <span className="text-[11px] font-semibold text-red-400">
-                                      Fire / İade: {qi.rejection_count} adet
+                                      {t("rfq_detail.orders_section.rejection_count_label", { count: qi.rejection_count })}
                                     </span>
                                   )}
                                 </div>
                                 <p className="text-text-secondary text-[11px]">{qi.description}</p>
                                 <div className="flex justify-between text-[10px] text-text-muted pt-0.5">
-                                  <span>Kaydeden: {qi.reported_by_name || "Kullanıcı"}</span>
+                                  <span>{t("rfq_detail.orders_section.reported_by_label", { name: qi.reported_by_name || "User" })}</span>
                                   <span>{new Date(qi.created_at).toLocaleDateString()}</span>
                                 </div>
                               </div>
@@ -1474,7 +1478,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold transition-colors shadow-sm"
                             >
                               <Truck size={13} />
-                              Teslim Alındı
+                              {t("rfq_detail.orders_section.btn_delivered")}
                             </button>
                           )}
                           {isDelivered && (
@@ -1488,7 +1492,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-colors shadow-sm"
                             >
                               <PackageCheck size={13} />
-                              Siparişi Tamamla
+                              {t("rfq_detail.orders_section.btn_complete_order")}
                             </button>
                           )}
                         </div>
@@ -1500,7 +1504,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                             setCancelPoError(null);
                           }}
                           disabled={isCompleted}
-                          title={isCompleted ? "Tamamlanmış sipariş iptal edilemez" : "Siparişi iptal et"}
+                          title={isCompleted ? t("rfq_detail.orders_section.tooltip_completed_no_cancel") : t("rfq_detail.orders_section.tooltip_cancel_po")}
                           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
                             isCompleted
                               ? "text-zinc-600 border border-zinc-800 cursor-not-allowed opacity-40"
@@ -1508,7 +1512,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                           }`}
                         >
                           <Ban size={13} />
-                          İptal Et
+                          {t("rfq_detail.orders_section.btn_cancel_order")}
                         </button>
                       </div>
                     )}
@@ -1520,15 +1524,14 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
             <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-sm text-white">
               <h2 className="text-sm font-semibold uppercase tracking-wider mb-2 flex items-center gap-2">
                 <Mail size={16} className="text-primary" />
-                Next Step: Dispatch
+                {t("rfq_detail.orders_section.next_step_dispatch_title")}
               </h2>
               <p className="text-xs text-slate-400 mb-4 leading-relaxed">
-                If approved, the system will automatically generate a PDF Purchase Order and send an email to 
-                <span className="text-slate-200 font-medium"> the selected supplier</span>.
+                {t("rfq_detail.orders_section.next_step_dispatch_desc")}
               </p>
               <div className="bg-slate-800 rounded p-3 text-xs font-mono text-slate-300 border border-slate-700">
-                Subject: Purchase Order PO-{rfq.id.split('-')[0]}<br/>
-                Attached: PO-{rfq.id.split('-')[0]}.pdf
+                {t("rfq_detail.orders_section.subject_preview", { id: rfq.id.split('-')[0] })}<br/>
+                {t("rfq_detail.orders_section.attached_preview", { id: rfq.id.split('-')[0] })}
               </div>
             </div>
           )}
@@ -1551,7 +1554,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white transition-colors shrink-0"
                 >
                   <Plus size={14} />
-                  Yeni Davet Gönder
+                  {t("rfq_detail.invitations_section.btn_send_new_invite")}
                 </button>
               )}
             </div>
@@ -1559,13 +1562,13 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
             {inviteSuccess && (
               <div className="mb-4 p-3 rounded-lg bg-green-500/10 border border-green-500/20 text-green-600 dark:text-green-400 text-xs flex items-center justify-between">
                 <span>{inviteSuccess}</span>
-                <button onClick={() => setInviteSuccess(null)} className="text-xs hover:underline">Kapat</button>
+                <button onClick={() => setInviteSuccess(null)} className="text-xs hover:underline">{t("common.actions.close")}</button>
               </div>
             )}
 
             {invitations.length === 0 ? (
               <div className="p-6 rounded-lg border border-dashed border-border text-center text-xs text-text-muted">
-                Henüz bu RFQ için tedarikçilere davet e-postası gönderilmedi.
+                {t("rfq_detail.invitations_section.empty_invitations")}
               </div>
             ) : (
               <div className="overflow-x-auto">
@@ -1573,11 +1576,11 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                   <thead className="bg-surface/50 border-b border-border text-text-muted uppercase">
                     <tr>
                       <th className="px-3 py-2.5 font-medium">Recipient / Supplier</th>
-                      <th className="px-3 py-2.5 font-medium">Subject</th>
-                      <th className="px-3 py-2.5 font-medium">Status</th>
-                      <th className="px-3 py-2.5 font-medium">Attempts</th>
-                      <th className="px-3 py-2.5 font-medium">Date</th>
-                      <th className="px-3 py-2.5 font-medium text-right">Actions</th>
+                      <th className="px-3 py-2.5 font-medium">{t("rfq_detail.table_subject")}</th>
+                      <th className="px-3 py-2.5 font-medium">{t("rfq_detail.table_status")}</th>
+                      <th className="px-3 py-2.5 font-medium">{t("rfq_detail.table_attempts")}</th>
+                      <th className="px-3 py-2.5 font-medium">{t("rfq_detail.table_date")}</th>
+                      <th className="px-3 py-2.5 font-medium text-right">{t("rfq_detail.table_actions")}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
@@ -1591,10 +1594,10 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                       let badgeLabel = "Queued";
                       if (inv.is_revoked) {
                         badgeClass = "bg-zinc-500/10 text-zinc-400 border-zinc-500/20 line-through";
-                        badgeLabel = "Davet İptal";
+                        badgeLabel = t("rfq_detail.invitations_section.badge_invite_revoked");
                       } else if (inv.submitted_at || inv.submitted_quote_id) {
                         badgeClass = "bg-emerald-500/15 text-emerald-400 border-emerald-500/30";
-                        badgeLabel = "✓ Teklif Alındı";
+                        badgeLabel = t("rfq_detail.invitations_section.badge_quote_received");
                       } else if (isSending) {
                         badgeClass = "bg-amber-500/10 text-amber-500 border-amber-500/20";
                         badgeLabel = "Sending...";
@@ -1647,17 +1650,17 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                                 <button
                                   onClick={() => handleCopyPortalLink(inv.id, inv.portal_url)}
                                   className="px-2 py-1 rounded text-[11px] font-medium bg-surface hover:bg-surface-elevated text-text-secondary border border-border transition-colors flex items-center gap-1"
-                                  title="Tedarikçi portal linkini kopyala"
+                                  title={t("rfq_detail.invitations_section.tooltip_copy_link")}
                                 >
                                   {copiedInvitationId === inv.id ? (
                                     <>
                                       <Check size={12} className="text-emerald-400" />
-                                      <span className="text-emerald-400">Kopyalandı</span>
+                                      <span className="text-emerald-400">{t("rfq_detail.invitations_section.copied_badge")}</span>
                                     </>
                                   ) : (
                                     <>
                                       <Copy size={12} />
-                                      <span>Link Kopyala</span>
+                                      <span>{t("rfq_detail.copy_link_btn")}</span>
                                     </>
                                   )}
                                 </button>
@@ -1667,12 +1670,12 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                                   onClick={() => handleRevokeInvitation(inv.id)}
                                   disabled={revokingInvitationId === inv.id}
                                   className="px-2 py-1 rounded text-[11px] font-medium bg-amber-500/10 hover:bg-amber-500/20 text-amber-500 border border-amber-500/30 transition-colors"
-                                  title="Daveti iptal et (tedarikçi erişimini kaldırır)"
+                                  title={t("rfq_detail.invitations_section.tooltip_revoke_invite")}
                                 >
                                   {revokingInvitationId === inv.id ? (
                                     <Loader2 size={12} className="animate-spin inline" />
                                   ) : (
-                                    "İptal Et"
+                                    t("rfq_detail.invitations_section.btn_revoke")
                                   )}
                                 </button>
                               )}
@@ -1723,7 +1726,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
             <div className="p-6 border-b border-border flex justify-between items-center bg-surface">
               <h3 className="text-lg font-semibold text-text-primary flex items-center gap-2">
                 <Mail size={18} className="text-blue-500" />
-                Tedarikçiye RFQ Daveti Gönder
+                {t("rfq_detail.invitations_section.invite_modal_title")}
               </h3>
               <button
                 onClick={() => { setIsInviteModalOpen(false); setInviteError(null); }}
@@ -1741,7 +1744,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
               )}
 
               <div className="flex flex-col gap-1">
-                <label className="text-xs font-medium text-text-secondary">Tedarikçi Seçimi (İsteğe Bağlı)</label>
+                <label className="text-xs font-medium text-text-secondary">{t("rfq_detail.invitations_section.invite_select_supplier_label")}</label>
                 <select
                   value={inviteSupplierId}
                   onChange={(e) => {
@@ -1755,7 +1758,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                   }}
                   className="px-2.5 py-1.5 text-xs bg-background border border-border rounded text-text-primary focus:outline-none focus:border-primary"
                 >
-                  <option value="">-- Kayıtlı Tedarikçi Seç veya Doğrudan E-posta Gir --</option>
+                  <option value="">{t("rfq_detail.invitations_section.invite_select_supplier_default")}</option>
                   {suppliers.map(s => (
                     <option key={s.id} value={s.id}>
                       {s.name} {s.email ? `(${s.email})` : ''}
@@ -1765,7 +1768,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
               </div>
 
               <div className="flex flex-col gap-1">
-                <label className="text-xs font-medium text-text-secondary">Alıcı E-posta Adresi *</label>
+                <label className="text-xs font-medium text-text-secondary">{t("rfq_detail.invitations_section.invite_recipient_email_label")}</label>
                 <input
                   type="email"
                   required
@@ -1777,10 +1780,10 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
               </div>
 
               <div className="flex flex-col gap-1">
-                <label className="text-xs font-medium text-text-secondary">Alıcı İlgili Kişi Adı</label>
+                <label className="text-xs font-medium text-text-secondary">{t("rfq_detail.invitations_section.invite_contact_name_label")}</label>
                 <input
                   type="text"
-                  placeholder="Örn. Ahmet Yılmaz"
+                  placeholder={t("rfq_detail.invitations_section.invite_contact_name_placeholder")}
                   value={inviteName}
                   onChange={(e) => setInviteName(e.target.value)}
                   className="px-2.5 py-1.5 text-xs bg-background border border-border rounded text-text-primary focus:outline-none focus:border-primary"
@@ -1788,10 +1791,10 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
               </div>
 
               <div className="flex flex-col gap-1">
-                <label className="text-xs font-medium text-text-secondary">Özel Not / Mesaj (İsteğe Bağlı)</label>
+                <label className="text-xs font-medium text-text-secondary">{t("rfq_detail.invitations_section.invite_message_label")}</label>
                 <textarea
                   rows={3}
-                  placeholder="Teklif hazırlarken dikkat edilmesini istediğiniz hususlar..."
+                  placeholder={t("rfq_detail.invitations_section.invite_message_placeholder")}
                   value={inviteCustomMessage}
                   onChange={(e) => setInviteCustomMessage(e.target.value)}
                   className="px-2.5 py-1.5 text-xs bg-background border border-border rounded text-text-primary focus:outline-none focus:border-primary resize-none"
@@ -1803,9 +1806,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                   type="button"
                   onClick={() => { setIsInviteModalOpen(false); setInviteError(null); }}
                   className="px-3.5 py-2 text-xs font-medium text-text-muted hover:text-text-primary"
-                >
-                  Vazgeç
-                </button>
+                >{t("quotes_page.cancel_btn")}</button>
                 <button
                   type="submit"
                   disabled={isSendingInvite || !inviteEmail.trim()}
@@ -1814,12 +1815,12 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                   {isSendingInvite ? (
                     <>
                       <Loader2 size={13} className="animate-spin" />
-                      <span>Kuyruğa Alınıyor...</span>
+                      <span>{t("rfq_detail.invitations_section.invite_queueing")}</span>
                     </>
                   ) : (
                     <>
                       <Mail size={13} />
-                      <span>Davet Gönder</span>
+                      <span>{t("rfq_detail.invitations_section.invite_send_btn")}</span>
                     </>
                   )}
                 </button>
@@ -1834,7 +1835,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
           <div className="bg-surface-hover border border-border rounded-lg shadow-xl w-full max-w-md overflow-hidden flex flex-col">
             <div className="p-6 border-b border-border flex justify-between items-center bg-surface">
-              <h3 className="text-lg font-semibold text-text-primary">Add Supplier Quote</h3>
+              <h3 className="text-lg font-semibold text-text-primary">{t("rfq_detail.actions.upload_quote")}</h3>
               <button 
                 onClick={() => setIsUploadQuoteOpen(false)}
                 className="text-text-muted hover:text-text-primary transition-colors"
@@ -1854,7 +1855,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
               {isCreatingSupplier ? (
                 <div className="flex flex-col gap-3 p-3 bg-surface rounded-lg border border-border">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-semibold text-text-primary uppercase">New Supplier Details</span>
+                    <span className="text-xs font-semibold text-text-primary uppercase">{t("rfq_detail.new_supplier_details")}</span>
                     <button 
                       type="button"
                       onClick={() => { setIsCreatingSupplier(false); setSupplierCreateError(null); }}
@@ -1883,7 +1884,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
 
                   <div className="grid grid-cols-2 gap-2">
                     <div className="flex flex-col gap-1">
-                      <label className="text-xs font-medium text-text-secondary">Email</label>
+                      <label className="text-xs font-medium text-text-secondary">{t("rfq_detail.email_label")}</label>
                       <input 
                         type="email"
                         placeholder="contact@acme.com"
@@ -1893,7 +1894,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                       />
                     </div>
                     <div className="flex flex-col gap-1">
-                      <label className="text-xs font-medium text-text-secondary">Phone</label>
+                      <label className="text-xs font-medium text-text-secondary">{t("rfq_detail.phone_label")}</label>
                       <input 
                         type="text"
                         placeholder="+90 555 000 0000"
@@ -1965,11 +1966,11 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                   {uploadFile ? (
                     <div className="flex flex-col items-center">
                       <p className="text-sm font-medium text-text-primary">{uploadFile.name}</p>
-                      <p className="text-xs text-text-muted mt-1">Ready to upload</p>
+                      <p className="text-xs text-text-muted mt-1">{t("rfq_detail.ready_to_upload")}</p>
                     </div>
                   ) : (
                     <>
-                      <p className="text-sm font-medium text-text-primary">Click to upload or drag and drop</p>
+                      <p className="text-sm font-medium text-text-primary">{t("rfq_detail.drag_drop_upload")}</p>
                       <p className="text-xs text-text-muted mt-1">PDF, Excel (.xlsx), PNG, JPG up to 50MB</p>
                     </>
                   )}
@@ -2008,10 +2009,10 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                 <div className="p-2.5 rounded-full bg-red-500/10 border border-red-500/20">
                   <AlertTriangle size={22} />
                 </div>
-                <h3 className="text-base font-semibold text-text-primary">RFQ Talebini Sil</h3>
+                <h3 className="text-base font-semibold text-text-primary">{t("quotes_page.delete_rfq_title")}</h3>
               </div>
               <p className="text-sm text-text-muted">
-                Bu RFQ talebini ve bağlı tüm teklif belgelerini kalıcı olarak silmek istediğinizden emin misiniz?
+                {t("rfq_detail.modals.delete_rfq_warning")}
               </p>
               <div className="mt-4 p-3 rounded-lg bg-bg border border-border text-xs">
                 <span className="font-mono text-text-muted">#{rfq.id.slice(0, 8)}</span>
@@ -2028,9 +2029,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                 onClick={() => { setIsDeleteRfqOpen(false); setDeleteError(null); }}
                 disabled={isDeleting}
                 className="px-4 py-2 text-xs font-medium text-text-muted hover:text-text-primary transition-colors disabled:opacity-50"
-              >
-                Vazgeç
-              </button>
+              >{t("quotes_page.cancel_btn")}</button>
               <button
                 onClick={handleDeleteRfq}
                 disabled={isDeleting}
@@ -2053,13 +2052,13 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                 <div className="p-2.5 rounded-full bg-red-500/10 border border-red-500/20">
                   <AlertTriangle size={22} />
                 </div>
-                <h3 className="text-base font-semibold text-text-primary">Teklifi Sil</h3>
+                <h3 className="text-base font-semibold text-text-primary">{t("quotes_page.delete_quote_title")}</h3>
               </div>
               <p className="text-sm text-text-muted">
-                Bu tedarikçi teklifini silmek istediğinizden emin misiniz?
+                {t("rfq_detail.modals.delete_quote_warning")}
               </p>
               <div className="mt-4 p-3 rounded-lg bg-bg border border-border text-xs">
-                <p className="font-semibold text-text-primary">{quoteToDelete.supplier_name || "Tedarikçi Teklifi"}</p>
+                <p className="font-semibold text-text-primary">{quoteToDelete.supplier_name || t("quotes_page.table_supplier")}</p>
                 <p className="text-emerald-400 font-medium mt-1">
                   ₺{Number(quoteToDelete.total_price).toLocaleString("tr-TR")} {quoteToDelete.currency}
                 </p>
@@ -2075,9 +2074,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                 onClick={() => { setQuoteToDelete(null); setDeleteError(null); }}
                 disabled={isDeleting}
                 className="px-4 py-2 text-xs font-medium text-text-muted hover:text-text-primary transition-colors disabled:opacity-50"
-              >
-                Vazgeç
-              </button>
+              >{t("quotes_page.cancel_btn")}</button>
               <button
                 onClick={handleDeleteQuote}
                 disabled={isDeleting}
@@ -2101,24 +2098,24 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                   <Ban size={22} />
                 </div>
                 <div>
-                  <h3 className="text-base font-semibold text-text-primary">RFQ Talebini İptal Et</h3>
-                  <p className="text-xs text-text-muted mt-0.5">İş akışı durumu 'cancelled' olarak değiştirilecektir.</p>
+                  <h3 className="text-base font-semibold text-text-primary">{t("rfq_detail.modals.cancel_rfq_title")}</h3>
+                  <p className="text-xs text-text-muted mt-0.5">{t("rfq_detail.modals.cancel_rfq_desc")}</p>
                 </div>
               </div>
 
               <div className="space-y-4">
                 <div>
                   <label className="block text-xs font-medium text-text-secondary mb-1.5">
-                    İptal Gerekçesi <span className="text-red-400">*</span>
+                    {t("rfq_detail.modals.cancel_rfq_reason_label")}
                   </label>
                   <textarea
                     rows={3}
-                    placeholder="Örn: Proje bütçesi yönetim kurulu kararıyla iptal edildi veya talep gereksiz hale geldi..."
+                    placeholder={t("rfq_detail.modals.cancel_rfq_reason_placeholder")}
                     value={rfqCancelReason}
                     onChange={(e) => setRfqCancelReason(e.target.value)}
                     className="w-full text-xs p-3 rounded-lg bg-bg border border-border text-text-primary placeholder:text-text-muted focus:outline-none focus:border-amber-500 transition-colors"
                   />
-                  <p className="text-[11px] text-text-muted mt-1">En az 3 karakter gereklidir. Denetim günlüğüne (Audit Log) kaydedilir.</p>
+                  <p className="text-[11px] text-text-muted mt-1">{t("rfq_detail.modals.cancel_rfq_reason_help")}</p>
                 </div>
 
                 {purchaseOrders.some(p => p.status !== 'cancelled') && (
@@ -2129,7 +2126,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                       onChange={(e) => setRfqCancelPos(e.target.checked)}
                       className="mt-0.5 rounded border-amber-500 text-amber-500 focus:ring-0"
                     />
-                    <span>Bağlı aktif Satın Alma Siparişlerini (PO) de otomatik olarak iptal et.</span>
+                    <span>{t("rfq_detail.modals.cancel_rfq_auto_po")}</span>
                   </label>
                 )}
 
@@ -2146,16 +2143,14 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                 onClick={() => { setIsCancelRfqOpen(false); setCancelRfqError(null); }}
                 disabled={isCancellingRfq}
                 className="px-4 py-2 text-xs font-medium text-text-muted hover:text-text-primary transition-colors disabled:opacity-50"
-              >
-                Vazgeç
-              </button>
+              >{t("quotes_page.cancel_btn")}</button>
               <button
                 onClick={handleCancelRfq}
                 disabled={isCancellingRfq || !rfqCancelReason.trim() || rfqCancelReason.trim().length < 3}
                 className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold bg-amber-600 hover:bg-amber-500 text-white transition-colors shadow-sm disabled:opacity-50"
               >
                 {isCancellingRfq && <Loader2 size={13} className="animate-spin" />}
-                {isCancellingRfq ? "İptal Ediliyor..." : "Evet, RFQ'yu İptal Et"}
+                {isCancellingRfq ? t("rfq_detail.modals.cancelling_rfq") : t("rfq_detail.modals.btn_confirm_cancel_rfq")}
               </button>
             </div>
           </div>
@@ -2172,23 +2167,23 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                   <Ban size={22} />
                 </div>
                 <div>
-                  <h3 className="text-base font-semibold text-text-primary">Siparişi İptal Et</h3>
+                  <h3 className="text-base font-semibold text-text-primary">{t("rfq_detail.modals.cancel_po_title")}</h3>
                   <p className="text-xs text-text-muted font-mono mt-0.5">{poToCancel.po_number}</p>
                 </div>
               </div>
 
               <div className="space-y-4">
                 <p className="text-xs text-text-muted">
-                  Bu işlem Satın Alma Siparişini 'cancelled' durumuna geçirecektir. Yasal ve denetim izi gereği PO ve teklif kayıtları fiziksel olarak silinmez.
+                  {t("rfq_detail.modals.cancel_po_desc")}
                 </p>
 
                 <div>
                   <label className="block text-xs font-medium text-text-secondary mb-1.5">
-                    İptal Gerekçesi <span className="text-red-400">*</span>
+                    {t("rfq_detail.modals.cancel_po_reason_label")}
                   </label>
                   <textarea
                     rows={3}
-                    placeholder="Örn: Tedarikçi taahhüt edilen teslimat süresine uyamayacağını bildirdi..."
+                    placeholder={t("rfq_detail.modals.cancel_po_reason_placeholder")}
                     value={poCancelReason}
                     onChange={(e) => setPoCancelReason(e.target.value)}
                     className="w-full text-xs p-3 rounded-lg bg-bg border border-border text-text-primary placeholder:text-text-muted focus:outline-none focus:border-red-500 transition-colors"
@@ -2209,16 +2204,14 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                 onClick={() => { setPoToCancel(null); setCancelPoError(null); }}
                 disabled={isCancellingPo}
                 className="px-4 py-2 text-xs font-medium text-text-muted hover:text-text-primary transition-colors disabled:opacity-50"
-              >
-                Vazgeç
-              </button>
+              >{t("quotes_page.cancel_btn")}</button>
               <button
                 onClick={handleCancelPo}
                 disabled={isCancellingPo || !poCancelReason.trim() || poCancelReason.trim().length < 3}
                 className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold bg-red-600 hover:bg-red-500 text-white transition-colors shadow-sm disabled:opacity-50"
               >
                 {isCancellingPo && <Loader2 size={13} className="animate-spin" />}
-                {isCancellingPo ? "İptal Ediliyor..." : "Evet, Siparişi İptal Et"}
+                {isCancellingPo ? t("rfq_detail.modals.cancelling_po") : t("rfq_detail.modals.btn_confirm_cancel_po")}
               </button>
             </div>
           </div>
@@ -2235,7 +2228,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                   <Truck size={22} />
                 </div>
                 <div>
-                  <h3 className="text-base font-semibold text-text-primary">Teslimat Kaydı Gir</h3>
+                  <h3 className="text-base font-semibold text-text-primary">{t("rfq_detail.modals.deliver_po_title")}</h3>
                   <p className="text-xs text-text-muted font-mono mt-0.5">{poToDeliver.po_number}</p>
                 </div>
               </div>
@@ -2251,16 +2244,16 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                     onChange={(e) => setDeliverDate(e.target.value)}
                     className="w-full text-xs p-2.5 rounded-lg bg-bg border border-border text-text-primary focus:outline-none focus:border-amber-500 transition-colors"
                   />
-                  <p className="text-[11px] text-text-muted mt-1">Belirtilmezse bugünün tarihi esas alınır.</p>
+                  <p className="text-[11px] text-text-muted mt-1">{t("rfq_detail.modals.deliver_po_date_help")}</p>
                 </div>
 
                 <div>
                   <label className="block text-xs font-medium text-text-secondary mb-1.5">
-                    Teslimat Notları (Opsiyonel)
+                    {t("rfq_detail.modals.deliver_po_notes_label")}
                   </label>
                   <textarea
                     rows={3}
-                    placeholder="Örn: İrsaliye No: IRS-9821, ambar 2 numaralı rampa üzerinden teslim alındı..."
+                    placeholder={t("rfq_detail.modals.deliver_po_notes_placeholder")}
                     value={deliverNotes}
                     onChange={(e) => setDeliverNotes(e.target.value)}
                     className="w-full text-xs p-3 rounded-lg bg-bg border border-border text-text-primary placeholder:text-text-muted focus:outline-none focus:border-amber-500 transition-colors"
@@ -2280,16 +2273,14 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                 onClick={() => { setPoToDeliver(null); setDeliverPoError(null); }}
                 disabled={isDeliveringPo}
                 className="px-4 py-2 text-xs font-medium text-text-muted hover:text-text-primary transition-colors disabled:opacity-50"
-              >
-                Vazgeç
-              </button>
+              >{t("quotes_page.cancel_btn")}</button>
               <button
                 onClick={handleDeliverPo}
                 disabled={isDeliveringPo}
                 className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold bg-amber-600 hover:bg-amber-500 text-white transition-colors shadow-sm disabled:opacity-50"
               >
                 {isDeliveringPo && <Loader2 size={13} className="animate-spin" />}
-                {isDeliveringPo ? "Kaydediliyor..." : "Teslimatı Onayla"}
+                {isDeliveringPo ? t("rfq_detail.modals.delivering_po") : t("rfq_detail.modals.btn_confirm_deliver_po")}
               </button>
             </div>
           </div>
@@ -2306,7 +2297,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                   <PackageCheck size={22} />
                 </div>
                 <div>
-                  <h3 className="text-base font-semibold text-text-primary">Siparişi Tamamla & Kesinleştir</h3>
+                  <h3 className="text-base font-semibold text-text-primary">{t("rfq_detail.modals.complete_po_title")}</h3>
                   <p className="text-xs text-text-muted font-mono mt-0.5">{poToComplete.po_number}</p>
                 </div>
               </div>
@@ -2314,27 +2305,27 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
               <div className="space-y-4">
                 <div>
                   <label className="block text-xs font-medium text-text-secondary mb-1.5">
-                    Kesinleşen Fatura Tutarı (TL)
+                    {t("rfq_detail.modals.complete_po_amount_label")}
                   </label>
                   <input
                     type="number"
                     step="0.01"
                     min="0"
-                    placeholder="Örn: 24500.00 (Boş bırakılırsa teklif tutarı esas alınır)"
+                    placeholder={t("rfq_detail.modals.complete_po_amount_placeholder")}
                     value={finalAmount}
                     onChange={(e) => setFinalAmount(e.target.value)}
                     className="w-full text-xs p-2.5 rounded-lg bg-bg border border-border text-text-primary focus:outline-none focus:border-emerald-500 transition-colors"
                   />
-                  <p className="text-[11px] text-text-muted mt-1">Muhasebe ve finansal özetlerde bu tutar baz alınacaktır.</p>
+                  <p className="text-[11px] text-text-muted mt-1">{t("rfq_detail.modals.complete_po_amount_help")}</p>
                 </div>
 
                 <div>
                   <label className="block text-xs font-medium text-text-secondary mb-1.5">
-                    Tamamlama / İnceleme Notu (Opsiyonel)
+                    {t("rfq_detail.modals.complete_po_notes_label")}
                   </label>
                   <textarea
                     rows={3}
-                    placeholder="Örn: Kalite kontrol onayı alındı, fatura mutabakatı sağlandı..."
+                    placeholder={t("rfq_detail.modals.complete_po_notes_placeholder")}
                     value={completionNotes}
                     onChange={(e) => setCompletionNotes(e.target.value)}
                     className="w-full text-xs p-3 rounded-lg bg-bg border border-border text-text-primary placeholder:text-text-muted focus:outline-none focus:border-emerald-500 transition-colors"
@@ -2354,16 +2345,14 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                 onClick={() => { setPoToComplete(null); setCompletePoError(null); }}
                 disabled={isCompletingPo}
                 className="px-4 py-2 text-xs font-medium text-text-muted hover:text-text-primary transition-colors disabled:opacity-50"
-              >
-                Vazgeç
-              </button>
+              >{t("quotes_page.cancel_btn")}</button>
               <button
                 onClick={handleCompletePo}
                 disabled={isCompletingPo}
                 className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white transition-colors shadow-sm disabled:opacity-50"
               >
                 {isCompletingPo && <Loader2 size={13} className="animate-spin" />}
-                {isCompletingPo ? "Tamamlanıyor..." : "Siparişi Tamamla"}
+                {isCompletingPo ? t("rfq_detail.modals.completing_po") : t("rfq_detail.modals.btn_confirm_complete_po")}
               </button>
             </div>
           </div>
@@ -2380,7 +2369,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                   <AlertCircle size={22} />
                 </div>
                 <div>
-                  <h3 className="text-base font-semibold text-text-primary">Kalite & Fire Kaydı Ekle</h3>
+                  <h3 className="text-base font-semibold text-text-primary">{t("rfq_detail.modals.quality_modal_title")}</h3>
                   <p className="text-xs text-text-muted font-mono mt-0.5">{poForQuality.po_number}</p>
                 </div>
               </div>
@@ -2389,41 +2378,41 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-medium text-text-secondary mb-1.5">
-                      Sorun Türü
+                      {t("rfq_detail.modals.quality_issue_type_label")}
                     </label>
                     <select
                       value={qualityIssueType}
                       onChange={(e) => setQualityIssueType(e.target.value)}
                       className="w-full text-xs p-2.5 rounded-lg bg-bg border border-border text-text-primary focus:outline-none focus:border-amber-500 transition-colors"
                     >
-                      <option value="defect">Kusurlu Ürün (Defect)</option>
-                      <option value="late_delivery">Gecikmeli Teslimat</option>
-                      <option value="missing_items">Eksik Ürün</option>
-                      <option value="damaged">Hasarlı Malzeme</option>
-                      <option value="documentation">Belge Eksikliği</option>
-                      <option value="other">Diğer</option>
+                      <option value="defect">{t("rfq_detail.modals.quality_type_defect")}</option>
+                      <option value="late_delivery">{t("rfq_detail.late_delivery_option")}</option>
+                      <option value="missing_items">{t("rfq_detail.modals.quality_type_missing")}</option>
+                      <option value="damaged">{t("rfq_detail.modals.quality_type_damaged")}</option>
+                      <option value="documentation">{t("rfq_detail.modals.quality_type_docs")}</option>
+                      <option value="other">{t("rfq_detail.modals.quality_type_other")}</option>
                     </select>
                   </div>
 
                   <div>
                     <label className="block text-xs font-medium text-text-secondary mb-1.5">
-                      Önem Derecesi
+                      {t("rfq_detail.modals.quality_severity_label")}
                     </label>
                     <select
                       value={qualitySeverity}
                       onChange={(e) => setQualitySeverity(e.target.value)}
                       className="w-full text-xs p-2.5 rounded-lg bg-bg border border-border text-text-primary focus:outline-none focus:border-amber-500 transition-colors"
                     >
-                      <option value="low">Düşük</option>
-                      <option value="medium">Orta</option>
-                      <option value="critical">Kritik</option>
+                      <option value="low">{t("rfq_detail.modals.quality_sev_low")}</option>
+                      <option value="medium">{t("rfq_detail.modals.quality_sev_medium")}</option>
+                      <option value="critical">{t("rfq_detail.modals.quality_sev_critical")}</option>
                     </select>
                   </div>
                 </div>
 
                 <div>
                   <label className="block text-xs font-medium text-text-secondary mb-1.5">
-                    Fire / İade / Reddedilen Adet
+                    {t("rfq_detail.modals.quality_count_label")}
                   </label>
                   <input
                     type="number"
@@ -2432,21 +2421,21 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                     onChange={(e) => setQualityRejectionCount(Math.max(0, parseInt(e.target.value) || 0))}
                     className="w-full text-xs p-2.5 rounded-lg bg-bg border border-border text-text-primary focus:outline-none focus:border-amber-500 transition-colors"
                   />
-                  <p className="text-[11px] text-text-muted mt-1">Kullanılamaz veya iade edilen ürün sayısı (0 olabilir).</p>
+                  <p className="text-[11px] text-text-muted mt-1">{t("rfq_detail.modals.quality_count_help")}</p>
                 </div>
 
                 <div>
                   <label className="block text-xs font-medium text-text-secondary mb-1.5">
-                    Açıklama <span className="text-red-400">*</span>
+                    {t("rfq_detail.modals.quality_desc_label")}
                   </label>
                   <textarea
                     rows={3}
-                    placeholder="Örn: 5 kutu malzemenin ambalajı ıslanmış ve deforme olmuş şekilde teslim edildi..."
+                    placeholder={t("rfq_detail.modals.quality_desc_placeholder")}
                     value={qualityDescription}
                     onChange={(e) => setQualityDescription(e.target.value)}
                     className="w-full text-xs p-3 rounded-lg bg-bg border border-border text-text-primary placeholder:text-text-muted focus:outline-none focus:border-amber-500 transition-colors"
                   />
-                  <p className="text-[11px] text-text-muted mt-1">En az 3 karakter gereklidir. Tedarikçi performans geçmişine işlenir.</p>
+                  <p className="text-[11px] text-text-muted mt-1">{t("rfq_detail.modals.quality_desc_help")}</p>
                 </div>
 
                 {qualityError && (
@@ -2462,16 +2451,14 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                 onClick={() => { setPoForQuality(null); setQualityError(null); }}
                 disabled={isSavingQuality}
                 className="px-4 py-2 text-xs font-medium text-text-muted hover:text-text-primary transition-colors disabled:opacity-50"
-              >
-                Vazgeç
-              </button>
+              >{t("quotes_page.cancel_btn")}</button>
               <button
                 onClick={handleSaveQualityIssue}
                 disabled={isSavingQuality || !qualityDescription.trim() || qualityDescription.trim().length < 3}
                 className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold bg-amber-600 hover:bg-amber-500 text-white transition-colors shadow-sm disabled:opacity-50"
               >
                 {isSavingQuality && <Loader2 size={13} className="animate-spin" />}
-                {isSavingQuality ? "Kaydediliyor..." : "Kaydı Ekle"}
+                {isSavingQuality ? t("rfq_detail.modals.saving_quality") : t("rfq_detail.modals.btn_save_quality")}
               </button>
             </div>
           </div>

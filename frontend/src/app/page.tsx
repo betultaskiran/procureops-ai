@@ -1,6 +1,10 @@
-import type { Metadata } from "next";
-import { ThemeToggle } from "@/components/theme-toggle";
+"use client";
+
+import React from "react";
 import Link from "next/link";
+import { ThemeToggle } from "@/components/theme-toggle";
+import { LanguageToggle } from "@/components/language-toggle";
+import { useTranslation } from "@/lib/i18n/I18nContext";
 import { 
   FileText, 
   ScanText, 
@@ -12,27 +16,23 @@ import {
   ArrowRight,
   ClipboardCheck,
   Check,
-  Search,
-  Play
+  Search
 } from "lucide-react";
 
-export const metadata: Metadata = {
-  title: "ProcureOps | Enterprise AI Procurement",
-  description: "B2B AI-powered procurement decision and workflow platform.",
-};
-
-const WORKFLOW_STEPS = [
-  { step: 1, title: "Quote Upload", desc: "PDF/Excel", icon: FileText },
-  { step: 2, title: "Extraction", desc: "Structured data", icon: ScanText },
-  { step: 3, title: "Calculation", desc: "TCO & VAT", icon: Calculator },
-  { step: 4, title: "Compliance", desc: "Deterministic hard rules filter", icon: ShieldCheck },
-  { step: 5, title: "AI Analysis", desc: "Recommendation", icon: BrainCircuit },
-  { step: 6, title: "Verification", desc: "Deterministic audit & guardrail", icon: CheckCircle },
-  { step: 7, title: "Approval", desc: "Human review", icon: UserCheck },
-  { step: 8, title: "PO & Dispatch", desc: "Auto-generated PO & automated supplier email", icon: ClipboardCheck },
-];
-
 export default function LandingPage() {
+  const { t } = useTranslation();
+
+  const workflowSteps = [
+    { step: 1, title: t("landing.workflow.step1_title"), desc: t("landing.workflow.step1_desc"), icon: FileText },
+    { step: 2, title: t("landing.workflow.step2_title"), desc: t("landing.workflow.step2_desc"), icon: ScanText },
+    { step: 3, title: t("landing.workflow.step3_title"), desc: t("landing.workflow.step3_desc"), icon: Calculator },
+    { step: 4, title: t("landing.workflow.step4_title"), desc: t("landing.workflow.step4_desc"), icon: ShieldCheck },
+    { step: 5, title: t("landing.workflow.step5_title"), desc: t("landing.workflow.step5_desc"), icon: BrainCircuit },
+    { step: 6, title: t("landing.workflow.step6_title"), desc: t("landing.workflow.step6_desc"), icon: CheckCircle },
+    { step: 7, title: t("landing.workflow.step7_title"), desc: t("landing.workflow.step7_desc"), icon: UserCheck },
+    { step: 8, title: t("landing.workflow.step8_title"), desc: t("landing.workflow.step8_desc"), icon: ClipboardCheck },
+  ];
+
   return (
     <div className="min-h-screen bg-bg text-text-primary flex flex-col font-sans">
       {/* ── Navbar ──────────────────────────────────────────────────────── */}
@@ -46,23 +46,28 @@ export default function LandingPage() {
           </div>
           
           <div className="hidden md:flex items-center gap-8 text-sm font-medium text-text-muted">
-            <Link href="#features" className="hover:text-primary transition-colors">Features</Link>
-            <Link href="#workflow" className="hover:text-primary transition-colors">How it Works</Link>
+            <Link href="#features" className="hover:text-primary transition-colors">
+              {t("landing.nav.features")}
+            </Link>
+            <Link href="#workflow" className="hover:text-primary transition-colors">
+              {t("landing.nav.workflow")}
+            </Link>
           </div>
 
           <div className="flex items-center gap-3">
+            <LanguageToggle />
             <ThemeToggle />
             <Link 
               href="/login"
               className="text-text-muted hover:text-text-primary px-3 py-2 rounded font-medium transition-colors text-sm"
             >
-              Giriş Yap
+              {t("landing.nav.login")}
             </Link>
             <Link 
               href="/dashboard"
               className="bg-primary hover:bg-primary-hover text-white px-4 py-2 rounded font-medium transition-colors text-sm shadow-sm"
             >
-              Dashboard
+              {t("landing.nav.dashboard")}
             </Link>
           </div>
         </div>
@@ -77,13 +82,12 @@ export default function LandingPage() {
             {/* Left: Text Content */}
             <div className="max-w-2xl">
               <h1 className="text-4xl md:text-5xl lg:text-6xl font-semibold tracking-tight leading-[1.15] mb-6 text-text-primary">
-                Turn supplier quotes into <br/>
-                <span className="text-primary">confident procurement</span> <br/>
-                decisions.
+                {t("landing.hero.title_prefix")} <br/>
+                <span className="text-primary">{t("landing.hero.title_highlight")}</span> <br/>
+                {t("landing.hero.title_suffix")}
               </h1>
               <p className="text-base lg:text-lg text-text-muted leading-relaxed mb-8 max-w-xl">
-                ProcureOps combines AI, policy intelligence and real-time data to help you 
-                find the best suppliers, manage risks and streamline your procurement workflow.
+                {t("landing.hero.subtitle")}
               </p>
               
               <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 mb-12">
@@ -91,7 +95,7 @@ export default function LandingPage() {
                   href="/register"
                   className="flex items-center justify-center gap-2 bg-primary hover:bg-primary-hover text-white px-6 py-3 rounded-xl text-sm font-semibold transition-all shadow-sm group w-full sm:w-auto"
                 >
-                  Ücretsiz Başla
+                  {t("landing.hero.start_free")}
                   <ArrowRight size={16} className="group-hover:translate-x-1 transition-transform" />
                 </Link>
                 
@@ -99,23 +103,23 @@ export default function LandingPage() {
                   href="/login"
                   className="flex items-center justify-center gap-2 bg-surface border border-border hover:bg-surface-elevated text-text-primary px-6 py-3 rounded-xl text-sm font-semibold transition-all w-full sm:w-auto"
                 >
-                  Giriş Yap
+                  {t("landing.hero.sign_in")}
                 </Link>
               </div>
 
               {/* Technical Metrics */}
               <div className="flex flex-col sm:flex-row gap-6 sm:gap-0 border-y border-border py-6">
                 <div className="flex-1 sm:pr-6 sm:border-r border-border">
-                  <div className="font-semibold text-text-primary text-sm mb-1">Deterministic First</div>
-                  <div className="text-text-muted text-[11px] leading-relaxed">Critical calculations don't rely on unpredictable LLM outputs.</div>
+                  <div className="font-semibold text-text-primary text-sm mb-1">{t("landing.metrics.deterministic_title")}</div>
+                  <div className="text-text-muted text-[11px] leading-relaxed">{t("landing.metrics.deterministic_desc")}</div>
                 </div>
                 <div className="flex-1 sm:px-6 sm:border-r border-border">
-                  <div className="font-semibold text-text-primary text-sm mb-1">Auditable Math</div>
-                  <div className="text-text-muted text-[11px] leading-relaxed">TCO and VAT calculations are deterministic and traceable.</div>
+                  <div className="font-semibold text-text-primary text-sm mb-1">{t("landing.metrics.auditable_title")}</div>
+                  <div className="text-text-muted text-[11px] leading-relaxed">{t("landing.metrics.auditable_desc")}</div>
                 </div>
                 <div className="flex-1 sm:pl-6">
-                  <div className="font-semibold text-text-primary text-sm mb-1">Verified Recommendations</div>
-                  <div className="text-text-muted text-[11px] leading-relaxed">AI outputs are strictly checked against rules and evidence.</div>
+                  <div className="font-semibold text-text-primary text-sm mb-1">{t("landing.metrics.verified_title")}</div>
+                  <div className="text-text-muted text-[11px] leading-relaxed">{t("landing.metrics.verified_desc")}</div>
                 </div>
               </div>
             </div>
@@ -145,8 +149,8 @@ export default function LandingPage() {
                       <FileText size={20} />
                     </div>
                     <div>
-                      <div className="font-semibold text-text-primary text-sm">Supplier Quotes</div>
-                      <div className="text-xs text-text-muted">Upload & receive</div>
+                      <div className="font-semibold text-text-primary text-sm">{t("landing.flow.quotes_title")}</div>
+                      <div className="text-xs text-text-muted">{t("landing.flow.quotes_desc")}</div>
                     </div>
                   </div>
 
@@ -156,8 +160,8 @@ export default function LandingPage() {
                       <BrainCircuit size={20} />
                     </div>
                     <div>
-                      <div className="font-semibold text-text-primary text-sm">AI Analysis</div>
-                      <div className="text-xs text-text-muted">Evaluate risk & TCO</div>
+                      <div className="font-semibold text-text-primary text-sm">{t("landing.flow.analysis_title")}</div>
+                      <div className="text-xs text-text-muted">{t("landing.flow.analysis_desc")}</div>
                     </div>
                   </div>
 
@@ -167,15 +171,15 @@ export default function LandingPage() {
                       <ShieldCheck size={20} />
                     </div>
                     <div>
-                      <div className="font-semibold text-text-primary text-sm">Evidence</div>
-                      <div className="text-xs text-text-muted">Verify sources</div>
+                      <div className="font-semibold text-text-primary text-sm">{t("landing.flow.evidence_title")}</div>
+                      <div className="text-xs text-text-muted">{t("landing.flow.evidence_desc")}</div>
                     </div>
                   </div>
                   
                   {/* Mini Decision Preview Card (Node 4) */}
                   <div className="relative z-20 w-full bg-surface-elevated border border-border rounded-xl shadow-xl shadow-black/5 p-5 mt-4 ml-20 transition-transform hover:-translate-y-1 duration-300">
                     <div className="flex items-center justify-between mb-4 pb-3 border-b border-border">
-                      <div className="text-xs font-semibold text-text-muted uppercase tracking-wider">Decision Preview</div>
+                      <div className="text-xs font-semibold text-text-muted uppercase tracking-wider">{t("landing.flow.decision_preview")}</div>
                       <UserCheck size={14} className="text-primary" />
                     </div>
                     
@@ -184,31 +188,31 @@ export default function LandingPage() {
                       <div className="flex gap-4 text-xs text-text-muted">
                         <span>407,200 TRY</span>
                         <span>•</span>
-                        <span>Delivery: 10 days</span>
+                        <span>{t("landing.flow.delivery_days", { days: 10 })}</span>
                       </div>
                     </div>
 
                     <div className="flex gap-2 mb-4">
                       <span className="inline-flex items-center gap-1 bg-success/10 text-success px-2 py-1 rounded text-[10px] font-semibold border border-success/20">
-                        <Check size={10} /> Compliance: PASS
+                        <Check size={10} /> {t("landing.flow.compliance_pass")}
                       </span>
                       <span className="inline-flex items-center gap-1 bg-primary/10 text-primary px-2 py-1 rounded text-[10px] font-semibold border border-primary/20">
-                        AI: RECOMMENDED
+                        {t("landing.flow.ai_recommended")}
                       </span>
                     </div>
 
                     <div className="bg-surface border border-border rounded p-3 text-xs flex gap-3 mb-3">
                       <FileText size={16} className="text-text-muted shrink-0 mt-0.5" />
                       <div>
-                        <div className="font-medium text-text-primary mb-0.5">Evidence Verified</div>
-                        <div className="text-text-muted text-[10px]">Policy #12 & TCO Formula Checked</div>
+                        <div className="font-medium text-text-primary mb-0.5">{t("landing.flow.evidence_verified")}</div>
+                        <div className="text-text-muted text-[10px]">{t("landing.flow.evidence_detail", { id: 12 })}</div>
                       </div>
                     </div>
 
                     {/* Operational Output Badge */}
                     <div className="flex items-center gap-2 bg-text-primary/5 border border-border rounded px-3 py-2 text-[10px] font-medium text-text-primary">
                       <ClipboardCheck size={12} className="text-primary" />
-                      PO Draft: Ready (Auto-email configured)
+                      {t("landing.flow.po_draft_ready")}
                     </div>
                   </div>
 
@@ -222,10 +226,9 @@ export default function LandingPage() {
         <section id="features" className="py-24 px-8 bg-surface">
           <div className="mx-auto max-w-7xl">
             <div className="text-center mb-16">
-              <h2 className="text-3xl font-semibold tracking-tight text-text-primary mb-4">Built on the right principles</h2>
+              <h2 className="text-3xl font-semibold tracking-tight text-text-primary mb-4">{t("landing.principles.title")}</h2>
               <p className="text-text-muted text-sm max-w-xl mx-auto">
-                LLMs interpret and orchestrate. Deterministic systems calculate and verify. 
-                We combine both to build a trustworthy enterprise engine.
+                {t("landing.principles.subtitle")}
               </p>
             </div>
 
@@ -234,10 +237,9 @@ export default function LandingPage() {
                 <div className="w-12 h-12 bg-primary/10 rounded-lg flex items-center justify-center mb-6">
                   <Search className="text-primary" size={24} />
                 </div>
-                <h3 className="text-lg font-semibold text-text-primary mb-3">Evidence-Backed Decisions</h3>
+                <h3 className="text-lg font-semibold text-text-primary mb-3">{t("landing.principles.card1_title")}</h3>
                 <p className="text-sm text-text-muted leading-relaxed mb-6">
-                  Every recommendation is grounded in citations from policy documents, 
-                  supplier history, and structured quote data. No hallucinated claims.
+                  {t("landing.principles.card1_desc")}
                 </p>
               </div>
 
@@ -245,10 +247,9 @@ export default function LandingPage() {
                 <div className="w-12 h-12 bg-primary/10 rounded-lg flex items-center justify-center mb-6">
                   <Calculator className="text-primary" size={24} />
                 </div>
-                <h3 className="text-lg font-semibold text-text-primary mb-3">Deterministic Calculations</h3>
+                <h3 className="text-lg font-semibold text-text-primary mb-3">{t("landing.principles.card2_title")}</h3>
                 <p className="text-sm text-text-muted leading-relaxed mb-6">
-                  TCO, VAT, and discount calculations are performed by strict backend code — 
-                  not the LLM. Results are exact, auditable, and reliable.
+                  {t("landing.principles.card2_desc")}
                 </p>
               </div>
 
@@ -256,10 +257,9 @@ export default function LandingPage() {
                 <div className="w-12 h-12 bg-primary/10 rounded-lg flex items-center justify-center mb-6">
                   <UserCheck className="text-primary" size={24} />
                 </div>
-                <h3 className="text-lg font-semibold text-text-primary mb-3">Human in the Loop</h3>
+                <h3 className="text-lg font-semibold text-text-primary mb-3">{t("landing.principles.card3_title")}</h3>
                 <p className="text-sm text-text-muted leading-relaxed mb-6">
-                  AI prepares and explains. Humans decide. Managers can approve, reject, 
-                  or request revisions with full contextual awareness.
+                  {t("landing.principles.card3_desc")}
                 </p>
               </div>
             </div>
@@ -269,14 +269,14 @@ export default function LandingPage() {
         {/* ── Procurement Workflow Stepper ──────────────────────────────── */}
         <section id="workflow" className="py-24 px-8 border-t border-border bg-bg">
           <div className="mx-auto max-w-7xl">
-            <h2 className="text-2xl font-semibold tracking-tight text-text-primary mb-2">Procurement Workflow</h2>
-            <p className="text-text-muted text-sm mb-16">From quote to purchase order, all in one place.</p>
+            <h2 className="text-2xl font-semibold tracking-tight text-text-primary mb-2">{t("landing.workflow.title")}</h2>
+            <p className="text-text-muted text-sm mb-16">{t("landing.workflow.subtitle")}</p>
 
             <div className="relative flex flex-col md:flex-row items-start justify-between w-full">
               {/* Horizontal Line connecting steps */}
               <div className="hidden md:block absolute top-4 left-0 w-full h-[2px] bg-border z-0"></div>
 
-              {WORKFLOW_STEPS.map((step, idx) => {
+              {workflowSteps.map((step, idx) => {
                 return (
                   <div key={idx} className="relative z-10 flex flex-row md:flex-col items-center md:items-center gap-4 md:gap-3 w-full md:w-auto mb-8 md:mb-0 group cursor-pointer">
                     
@@ -311,11 +311,10 @@ export default function LandingPage() {
 
             <div className="relative z-10">
               <h2 className="text-3xl md:text-4xl font-semibold tracking-tight text-white mb-6">
-                Ready to automate complex procurement decisions?
+                {t("landing.cta.title")}
               </h2>
               <p className="text-slate-400 mb-10 max-w-2xl mx-auto text-sm md:text-base">
-                Join leading enterprise teams using ProcureOps to ensure deterministic accuracy, 
-                evidence-backed AI recommendations, and strict policy compliance.
+                {t("landing.cta.subtitle")}
               </p>
               
               <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-12">
@@ -323,12 +322,12 @@ export default function LandingPage() {
                   href="/dashboard"
                   className="bg-primary hover:bg-primary-hover text-white px-8 py-3 rounded text-sm font-medium transition-all shadow-sm w-full sm:w-auto"
                 >
-                  Get Started
+                  {t("landing.cta.get_started")}
                 </Link>
                 <button 
                   className="bg-transparent border border-slate-700 hover:bg-slate-800 text-white px-8 py-3 rounded text-sm font-medium transition-all w-full sm:w-auto"
                 >
-                  Request Demo
+                  {t("landing.cta.request_demo")}
                 </button>
               </div>
 
@@ -336,11 +335,11 @@ export default function LandingPage() {
               <div className="flex flex-col md:flex-row items-center justify-center gap-6 md:gap-12 pt-8 border-t border-slate-800/80">
                 <div className="flex items-center gap-2 text-slate-300 text-xs font-medium">
                   <Check size={16} className="text-primary" />
-                  SOC2 Type II & Enterprise Audit Ready
+                  {t("landing.cta.trust1")}
                 </div>
                 <div className="flex items-center gap-2 text-slate-300 text-xs font-medium">
                   <Check size={16} className="text-primary" />
-                  Zero Data Retention for LLM Training
+                  {t("landing.cta.trust2")}
                 </div>
               </div>
             </div>
@@ -352,11 +351,11 @@ export default function LandingPage() {
       {/* ── Footer ──────────────────────────────────────────────────────── */}
       <footer className="border-t border-border py-8 px-8 bg-surface">
         <div className="mx-auto max-w-7xl flex flex-col md:flex-row items-center justify-between gap-4 text-xs text-text-muted">
-          <div>© 2026 ProcureOps AI. All rights reserved.</div>
+          <div>{t("landing.footer.copyright")}</div>
           <div className="flex gap-6">
-            <span className="hover:text-text-primary cursor-pointer transition-colors">Enterprise Grade</span>
-            <span className="hover:text-text-primary cursor-pointer transition-colors">Deterministic AI</span>
-            <span className="hover:text-text-primary cursor-pointer transition-colors">Audit-Ready</span>
+            <span className="hover:text-text-primary cursor-pointer transition-colors">{t("landing.footer.tag1")}</span>
+            <span className="hover:text-text-primary cursor-pointer transition-colors">{t("landing.footer.tag2")}</span>
+            <span className="hover:text-text-primary cursor-pointer transition-colors">{t("landing.footer.tag3")}</span>
           </div>
         </div>
       </footer>

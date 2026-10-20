@@ -28,6 +28,8 @@ import {
   SupplierHistoryItemResponse
 } from "@/lib/api/types";
 import { suppliersApi } from "@/lib/api/suppliers";
+import { useTranslation } from "@/lib/i18n";
+import { formatCurrency as fmtCurrency, formatDate as fmtDate, formatPercent } from "@/lib/i18n/formatters";
 
 interface SupplierPerformanceDrawerProps {
   isOpen: boolean;
@@ -42,6 +44,8 @@ export const SupplierPerformanceDrawer: React.FC<SupplierPerformanceDrawerProps>
   supplierId,
   supplierName,
 }) => {
+  const { t, locale } = useTranslation();
+
   // Performance state
   const [performance, setPerformance] = useState<SupplierPerformanceResponse | null>(null);
   const [performanceLoading, setPerformanceLoading] = useState(false);
@@ -94,7 +98,7 @@ export const SupplierPerformanceDrawer: React.FC<SupplierPerformanceDrawerProps>
       }
     } catch (err: any) {
       if (err.name !== "AbortError" && currentSupplierIdRef.current === id) {
-        setPerformanceError(err.message || "Tedarikçi performans verileri alınamadı.");
+        setPerformanceError(err.message || "Failed to load supplier performance.");
       }
     } finally {
       if (currentSupplierIdRef.current === id) {
@@ -115,7 +119,7 @@ export const SupplierPerformanceDrawer: React.FC<SupplierPerformanceDrawerProps>
       }
     } catch (err: any) {
       if (err.name !== "AbortError" && currentSupplierIdRef.current === id) {
-        setHistoryError(err.message || "Tedarikçi sipariş geçmişi alınamadı.");
+        setHistoryError(err.message || "Failed to load supplier order history.");
       }
     } finally {
       if (currentSupplierIdRef.current === id) {
@@ -249,26 +253,13 @@ export const SupplierPerformanceDrawer: React.FC<SupplierPerformanceDrawerProps>
     if (amount === null || amount === undefined) return "-";
     const num = typeof amount === "string" ? parseFloat(amount) : amount;
     if (isNaN(num)) return "-";
-    try {
-      return new Intl.NumberFormat("tr-TR", {
-        style: "currency",
-        currency: currency || "TRY",
-        maximumFractionDigits: 2,
-      }).format(num);
-    } catch {
-      return `${num.toLocaleString("tr-TR")} ${currency}`;
-    }
+    return fmtCurrency(num, currency || "TRY", locale);
   };
 
   // Format date helper
   const formatDate = (dateStr: string | null | undefined) => {
     if (!dateStr) return "-";
-    try {
-      const d = new Date(dateStr);
-      return d.toLocaleDateString("tr-TR", { year: "numeric", month: "short", day: "numeric" });
-    } catch {
-      return dateStr;
-    }
+    return fmtDate(dateStr, locale);
   };
 
   // Format delay days helper
@@ -279,20 +270,20 @@ export const SupplierPerformanceDrawer: React.FC<SupplierPerformanceDrawerProps>
     if (delayDays < 0) {
       return (
         <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-medium">
-          {Math.abs(delayDays)} gün erken
+          {t("analysis.supplier_drawer.days_early", { days: Math.abs(delayDays) })}
         </span>
       );
     }
     if (delayDays === 0) {
       return (
         <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-medium">
-          Zamanında (0 gün)
+          {t("analysis.supplier_drawer.days_on_time")}
         </span>
       );
     }
     return (
       <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-red-500/15 text-red-400 border border-red-500/30 font-medium">
-        +{delayDays} gün gecikme
+        {t("analysis.supplier_drawer.days_delay", { days: delayDays })}
       </span>
     );
   };
@@ -328,14 +319,14 @@ export const SupplierPerformanceDrawer: React.FC<SupplierPerformanceDrawerProps>
             <div className="min-w-0">
               <div className="flex items-center gap-2">
                 <h2 id="supplier-drawer-title" className="text-base font-bold text-text-primary truncate">
-                  {supplierName || performance?.supplier_name || "Tedarikçi Performansı"}
+                  {supplierName || performance?.supplier_name || t("analysis.supplier_drawer.default_supplier_name")}
                 </h2>
                 <span className="text-[10px] px-2 py-0.5 rounded bg-surface border border-border text-text-muted font-mono shrink-0">
                   ID: {supplierId ? `${supplierId.substring(0, 8)}...` : "-"}
                 </span>
               </div>
               <p id="supplier-drawer-subtitle" className="text-xs text-text-muted mt-0.5 truncate">
-                Tedarikçi teslimat güvenilirliği, finansal işlem hacmi ve sipariş geçmişi karnesi
+                {t("analysis.supplier_drawer.header_subtitle")}
               </p>
             </div>
           </div>
@@ -344,7 +335,7 @@ export const SupplierPerformanceDrawer: React.FC<SupplierPerformanceDrawerProps>
             ref={closeButtonRef}
             onClick={onClose}
             className="p-2 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface border border-transparent hover:border-border transition-colors shrink-0"
-            aria-label="Kapat"
+            aria-label={t("analysis.supplier_drawer.close_aria")}
           >
             <X size={18} />
           </button>
@@ -359,10 +350,10 @@ export const SupplierPerformanceDrawer: React.FC<SupplierPerformanceDrawerProps>
               <ShieldAlert size={18} className="text-amber-400 shrink-0 mt-0.5" />
               <div className="space-y-1">
                 <span className="font-bold block text-amber-200">
-                  Veri Çakışması / Mükerrer Kayıt Uyarısı (Data Collision Warning)
+                  {t("analysis.supplier_drawer.collision_warning_title")}
                 </span>
                 <p className="text-text-muted leading-relaxed">
-                  {performance.conflict_notes || "Bu tedarikçiye ait harici ERP geçmiş kayıtları ile platform Satın Alma Siparişleri (PO) arasında mükerrer referanslar tespit edilmiştir. Metriklerin çift sayılmasını önlemek için ilgili kayıtlar filtrelenmiş ve aşağıdaki tabloda işaretlenmiştir."}
+                  {performance.conflict_notes || t("analysis.supplier_drawer.default_collision_notes")}
                 </p>
               </div>
             </div>
@@ -373,12 +364,12 @@ export const SupplierPerformanceDrawer: React.FC<SupplierPerformanceDrawerProps>
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-semibold uppercase tracking-wider text-text-muted flex items-center gap-1.5">
                 <TrendingUp size={14} className="text-primary" />
-                Performans ve Güvenilirlik Özeti
+                {t("analysis.supplier_drawer.kpi_summary_title")}
               </h3>
               {performanceLoading && (
                 <span className="flex items-center gap-1.5 text-xs text-text-muted">
                   <Loader2 size={12} className="animate-spin text-primary" />
-                  Yükleniyor...
+                  {t("analysis.supplier_drawer.loading")}
                 </span>
               )}
             </div>
@@ -393,7 +384,7 @@ export const SupplierPerformanceDrawer: React.FC<SupplierPerformanceDrawerProps>
                   onClick={handleRetryPerformance}
                   className="px-2.5 py-1 rounded bg-red-600 hover:bg-red-500 text-white text-[11px] font-medium transition-colors flex items-center gap-1"
                 >
-                  <RotateCcw size={11} /> Tekrar Dene
+                  <RotateCcw size={11} /> {t("analysis.supplier_drawer.retry")}
                 </button>
               </div>
             ) : performanceLoading && !performance ? (
@@ -407,7 +398,7 @@ export const SupplierPerformanceDrawer: React.FC<SupplierPerformanceDrawerProps>
                 {/* 1.1 Delivery Reliability KPI */}
                 <div className="p-4 rounded-xl bg-surface/60 border border-border flex flex-col justify-between">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs text-text-muted font-medium">Teslimat Güvenilirliği</span>
+                    <span className="text-xs text-text-muted font-medium">{t("analysis.supplier_drawer.delivery_title")}</span>
                     <Clock size={16} className="text-primary" />
                   </div>
 
@@ -415,19 +406,19 @@ export const SupplierPerformanceDrawer: React.FC<SupplierPerformanceDrawerProps>
                     {performance.delivery_reliability.is_available && performance.delivery_reliability.on_time_percentage !== null ? (
                       <div>
                         <div className="text-2xl font-bold text-text-primary tracking-tight">
-                          %{performance.delivery_reliability.on_time_percentage.toFixed(1)}
+                          {formatPercent(performance.delivery_reliability.on_time_percentage, locale, { isAlreadyPercent: true })}
                         </div>
                         <div className="text-[11px] text-text-muted mt-0.5">
-                          {performance.delivery_reliability.on_time_orders_count ?? 0} / {performance.delivery_reliability.eligible_orders_count} sipariş zamanında
+                          {t("analysis.supplier_drawer.on_time_ratio", { onTime: performance.delivery_reliability.on_time_orders_count ?? 0, total: performance.delivery_reliability.eligible_orders_count })}
                         </div>
                       </div>
                     ) : (
                       <div>
                         <div className="text-sm font-semibold text-text-muted">
-                          Veri Yok
+                          {t("analysis.supplier_drawer.no_data")}
                         </div>
                         <div className="text-[11px] text-text-muted mt-0.5">
-                          {performance.delivery_reliability.notes || "Henüz teslimat tarihi verisi bulunmuyor."}
+                          {performance.delivery_reliability.notes || t("analysis.supplier_drawer.no_delivery_records")}
                         </div>
                       </div>
                     )}
@@ -435,7 +426,7 @@ export const SupplierPerformanceDrawer: React.FC<SupplierPerformanceDrawerProps>
 
                   {/* Confidence Badge */}
                   <div className="pt-2 border-t border-border/60 flex items-center justify-between text-[11px]">
-                    <span className="text-text-muted">Örneklem Güveni:</span>
+                    <span className="text-text-muted">{t("analysis.supplier_drawer.sample_confidence")}</span>
                     <span className={`px-2 py-0.5 rounded font-semibold ${
                       performance.delivery_reliability.confidence === "high"
                         ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/30"
@@ -444,10 +435,10 @@ export const SupplierPerformanceDrawer: React.FC<SupplierPerformanceDrawerProps>
                         : "bg-zinc-800 text-zinc-400 border border-zinc-700"
                     }`}>
                       {performance.delivery_reliability.confidence === "high"
-                        ? "Yüksek (5+ Sipariş)"
+                        ? t("analysis.supplier_drawer.confidence_high")
                         : performance.delivery_reliability.confidence === "low"
-                        ? "Sınırlı (2–4 Sipariş)"
-                        : "Yetersiz (< 2 Sipariş)"}
+                        ? t("analysis.supplier_drawer.confidence_low")
+                        : t("analysis.supplier_drawer.confidence_none")}
                     </span>
                   </div>
                 </div>
@@ -455,7 +446,7 @@ export const SupplierPerformanceDrawer: React.FC<SupplierPerformanceDrawerProps>
                 {/* 1.2 Average Delay KPI */}
                 <div className="p-4 rounded-xl bg-surface/60 border border-border flex flex-col justify-between">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs text-text-muted font-medium">Ortalama Gecikme</span>
+                    <span className="text-xs text-text-muted font-medium">{t("analysis.supplier_drawer.avg_delay_title")}</span>
                     <Package size={16} className="text-primary" />
                   </div>
 
@@ -467,25 +458,24 @@ export const SupplierPerformanceDrawer: React.FC<SupplierPerformanceDrawerProps>
                             ? "text-emerald-400"
                             : "text-red-400"
                         }`}>
-                          {performance.delivery_reliability.average_delay_days > 0 ? "+" : ""}
-                          {performance.delivery_reliability.average_delay_days.toFixed(1)} Gün
+                          {t("analysis.supplier_drawer.days_unit", { days: (performance.delivery_reliability.average_delay_days > 0 ? "+" : "") + performance.delivery_reliability.average_delay_days.toFixed(1) })}
                         </div>
                         <div className="text-[11px] text-text-muted mt-0.5">
-                          {performance.delivery_reliability.early_orders_count ?? 0} erken, {performance.delivery_reliability.late_orders_count ?? 0} geciken sipariş
+                          {t("analysis.supplier_drawer.delay_summary", { early: performance.delivery_reliability.early_orders_count ?? 0, late: performance.delivery_reliability.late_orders_count ?? 0 })}
                         </div>
                       </div>
                     ) : (
                       <div>
                         <div className="text-sm font-semibold text-text-muted">-</div>
-                        <div className="text-[11px] text-text-muted mt-0.5">Hesaplanabilir teslimat kaydı yok</div>
+                        <div className="text-[11px] text-text-muted mt-0.5">{t("analysis.supplier_drawer.no_delay_records")}</div>
                       </div>
                     )}
                   </div>
 
                   <div className="pt-2 border-t border-border/60 text-[11px] text-text-muted flex justify-between">
-                    <span>Erken Teslimatlar:</span>
+                    <span>{t("analysis.supplier_drawer.early_deliveries")}</span>
                     <span className="font-semibold text-emerald-400">
-                      {performance.delivery_reliability.early_orders_count ?? 0} Adet
+                      {t("analysis.supplier_drawer.count_unit", { count: performance.delivery_reliability.early_orders_count ?? 0 })}
                     </span>
                   </div>
                 </div>
@@ -493,7 +483,7 @@ export const SupplierPerformanceDrawer: React.FC<SupplierPerformanceDrawerProps>
                 {/* 1.3 Quality Tracking KPI */}
                 <div className="p-4 rounded-xl bg-surface/60 border border-border flex flex-col justify-between">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs text-text-muted font-medium">Kalite ve Kusur Kaydı</span>
+                    <span className="text-xs text-text-muted font-medium">{t("analysis.supplier_drawer.quality_title")}</span>
                     <ShieldCheck size={16} className="text-primary" />
                   </div>
 
@@ -505,28 +495,28 @@ export const SupplierPerformanceDrawer: React.FC<SupplierPerformanceDrawerProps>
                             ? "text-emerald-400"
                             : "text-amber-400"
                         }`}>
-                          {performance.quality_metrics.total_quality_issues || 0} Kusur
+                          {t("analysis.supplier_drawer.issues_count", { count: performance.quality_metrics.total_quality_issues || 0 })}
                         </div>
                         <div className="text-[11px] text-text-muted mt-0.5">
-                          {performance.quality_metrics.total_rejections || 0} adet ürün/parti iade edildi
+                          {t("analysis.supplier_drawer.rejections_count", { count: performance.quality_metrics.total_rejections || 0 })}
                         </div>
                       </div>
                     ) : (
                       <div>
                         <div className="text-sm font-semibold text-text-muted">
-                          Takip Edilmiyor
+                          {t("analysis.supplier_drawer.not_tracked")}
                         </div>
                         <div className="text-[11px] text-text-muted mt-0.5">
-                          Bu tedarikçi için kayıtlı hata veya ret bilgisi bulunmuyor.
+                          {t("analysis.supplier_drawer.no_quality_records")}
                         </div>
                       </div>
                     )}
                   </div>
 
                   <div className="pt-2 border-t border-border/60 text-[11px] text-text-muted flex justify-between">
-                    <span>Kapsam:</span>
+                    <span>{t("analysis.supplier_drawer.quality_scope")}</span>
                     <span className="font-semibold text-text-primary">
-                      {performance.quality_metrics.tracked_orders_count} Sipariş İncelendi
+                      {t("analysis.supplier_drawer.orders_inspected", { count: performance.quality_metrics.tracked_orders_count })}
                     </span>
                   </div>
                 </div>
@@ -539,40 +529,40 @@ export const SupplierPerformanceDrawer: React.FC<SupplierPerformanceDrawerProps>
             <div className="p-4 rounded-xl bg-surface/40 border border-border space-y-3">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-semibold uppercase tracking-wider text-text-muted">
-                  Sipariş Durumu Dağılımı ({performance.order_summary.total_orders_count} Toplam Kayıt)
+                  {t("analysis.supplier_drawer.status_distribution_title", { total: performance.order_summary.total_orders_count })}
                 </span>
                 <span className="text-[11px] text-text-muted">
-                  Değerlendirilen: {performance.evaluated_orders_count} (Taslaklar Hariç)
+                  {t("analysis.supplier_drawer.evaluated_orders", { count: performance.evaluated_orders_count })}
                 </span>
               </div>
 
               <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-xs">
                 <div className="p-2.5 rounded-lg bg-surface border border-border">
-                  <div className="text-text-muted text-[11px]">Tamamlanan</div>
+                  <div className="text-text-muted text-[11px]">{t("analysis.supplier_drawer.status_completed")}</div>
                   <div className="text-base font-bold text-emerald-400 mt-0.5">
                     {performance.order_summary.completed_orders_count}
                   </div>
                 </div>
                 <div className="p-2.5 rounded-lg bg-surface border border-border">
-                  <div className="text-text-muted text-[11px]">Teslim Edilen</div>
+                  <div className="text-text-muted text-[11px]">{t("analysis.supplier_drawer.status_delivered")}</div>
                   <div className="text-base font-bold text-blue-400 mt-0.5">
                     {performance.order_summary.delivered_orders_count}
                   </div>
                 </div>
                 <div className="p-2.5 rounded-lg bg-surface border border-border">
-                  <div className="text-text-muted text-[11px]">Aktif / Yolda</div>
+                  <div className="text-text-muted text-[11px]">{t("analysis.supplier_drawer.status_active")}</div>
                   <div className="text-base font-bold text-amber-400 mt-0.5">
                     {performance.order_summary.active_orders_count}
                   </div>
                 </div>
                 <div className="p-2.5 rounded-lg bg-surface border border-border">
-                  <div className="text-text-muted text-[11px]">İptal / İhtilaf</div>
+                  <div className="text-text-muted text-[11px]">{t("analysis.supplier_drawer.status_cancelled")}</div>
                   <div className="text-base font-bold text-red-400 mt-0.5">
                     {performance.order_summary.cancelled_orders_count}
                   </div>
                 </div>
                 <div className="p-2.5 rounded-lg bg-surface border border-border">
-                  <div className="text-text-muted text-[11px]">Taslak (Muaf)</div>
+                  <div className="text-text-muted text-[11px]">{t("analysis.supplier_drawer.status_draft")}</div>
                   <div className="text-base font-bold text-zinc-400 mt-0.5">
                     {performance.order_summary.draft_orders_count}
                   </div>
@@ -586,12 +576,12 @@ export const SupplierPerformanceDrawer: React.FC<SupplierPerformanceDrawerProps>
             <div className="space-y-3">
               <h3 className="text-xs font-semibold uppercase tracking-wider text-text-muted flex items-center gap-1.5">
                 <DollarSign size={14} className="text-primary" />
-                Finansal İşlem Hacmi (Para Birimi Bazında İzole)
+                {t("analysis.supplier_drawer.financial_title")}
               </h3>
 
               {Object.keys(performance.financial_summary).length === 0 ? (
                 <div className="p-4 rounded-xl bg-surface/30 border border-border text-center text-xs text-text-muted">
-                  Bu tedarikçi için kayıtlı finansal işlem bulunamadı.
+                  {t("analysis.supplier_drawer.no_financial_records")}
                 </div>
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -602,25 +592,25 @@ export const SupplierPerformanceDrawer: React.FC<SupplierPerformanceDrawerProps>
                           {currency}
                         </span>
                         <span className="text-xs text-text-muted font-medium">
-                          {fin.orders_count} Sipariş
+                          {t("analysis.supplier_drawer.orders_count_badge", { count: fin.orders_count })}
                         </span>
                       </div>
 
                       <div className="space-y-1.5 text-xs">
                         <div className="flex justify-between items-baseline">
-                          <span className="text-text-muted">Toplam Harcama:</span>
+                          <span className="text-text-muted">{t("analysis.supplier_drawer.total_spend")}</span>
                           <span className="font-bold text-sm text-text-primary">
                             {formatCurrency(fin.total_spend, currency)}
                           </span>
                         </div>
                         <div className="flex justify-between">
-                          <span className="text-text-muted">Ortalama Sipariş Tutarı:</span>
+                          <span className="text-text-muted">{t("analysis.supplier_drawer.average_order_value")}</span>
                           <span className="font-medium text-text-secondary">
                             {formatCurrency(fin.average_order_value, currency)}
                           </span>
                         </div>
                         <div className="flex justify-between">
-                          <span className="text-text-muted">Min / Maks Aralık:</span>
+                          <span className="text-text-muted">{t("analysis.supplier_drawer.min_max_range")}</span>
                           <span className="text-text-secondary">
                             {formatCurrency(fin.min_order_value, currency)} — {formatCurrency(fin.max_order_value, currency)}
                           </span>
@@ -628,10 +618,10 @@ export const SupplierPerformanceDrawer: React.FC<SupplierPerformanceDrawerProps>
                       </div>
 
                       <div className="pt-2 border-t border-border/60 text-[10px] text-text-muted flex items-center justify-between">
-                        <span>Veri Güvenilirliği:</span>
+                        <span>{t("analysis.supplier_drawer.data_reliability")}</span>
                         <span className="font-medium text-text-primary">
-                          {fin.final_amount_orders_count} Kesinleşmiş PO | {fin.quoted_amount_orders_count} Teklif
-                          {fin.historical_amount_orders_count > 0 ? ` | ${fin.historical_amount_orders_count} Harici` : ""}
+                          {t("analysis.supplier_drawer.final_po_badge", { count: fin.final_amount_orders_count })} | {t("analysis.supplier_drawer.quoted_badge", { count: fin.quoted_amount_orders_count })}
+                          {fin.historical_amount_orders_count > 0 ? ` | ${t("analysis.supplier_drawer.external_badge", { count: fin.historical_amount_orders_count })}` : ""}
                         </span>
                       </div>
                     </div>
@@ -646,12 +636,12 @@ export const SupplierPerformanceDrawer: React.FC<SupplierPerformanceDrawerProps>
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-semibold uppercase tracking-wider text-text-muted flex items-center gap-1.5">
                 <FileText size={14} className="text-primary" />
-                Sipariş ve Teslimat Geçmişi Kayıtları
+                {t("analysis.supplier_drawer.order_history_title")}
               </h3>
               {historyLoading && (
                 <span className="flex items-center gap-1.5 text-xs text-text-muted">
                   <Loader2 size={12} className="animate-spin text-primary" />
-                  Yükleniyor...
+                  {t("analysis.supplier_drawer.loading")}
                 </span>
               )}
             </div>
@@ -666,20 +656,20 @@ export const SupplierPerformanceDrawer: React.FC<SupplierPerformanceDrawerProps>
                   onClick={handleRetryHistory}
                   className="px-2.5 py-1 rounded bg-red-600 hover:bg-red-500 text-white text-[11px] font-medium transition-colors flex items-center gap-1"
                 >
-                  <RotateCcw size={11} /> Tekrar Dene
+                  <RotateCcw size={11} /> {t("analysis.supplier_drawer.retry")}
                 </button>
               </div>
             ) : historyLoading && !history ? (
               <div className="p-8 text-center text-xs text-text-muted space-y-2">
                 <Loader2 size={24} className="animate-spin mx-auto text-primary" />
-                <p>Geçmiş sipariş kayıtları getiriliyor...</p>
+                <p>{t("analysis.supplier_drawer.loading_history")}</p>
               </div>
             ) : !history || history.items.length === 0 ? (
               <div className="p-8 rounded-xl bg-surface/30 border border-border text-center space-y-2">
                 <Package size={28} className="mx-auto text-text-muted opacity-50" />
-                <h4 className="text-xs font-semibold text-text-primary">Sipariş Kaydı Bulunamadı</h4>
+                <h4 className="text-xs font-semibold text-text-primary">{t("analysis.supplier_drawer.no_orders_title")}</h4>
                 <p className="text-xs text-text-muted max-w-sm mx-auto">
-                  Bu tedarikçiye ait tamamlanmış veya kayıtlı geçmiş sipariş bulunmamaktadır.
+                  {t("analysis.supplier_drawer.no_orders_desc")}
                 </p>
               </div>
             ) : (
@@ -688,12 +678,12 @@ export const SupplierPerformanceDrawer: React.FC<SupplierPerformanceDrawerProps>
                   <table className="w-full text-left text-xs border-collapse">
                     <thead>
                       <tr className="border-b border-border bg-surface/80 text-text-muted uppercase text-[10px] tracking-wider">
-                        <th className="p-3 font-semibold">Sipariş Ref / Kaynak</th>
-                        <th className="p-3 font-semibold">Tarih</th>
-                        <th className="p-3 font-semibold">Hedef / Gerçekleşen</th>
-                        <th className="p-3 font-semibold">Gecikme</th>
-                        <th className="p-3 font-semibold">Tutar ve Tür</th>
-                        <th className="p-3 font-semibold">Durum</th>
+                        <th className="p-3 font-semibold">{t("analysis.supplier_drawer.th_ref_source")}</th>
+                        <th className="p-3 font-semibold">{t("analysis.supplier_drawer.th_date")}</th>
+                        <th className="p-3 font-semibold">{t("analysis.supplier_drawer.th_target_actual")}</th>
+                        <th className="p-3 font-semibold">{t("analysis.supplier_drawer.th_delay")}</th>
+                        <th className="p-3 font-semibold">{t("analysis.supplier_drawer.th_amount_type")}</th>
+                        <th className="p-3 font-semibold">{t("analysis.supplier_drawer.th_status")}</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border">
@@ -714,25 +704,25 @@ export const SupplierPerformanceDrawer: React.FC<SupplierPerformanceDrawerProps>
                               <div className="mt-1 flex items-center gap-1.5 flex-wrap">
                                 {item.source_type === "purchase_order" ? (
                                   <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
-                                    Platform PO
+                                    {t("analysis.supplier_drawer.source_platform_po")}
                                   </span>
                                 ) : (
                                   <span className="text-[10px] px-1.5 py-0.2 rounded bg-purple-500/15 text-purple-300 border border-purple-500/30">
-                                    Harici ERP
+                                    {t("analysis.supplier_drawer.source_external_erp")}
                                   </span>
                                 )}
                                 {isCollision && (
                                   <span 
                                     className="text-[10px] px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 font-semibold"
-                                    title={item.collision_note || "Bu harici geçmiş kaydı, sistemdeki bir PO referansıyla eşleşmektedir ve çift sayılma riski taşır."}
+                                    title={item.collision_note || t("analysis.supplier_drawer.default_collision_note")}
                                   >
-                                    ⚠️ Çakışma Riski
+                                    {t("analysis.supplier_drawer.collision_risk_badge")}
                                   </span>
                                 )}
                               </div>
                               {isCollision && (
                                 <div className="text-[10px] text-amber-300/80 mt-1 max-w-xs leading-tight">
-                                  {item.collision_note || "Mükerrer PO eşleşmesi riski"}
+                                  {item.collision_note || t("analysis.supplier_drawer.default_collision_note")}
                                 </div>
                               )}
                             </td>
@@ -745,11 +735,11 @@ export const SupplierPerformanceDrawer: React.FC<SupplierPerformanceDrawerProps>
                             {/* Delivery Dates */}
                             <td className="p-3 align-top text-text-secondary whitespace-nowrap">
                               <div className="text-[11px]">
-                                <span className="text-text-muted">Hedef: </span>
+                                <span className="text-text-muted">{t("analysis.supplier_drawer.target_date_label")}</span>
                                 {formatDate(item.expected_delivery_date)}
                               </div>
                               <div className="text-[11px] mt-0.5">
-                                <span className="text-text-muted">Gerçek: </span>
+                                <span className="text-text-muted">{t("analysis.supplier_drawer.actual_date_label")}</span>
                                 {formatDate(item.actual_delivery_date)}
                               </div>
                             </td>
@@ -766,10 +756,10 @@ export const SupplierPerformanceDrawer: React.FC<SupplierPerformanceDrawerProps>
                               </div>
                               <div className="text-[10px] text-text-muted mt-0.5">
                                 {item.amount_type === "final_po_amount"
-                                  ? "Kesin PO"
+                                  ? t("analysis.supplier_drawer.amount_final_po")
                                   : item.amount_type === "quoted_amount"
-                                  ? "Teklif Tutarı"
-                                  : "Harici Tutar"}
+                                  ? t("analysis.supplier_drawer.amount_quoted")
+                                  : t("analysis.supplier_drawer.amount_external")}
                               </div>
                             </td>
 
@@ -798,8 +788,8 @@ export const SupplierPerformanceDrawer: React.FC<SupplierPerformanceDrawerProps>
                 <div className="p-3 border-t border-border bg-surface/70 flex items-center justify-between text-xs text-text-muted">
                   <span>
                     {totalCount === 0 
-                      ? "Sipariş kaydı yok"
-                      : `Sayfa ${currentPage} / ${totalPages} (${totalCount} Toplam Sipariş)`}
+                      ? t("analysis.supplier_drawer.pagination_no_records")
+                      : t("analysis.supplier_drawer.pagination_info", { current: currentPage, total: totalPages, count: totalCount })}
                   </span>
 
                   <div className="flex items-center gap-2">
@@ -808,14 +798,14 @@ export const SupplierPerformanceDrawer: React.FC<SupplierPerformanceDrawerProps>
                       disabled={historyPage <= 1 || historyLoading || totalPages <= 1}
                       className="px-2.5 py-1 rounded bg-surface border border-border hover:bg-bg disabled:opacity-40 disabled:cursor-not-allowed text-text-primary transition-colors flex items-center gap-1"
                     >
-                      <ChevronLeft size={13} /> Önceki
+                      <ChevronLeft size={13} /> {t("analysis.supplier_drawer.pagination_prev")}
                     </button>
                     <button
                       onClick={() => handlePageChange(historyPage + 1)}
                       disabled={historyPage >= totalPages || historyLoading || totalPages <= 1}
                       className="px-2.5 py-1 rounded bg-surface border border-border hover:bg-bg disabled:opacity-40 disabled:cursor-not-allowed text-text-primary transition-colors flex items-center gap-1"
                     >
-                      Sonraki <ChevronRight size={13} />
+                      {t("analysis.supplier_drawer.pagination_next")} <ChevronRight size={13} />
                     </button>
                   </div>
                 </div>
@@ -828,13 +818,13 @@ export const SupplierPerformanceDrawer: React.FC<SupplierPerformanceDrawerProps>
         {/* ── Drawer Footer ────────────────────────────────────────────── */}
         <div className="p-4 border-t border-border bg-surface/70 flex items-center justify-between shrink-0">
           <span className="text-[11px] text-text-muted">
-            Tedarikçi güvenilirlik verileri yasal denetim ve şeffaflık amacıyla sunulmaktadır.
+            {t("analysis.supplier_drawer.drawer_footer_disclaimer")}
           </span>
           <button
             onClick={onClose}
             className="px-4 py-2 rounded-lg bg-surface border border-border hover:bg-bg text-text-primary text-xs font-semibold transition-colors"
           >
-            Kapat
+            {t("analysis.supplier_drawer.drawer_close_btn")}
           </button>
         </div>
 

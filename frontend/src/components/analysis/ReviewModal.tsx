@@ -15,6 +15,8 @@ import {
 } from "lucide-react";
 import { Quote, AnalysisResponse, ReviewRequest, ReviewResponse } from "@/lib/api/types";
 import { rfqsApi } from "@/lib/api/rfqs";
+import { useTranslation } from "@/lib/i18n";
+import { formatCurrency as fmtCurrency } from "@/lib/i18n/formatters";
 
 interface ReviewModalProps {
   isOpen: boolean;
@@ -33,6 +35,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
   initialSelectedQuoteId,
   onSuccess,
 }) => {
+  const { t, locale } = useTranslation();
   const recommendedQuoteId = analysis.recommendation?.recommended_quote_id;
 
   const vStatus = analysis.recommendation?.verification_status?.toLowerCase();
@@ -60,11 +63,6 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
   const quoteChecks = analysis.compliance_checks?.filter((c) => c.quote_id === selectedQuoteId) || [];
   const isNonCompliant = chosenQuote?.is_compliant === false || quoteChecks.some((c) => c.result === "fail");
 
-  // Standard approval is blocked if:
-  // 1. The selected quote violates deterministic compliance rules
-  // 2. The AI recommendation is inconclusive (unsupported citations or missing policy evidence)
-  // 3. The AI recommendation verification failed or was overridden
-  // 4. The analysis is stale (quotes or RFQ changed)
   const isStandardApprovalBlocked = isNonCompliant || isVerificationInconclusive || isVerificationFailed || isStale;
 
   const isSubmitDisabled =
@@ -91,7 +89,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
       setSuccessResult(res);
       onSuccess(res);
     } catch (err: any) {
-      setErrorMessage(err.message || "İşlem sırasında bir hata oluştu.");
+      setErrorMessage(err.message || "An error occurred during operation.");
     } finally {
       setIsSubmitting(false);
     }
@@ -109,10 +107,10 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
             </div>
             <div>
               <h2 className="text-sm font-semibold uppercase tracking-wider text-text-primary">
-                Satın Alma Kararını Değerlendir & Onayla
+                {t("analysis.review.header_title")}
               </h2>
               <span className="text-xs text-text-muted">
-                Human-in-the-Loop nihai onay ve Sipariş Emri (PO) üretimi
+                {t("analysis.review.header_subtitle")}
               </span>
             </div>
           </div>
@@ -134,26 +132,26 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                 <CheckCircle size={32} />
               </div>
               <h3 className="text-lg font-bold text-text-primary">
-                Karar Başarıyla Kaydedildi!
+                {t("analysis.review.success_title")}
               </h3>
               <p className="text-xs text-text-muted max-w-md mx-auto leading-relaxed">
                 {reviewStatus === "approved" || reviewStatus === "exception_approved"
-                  ? "Satın Alma Siparişi (PO) oluşturuldu, bildirim e-postası sıraya alındı ve denetim izi (audit log) güncellendi."
-                  : "Değerlendirme durumu güncellendi ve işlem audit kaydı oluşturuldu."}
+                  ? t("analysis.review.success_desc_po")
+                  : t("analysis.review.success_desc_general")}
               </p>
 
               <div className="p-4 rounded-lg bg-surface border border-border text-xs text-left space-y-1.5 font-mono">
                 <div className="flex justify-between">
-                  <span className="text-text-muted">Onay Statüsü:</span>
+                  <span className="text-text-muted">{t("analysis.review.status_label")}</span>
                   <span className="font-semibold uppercase text-emerald-400">{successResult.status}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-text-muted">Seçilen Teklif ID:</span>
+                  <span className="text-text-muted">{t("analysis.review.selected_quote_label")}</span>
                   <span className="text-text-primary">{successResult.selected_quote_id || "-"}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-text-muted">İstisna Kabulü:</span>
-                  <span>{successResult.acknowledged_policy_violation ? "Evet (Teyit Edildi)" : "Hayır"}</span>
+                  <span className="text-text-muted">{t("analysis.review.exception_ack_label")}</span>
+                  <span>{successResult.acknowledged_policy_violation ? t("analysis.review.yes_confirmed") : t("analysis.review.no")}</span>
                 </div>
               </div>
 
@@ -164,7 +162,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                 }}
                 className="w-full py-2.5 rounded-lg bg-primary hover:bg-primary-hover text-white text-xs font-semibold transition-colors shadow-sm"
               >
-                Tamamla ve Sayfayı Güncelle
+                {t("analysis.review.complete_and_refresh")}
               </button>
             </div>
           ) : (
@@ -172,7 +170,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
               {/* Quote Selector */}
               <div>
                 <label className="text-xs font-semibold uppercase tracking-wider text-text-muted block mb-2">
-                  1. Onaylanacak Teklifi Seçin
+                  {t("analysis.review.step1_title")}
                 </label>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                   {quotes.map((q) => {
@@ -196,23 +194,23 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                       >
                         {isRec && (
                           <span className="absolute top-2 right-2 text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-semibold">
-                            AI Önerisi
+                            {t("analysis.review.ai_badge")}
                           </span>
                         )}
                         <div className="font-semibold text-xs text-text-primary pr-12 truncate">
-                          {q.supplier_name || "Tedarikçi"}
+                          {q.supplier_name || t("analysis.matrix.unknown_supplier")}
                         </div>
                         <div className="text-xs font-mono font-bold text-text-secondary mt-1">
-                          {new Intl.NumberFormat("tr-TR", { style: "currency", currency: q.currency || "TRY" }).format(q.total_price)}
+                          {fmtCurrency(q.total_price, q.currency || "TRY", locale)}
                         </div>
                         <div className="mt-1 flex items-center gap-1.5 text-[11px]">
                           {qHasFail ? (
                             <span className="text-red-400 flex items-center gap-1">
-                              <XCircle size={11} /> Kural İhlali
+                              <XCircle size={11} /> {t("analysis.review.rule_violation")}
                             </span>
                           ) : (
                             <span className="text-emerald-400 flex items-center gap-1">
-                              <CheckCircle size={11} /> Uygun
+                              <CheckCircle size={11} /> {t("analysis.review.compliant")}
                             </span>
                           )}
                         </div>
@@ -225,7 +223,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
               {/* Decision Options */}
               <div>
                 <label className="text-xs font-semibold uppercase tracking-wider text-text-muted block mb-2">
-                  2. Değerlendirme Kararı (Review Status)
+                  {t("analysis.review.step2_title")}
                 </label>
                 <div className="grid grid-cols-2 gap-2">
                   {/* Standart Onay */}
@@ -243,18 +241,18 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                   >
                     <div className="font-semibold flex items-center gap-1.5">
                       <CheckCircle size={14} className={isStandardApprovalBlocked ? "text-zinc-600" : "text-emerald-400"} />
-                      Standart Onay
+                      {t("analysis.review.opt_standard_title")}
                     </div>
                     <span className="text-[11px] text-text-muted block mt-1">
                       {isStale
-                        ? "Analiz güncel değil (engellendi)."
+                        ? t("analysis.review.blocked_stale")
                         : isVerificationInconclusive
-                        ? "Doğrulama sonuçsuz (engellendi)."
+                        ? t("analysis.review.blocked_inconclusive")
                         : isVerificationFailed
-                        ? "Doğrulama başarısız (engellendi)."
+                        ? t("analysis.review.blocked_failed")
                         : isNonCompliant
-                        ? "Kural ihlali var (engellendi)."
-                        : "Doğrulanmış ve uygun teklif için PO üretir."}
+                        ? t("analysis.review.blocked_non_compliant")
+                        : t("analysis.review.opt_standard_desc")}
                     </span>
                   </button>
 
@@ -273,10 +271,10 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                   >
                     <div className="font-semibold flex items-center gap-1.5">
                       <ShieldAlert size={14} className="text-amber-400" />
-                      İstisna Onayı
+                      {t("analysis.review.opt_exception_title")}
                     </div>
                     <span className="text-[11px] text-text-muted block mt-1">
-                      Kural veya doğrulama aşımını kabul edip PO üretir.
+                      {t("analysis.review.opt_exception_desc")}
                     </span>
                   </button>
 
@@ -295,10 +293,10 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                   >
                     <div className="font-semibold flex items-center gap-1.5">
                       <RotateCcw size={14} className="text-blue-400" />
-                      Revizyon İste
+                      {t("analysis.review.opt_revision_title")}
                     </div>
                     <span className="text-[11px] text-text-muted block mt-1">
-                      Tedarikçiden revize teklif talep eder.
+                      {t("analysis.review.opt_revision_desc")}
                     </span>
                   </button>
 
@@ -317,10 +315,10 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                   >
                     <div className="font-semibold flex items-center gap-1.5">
                       <XCircle size={14} className="text-red-400" />
-                      Reddet
+                      {t("analysis.review.opt_reject_title")}
                     </div>
                     <span className="text-[11px] text-text-muted block mt-1">
-                      Teklif önerisini reddeder.
+                      {t("analysis.review.opt_reject_desc")}
                     </span>
                   </button>
                 </div>
@@ -331,8 +329,8 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                 <div className="p-3.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-start gap-2.5">
                   <AlertTriangle size={16} className="text-amber-400 shrink-0 mt-0.5" />
                   <div>
-                    <span className="font-bold block mb-0.5">Analiz Güncel Değil (Stale Analysis)</span>
-                    RFQ detaylarında veya teklif belgelerinde değişiklik yapılmıştır. Mevcut analiz hükümsüzdür ve onay işlemine kapalıdır. Lütfen sayfayı yenileyip analizi tekrar çalıştırın.
+                    <span className="font-bold block mb-0.5">{t("analysis.review.alert_stale_title")}</span>
+                    {t("analysis.review.alert_stale_desc")}
                   </div>
                 </div>
               )}
@@ -342,8 +340,8 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                 <div className="p-3.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-start gap-2.5">
                   <ShieldAlert size={16} className="text-amber-400 shrink-0 mt-0.5" />
                   <div>
-                    <span className="font-bold block mb-0.5">Standart Onay Engellendi (Sonuçsuz / Inconclusive)</span>
-                    AI önerisi için şirket politikasında kesin kanıt bulunamamış veya alıntılar doğrulanamamıştır. Yasal ve denetimsel güvenlik gereği bu analiz için Standart Onay verilemez. Yalnızca yetkili yönetici tarafından risk üstlenilerek <strong>İstisna Onayı</strong> verilebilir.
+                    <span className="font-bold block mb-0.5">{t("analysis.review.alert_inconclusive_title")}</span>
+                    {t("analysis.review.alert_inconclusive_desc")}
                   </div>
                 </div>
               )}
@@ -353,8 +351,8 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                 <div className="p-3.5 rounded-lg bg-red-500/10 border border-red-500/30 text-red-300 text-xs flex items-start gap-2.5">
                   <XCircle size={16} className="text-red-400 shrink-0 mt-0.5" />
                   <div>
-                    <span className="font-bold block mb-0.5">Standart Onay Engellendi (Doğrulama Başarısız)</span>
-                    AI önerisi bağımsız doğrulama denetiminden geçememiştir ({analysis.recommendation?.verification_status}). Standart Onay ile sipariş emri üretilemez.
+                    <span className="font-bold block mb-0.5">{t("analysis.review.alert_failed_title")}</span>
+                    {t("analysis.review.alert_failed_desc", { status: analysis.recommendation?.verification_status || "" })}
                   </div>
                 </div>
               )}
@@ -364,8 +362,8 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                 <div className="p-3.5 rounded-lg bg-red-500/10 border border-red-500/30 text-red-300 text-xs flex items-start gap-2.5">
                   <ShieldAlert size={16} className="text-red-400 shrink-0 mt-0.5" />
                   <div>
-                    <span className="font-bold block mb-0.5">Standart Onay Engellendi (Kural İhlali)</span>
-                    Bu teklif şirket politikası kurallarından (bütçe, teslimat veya garanti) en az birini ihlal etmektedir. Sistemi baypas edip sipariş emri düzenlemek için &ldquo;İstisna Onayı&rdquo; seçilmeli ve kural ihlali açıkça onaylanmalıdır.
+                    <span className="font-bold block mb-0.5">{t("analysis.review.alert_violation_title")}</span>
+                    {t("analysis.review.alert_violation_desc")}
                   </div>
                 </div>
               )}
@@ -377,10 +375,10 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                     <AlertTriangle size={16} className="text-amber-400 shrink-0 mt-0.5" />
                     <div>
                       <span className="font-bold text-amber-300 text-xs block">
-                        İstisna Onayı & Kural/Doğrulama Teyidi
+                        {t("analysis.review.exception_box_title")}
                       </span>
                       <p className="text-[11px] text-text-muted leading-relaxed mt-0.5">
-                        Yasal denetim ve kurumsal yönetişim gereği, şirket politikasına aykırı veya doğrulama güvencesi bulunmayan tekliflerin onaylanabilmesi için yöneticinin bu durumu kabul etmesi zorunludur.
+                        {t("analysis.review.exception_box_desc")}
                       </p>
                     </div>
                   </div>
@@ -393,7 +391,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                       className="mt-0.5 rounded border-amber-500 text-amber-500 focus:ring-0"
                     />
                     <span className="leading-tight font-medium">
-                      Deterministik kural ihlalini, politika eksikliğini ve ilgili operasyonel/mali riskleri inceledim. Bu teklif için istisna onayını onaylıyorum (acknowledged_policy_violation).
+                      {t("analysis.review.exception_checkbox")}
                     </span>
                   </label>
                 </div>
@@ -402,13 +400,16 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
               {/* Comment Field */}
               <div>
                 <label className="text-xs font-semibold uppercase tracking-wider text-text-muted block mb-1.5">
-                  3. Yönetici Gerekçesi / Notu {reviewStatus === "rejected" || reviewStatus === "revision_requested" ? "(Zorunlu)" : "(Opsiyonel)"}
+                  {t("analysis.review.step3_title")}{" "}
+                  {reviewStatus === "rejected" || reviewStatus === "revision_requested"
+                    ? t("analysis.review.required_tag")
+                    : t("analysis.review.optional_tag")}
                 </label>
                 <textarea
                   value={comment}
                   onChange={(e) => setComment(e.target.value)}
                   rows={3}
-                  placeholder="Onay, ret veya revizyon gerekçesini buraya yazabilirsiniz..."
+                  placeholder={t("analysis.review.comment_placeholder")}
                   className="w-full text-xs p-3 rounded-lg bg-surface border border-border text-text-primary placeholder:text-text-muted focus:outline-none focus:border-primary transition-colors"
                 />
               </div>
@@ -431,7 +432,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
               disabled={isSubmitting}
               className="px-4 py-2 text-xs font-medium text-text-muted hover:text-text-primary transition-colors disabled:opacity-50"
             >
-              Vazgeç
+              {t("analysis.review.cancel_btn")}
             </button>
 
             <button
@@ -448,18 +449,18 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
               {isSubmitting && <Loader2 size={13} className="animate-spin" />}
               <span>
                 {isSubmitting
-                  ? "İşleniyor..."
+                  ? t("analysis.review.processing_btn")
                   : isStale
-                  ? "Yeniden Analiz Gerekli"
+                  ? t("analysis.review.reanalysis_required_btn")
                   : reviewStatus === "approved" && isStandardApprovalBlocked
-                  ? "Standart Onay Engellendi"
+                  ? t("analysis.review.standard_blocked_btn")
                   : reviewStatus === "approved"
-                  ? "Standart Onayla & PO Üret"
+                  ? t("analysis.review.standard_approve_btn")
                   : reviewStatus === "exception_approved"
-                  ? "İstisna Onayla & PO Üret"
+                  ? t("analysis.review.exception_approve_btn")
                   : reviewStatus === "revision_requested"
-                  ? "Revizyon Talep Et"
-                  : "Teklifi Reddet"}
+                  ? t("analysis.review.request_revision_btn")
+                  : t("analysis.review.reject_btn")}
               </span>
             </button>
           </div>

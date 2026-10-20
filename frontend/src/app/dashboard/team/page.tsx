@@ -24,48 +24,58 @@ import { teamApi } from "@/lib/api/team";
 import { TeamMember, UserRole, AuthMeResponse } from "@/lib/api/types";
 import { ApiError } from "@/lib/api/client";
 import { useAuth } from "@/lib/auth/AuthContext";
-
-// Role configuration
-const ROLE_CONFIG: Record<UserRole, { label: string; desc: string; badgeClass: string }> = {
-  admin: {
-    label: "Yönetici (Admin)",
-    desc: "Tüm organizasyonu, politikaları ve ekip üyelerini yönetir",
-    badgeClass: "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20",
-  },
-  manager: {
-    label: "Satın Alma Yöneticisi",
-    desc: "Teklif onaylarını ve satınalma siparişlerini yönetir",
-    badgeClass: "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20",
-  },
-  purchasing_director: {
-    label: "Satın Alma Direktörü",
-    desc: "Yüksek tutarlı siparişleri ve kurumsal satınalma süreçlerini onaylar",
-    badgeClass: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20",
-  },
-  cfo: {
-    label: "Mali İşler Direktörü (CFO)",
-    desc: "250.000 TL üzerindeki harcamaların finansal uygunluğunu onaylar",
-    badgeClass: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/20",
-  },
-  employee: {
-    label: "Satın Alma Uzmanı",
-    desc: "RFQ oluşturur, teklif yükler ve analiz çalıştırır",
-    badgeClass: "bg-teal-500/10 text-teal-600 dark:text-teal-400 border-teal-500/20",
-  },
-  viewer: {
-    label: "Gözlemci (Viewer)",
-    desc: "Tüm süreçleri salt-okunur olarak görüntüler",
-    badgeClass: "bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-500/20",
-  },
-};
+import { useTranslation } from "@/lib/i18n";
+import { formatDate as fmtDate } from "@/lib/i18n/formatters";
 
 export default function TeamManagementPage() {
   const { user: authUser } = useAuth();
+  const { t, locale } = useTranslation();
   const [members, setMembers] = useState<TeamMember[]>([]);
   const [currentUser, setCurrentUser] = useState<AuthMeResponse | null>(authUser);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
+
+  const getRoleInfo = (role: UserRole) => {
+    switch (role) {
+      case "admin":
+        return {
+          label: t("team_page.roles.admin.label"),
+          desc: t("team_page.roles.admin.desc"),
+          badgeClass: "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20",
+        };
+      case "manager":
+        return {
+          label: t("team_page.roles.manager.label"),
+          desc: t("team_page.roles.manager.desc"),
+          badgeClass: "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20",
+        };
+      case "purchasing_director":
+        return {
+          label: t("team_page.roles.purchasing_director.label"),
+          desc: t("team_page.roles.purchasing_director.desc"),
+          badgeClass: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20",
+        };
+      case "cfo":
+        return {
+          label: t("team_page.roles.cfo.label"),
+          desc: t("team_page.roles.cfo.desc"),
+          badgeClass: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/20",
+        };
+      case "employee":
+        return {
+          label: t("team_page.roles.employee.label"),
+          desc: t("team_page.roles.employee.desc"),
+          badgeClass: "bg-teal-500/10 text-teal-600 dark:text-teal-400 border-teal-500/20",
+        };
+      case "viewer":
+        return {
+          label: t("team_page.roles.viewer.label"),
+          desc: t("team_page.roles.viewer.desc"),
+          badgeClass: "bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-500/20",
+        };
+    }
+  };
 
   useEffect(() => {
     if (authUser) {
@@ -103,12 +113,11 @@ export default function TeamManagementPage() {
       setLoading(true);
       setError(null);
 
-      // Attempt to get current user details
       try {
         const user = await teamApi.getCurrentUser();
         setCurrentUser(user);
       } catch {
-        // Fallback or unauthenticated in standalone dev
+        // Dev fallback
       }
 
       const teamList = await teamApi.getMembers();
@@ -117,7 +126,7 @@ export default function TeamManagementPage() {
       if (err instanceof ApiError) {
         setError(err.message);
       } else {
-        setError("Ekip üyeleri yüklenirken bir sorun oluştu.");
+        setError("Error loading team members.");
       }
     } finally {
       setLoading(false);
@@ -158,7 +167,7 @@ export default function TeamManagementPage() {
     setAddError(null);
 
     if (password.length < 8) {
-      setAddError("Şifre en az 8 karakter olmalıdır.");
+      setAddError("Password must be at least 8 characters.");
       return;
     }
 
@@ -177,10 +186,10 @@ export default function TeamManagementPage() {
       setEmail("");
       setPassword("");
       setRole("employee");
-      setActionSuccess(`${newMember.full_name} başarıyla ekibe eklendi.`);
+      setActionSuccess(t("team_page.toast_member_added"));
       setTimeout(() => setActionSuccess(null), 4000);
     } catch (err: any) {
-      setAddError(err?.message || "Kullanıcı eklenirken bir hata oluştu.");
+      setAddError(err?.message || "Failed to add user.");
     } finally {
       setIsSubmitting(false);
     }
@@ -195,10 +204,10 @@ export default function TeamManagementPage() {
       const updated = await teamApi.updateRole(roleChangeMember.id, { role: newSelectedRole });
       setMembers((prev) => prev.map((m) => (m.id === updated.id ? updated : m)));
       setRoleChangeMember(null);
-      setActionSuccess(`${updated.full_name} kullanıcısının rolü "${ROLE_CONFIG[newSelectedRole].label}" olarak güncellendi.`);
+      setActionSuccess(t("team_page.toast_member_updated"));
       setTimeout(() => setActionSuccess(null), 4000);
     } catch (err: any) {
-      setModalActionError(err?.message || "Rol güncellenirken hata oluştu.");
+      setModalActionError(err?.message || "Failed to update role.");
     } finally {
       setIsSubmitting(false);
     }
@@ -213,10 +222,10 @@ export default function TeamManagementPage() {
       const updated = await teamApi.deactivateMember(deactivatingMember.id);
       setMembers((prev) => prev.map((m) => (m.id === updated.id ? updated : m)));
       setDeactivatingMember(null);
-      setActionSuccess(`${updated.full_name} pasife alındı.`);
+      setActionSuccess(t("team_page.toast_member_updated"));
       setTimeout(() => setActionSuccess(null), 4000);
     } catch (err: any) {
-      setModalActionError(err?.message || "Kullanıcı pasife alınırken hata oluştu.");
+      setModalActionError(err?.message || "Failed to deactivate member.");
     } finally {
       setIsSubmitting(false);
     }
@@ -231,10 +240,10 @@ export default function TeamManagementPage() {
       const updated = await teamApi.reactivateMember(reactivatingMember.id);
       setMembers((prev) => prev.map((m) => (m.id === updated.id ? updated : m)));
       setReactivatingMember(null);
-      setActionSuccess(`${updated.full_name} yeniden aktifleştirildi.`);
+      setActionSuccess(t("team_page.toast_member_updated"));
       setTimeout(() => setActionSuccess(null), 4000);
     } catch (err: any) {
-      setModalActionError(err?.message || "Kullanıcı aktifleştirilirken hata oluştu.");
+      setModalActionError(err?.message || "Failed to reactivate member.");
     } finally {
       setIsSubmitting(false);
     }
@@ -251,459 +260,298 @@ export default function TeamManagementPage() {
               <Users size={24} />
             </div>
             <div>
-              <h1 className="text-2xl font-bold tracking-tight text-text-primary">
-                Ekip Yönetimi
+              <h1 className="text-2xl font-bold text-text-primary tracking-tight">
+                {t("team_page.title")}
               </h1>
-              <p className="text-sm text-text-muted mt-0.5">
-                Organizasyon üyelerini, erişim rollerini ve hesap durumlarını yönetin.
+              <p className="text-sm text-text-muted mt-1">
+                {t("team_page.subtitle")}
               </p>
             </div>
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        {isAdmin && (
           <button
-            onClick={loadData}
-            disabled={loading}
-            className="flex items-center gap-2 px-3.5 py-2 text-sm font-medium rounded-lg border border-border bg-surface text-text-primary hover:bg-surface-elevated transition-colors disabled:opacity-50"
-            title="Yenile"
+            onClick={() => setIsAddModalOpen(true)}
+            className="flex items-center gap-2 px-4 py-2.5 bg-primary hover:bg-primary-hover text-white rounded-lg text-sm font-semibold transition-colors shadow-sm self-start md:self-auto"
           >
-            <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
-            <span>Yenile</span>
+            <UserPlus size={16} />
+            <span>{t("team_page.add_member_btn")}</span>
           </button>
-
-          {isAdmin && (
-            <button
-              onClick={() => {
-                setAddError(null);
-                setIsAddModalOpen(true);
-              }}
-              className="flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-lg bg-primary text-white hover:bg-primary-hover shadow-sm transition-colors"
-            >
-              <UserPlus size={16} />
-              <span>Yeni Üye Ekle</span>
-            </button>
-          )}
-        </div>
+        )}
       </div>
 
-      {/* ── Alert Banners ────────────────────────────────────────────────── */}
+      {/* ── Toast Feedback ──────────────────────────────────────────────── */}
       {actionSuccess && (
-        <div className="flex items-center gap-3 p-4 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-700 dark:text-emerald-400 text-sm">
-          <CheckCircle2 size={18} className="shrink-0" />
-          <span>{actionSuccess}</span>
+        <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-sm flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <CheckCircle2 size={18} className="shrink-0" />
+            <span>{actionSuccess}</span>
+          </div>
+          <button onClick={() => setActionSuccess(null)} className="text-emerald-500 hover:text-emerald-700">
+            <X size={16} />
+          </button>
         </div>
       )}
 
-      {error && (
-        <div className="flex items-center gap-3 p-4 rounded-lg bg-rose-500/10 border border-rose-500/20 text-rose-700 dark:text-rose-400 text-sm">
-          <AlertCircle size={18} className="shrink-0" />
-          <div className="flex-1">
-            <span className="font-medium">Hata: </span>
-            {error}
-          </div>
-        </div>
-      )}
-
-      {!isAdmin && currentUser && (
-        <div className="flex items-center gap-3 p-3.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-800 dark:text-amber-300 text-xs">
-          <ShieldAlert size={16} className="shrink-0" />
-          <span>
-            Giriş yaptığınız rol: <strong>{ROLE_CONFIG[currentUser.role]?.label || currentUser.role}</strong>. 
-            Üye ekleme, rol değiştirme ve pasife alma işlemleri yalnızca <strong>Yönetici (Admin)</strong> yetkisine açıktır.
-          </span>
-        </div>
-      )}
-
-      {/* ── KPI Stats Cards ──────────────────────────────────────────────── */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="p-5 rounded-xl border border-border bg-surface shadow-xs">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-text-muted uppercase tracking-wider">
-              Toplam Üye
-            </span>
-            <Users size={18} className="text-text-muted" />
-          </div>
-          <div className="text-2xl font-bold text-text-primary mt-2">
-            {totalCount}
-          </div>
-          <div className="text-xs text-text-muted mt-1">
-            Organizasyonunuza kayıtlı tüm hesaplar
-          </div>
-        </div>
-
-        <div className="p-5 rounded-xl border border-border bg-surface shadow-xs">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-text-muted uppercase tracking-wider">
-              Aktif Üyeler
-            </span>
-            <UserCheck size={18} className="text-emerald-600 dark:text-emerald-400" />
-          </div>
-          <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400 mt-2">
-            {activeCount}
-          </div>
-          <div className="text-xs text-text-muted mt-1">
-            Giriş yapabilen ve işlem yürüten hesaplar
-          </div>
-        </div>
-
-        <div className="p-5 rounded-xl border border-border bg-surface shadow-xs">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-text-muted uppercase tracking-wider">
-              Aktif Yöneticiler (Admin)
-            </span>
-            <Shield size={18} className="text-purple-600 dark:text-purple-400" />
-          </div>
-          <div className="text-2xl font-bold text-purple-600 dark:text-purple-400 mt-2">
-            {adminCount}
-          </div>
-          <div className="text-xs text-text-muted mt-1">
-            {adminCount <= 1 ? "⚠️ Son aktif yönetici koruması devrede" : "Yönetim yetkisine sahip kullanıcılar"}
-          </div>
-        </div>
-      </div>
-
-      {/* ── Search & Filter Controls ─────────────────────────────────────── */}
-      <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center justify-between bg-surface p-4 rounded-xl border border-border">
-        <div className="relative flex-1 max-w-md">
+      {/* ── Filters Bar ─────────────────────────────────────────────────── */}
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-surface border border-border p-3.5 rounded-xl">
+        <div className="relative flex-1">
           <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
           <input
             type="text"
-            placeholder="İsim veya e-posta ile ara..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-10 pr-4 py-2 text-sm bg-surface-elevated border border-border rounded-lg text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary transition-all"
+            placeholder={t("team_page.search_placeholder")}
+            className="w-full pl-10 pr-4 py-2 text-xs bg-surface-elevated border border-border rounded-lg text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-primary"
           />
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           <select
             value={roleFilter}
             onChange={(e) => setRoleFilter(e.target.value)}
-            aria-label="Rol Filtresi"
-            className="px-3 py-2 text-sm bg-surface-elevated border border-border rounded-lg text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/40"
+            className="px-3 py-2 text-xs bg-surface-elevated border border-border rounded-lg text-text-primary focus:outline-none"
           >
-            <option value="all">Tüm Roller</option>
-            <option value="admin">Yönetici (Admin)</option>
-            <option value="manager">Satın Alma Yöneticisi</option>
-            <option value="employee">Satın Alma Uzmanı</option>
-            <option value="viewer">Gözlemci (Viewer)</option>
+            <option value="all">{t("team_page.filter_all_roles")}</option>
+            <option value="admin">{t("team_page.roles.admin.label")}</option>
+            <option value="manager">{t("team_page.roles.manager.label")}</option>
+            <option value="purchasing_director">{t("team_page.roles.purchasing_director.label")}</option>
+            <option value="cfo">{t("team_page.roles.cfo.label")}</option>
+            <option value="employee">{t("team_page.roles.employee.label")}</option>
+            <option value="viewer">{t("team_page.roles.viewer.label")}</option>
           </select>
 
           <select
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
-            aria-label="Durum Filtresi"
-            className="px-3 py-2 text-sm bg-surface-elevated border border-border rounded-lg text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/40"
+            className="px-3 py-2 text-xs bg-surface-elevated border border-border rounded-lg text-text-primary focus:outline-none"
           >
-            <option value="all">Tüm Durumlar</option>
-            <option value="active">Yalnızca Aktif</option>
-            <option value="inactive">Yalnızca Pasif</option>
+            <option value="all">{t("team_page.filter_all_statuses")}</option>
+            <option value="active">{t("team_page.status_active")}</option>
+            <option value="inactive">{t("team_page.status_inactive")}</option>
           </select>
         </div>
       </div>
 
-      {/* ── Team Table ──────────────────────────────────────────────────── */}
-      <div className="bg-surface rounded-xl border border-border overflow-hidden shadow-xs">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm">
-            <thead className="bg-surface-elevated/70 border-b border-border text-xs font-semibold text-text-muted uppercase tracking-wider">
-              <tr>
-                <th className="px-6 py-3.5">Üye</th>
-                <th className="px-6 py-3.5">Rol</th>
-                <th className="px-6 py-3.5">Durum</th>
-                <th className="px-6 py-3.5">Kayıt Tarihi</th>
-                <th className="px-6 py-3.5 text-right">İşlemler</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
-              {loading ? (
+      {/* ── Members Table ───────────────────────────────────────────────── */}
+      <div className="bg-surface border border-border rounded-xl shadow-sm overflow-hidden">
+        {loading ? (
+          <div className="p-16 flex flex-col items-center justify-center gap-3">
+            <RefreshCw size={24} className="animate-spin text-primary" />
+            <span className="text-xs text-text-muted">Loading team members...</span>
+          </div>
+        ) : error ? (
+          <div className="p-8 text-center text-rose-500 text-xs">
+            {error}
+          </div>
+        ) : filteredMembers.length === 0 ? (
+          <div className="p-16 text-center text-text-muted space-y-2">
+            <Users size={32} className="mx-auto opacity-40" />
+            <p className="text-sm font-medium text-text-primary">{t("team_page.no_members_found")}</p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs border-collapse">
+              <thead className="bg-surface-elevated/50 text-text-muted uppercase text-[10px] tracking-wider border-b border-border">
                 <tr>
-                  <td colSpan={5} className="py-12 text-center text-text-muted">
-                    <div className="flex flex-col items-center justify-center gap-2">
-                      <RefreshCw size={24} className="animate-spin text-primary" />
-                      <span>Ekip üyeleri yükleniyor...</span>
-                    </div>
-                  </td>
+                  <th className="p-4 font-semibold">{t("team_page.th_member")}</th>
+                  <th className="p-4 font-semibold">{t("team_page.th_role")}</th>
+                  <th className="p-4 font-semibold">{t("team_page.th_status")}</th>
+                  <th className="p-4 font-semibold">{t("team_page.table_joined")}</th>
+                  {isAdmin && <th className="p-4 font-semibold text-right">{t("team_page.th_actions")}</th>}
                 </tr>
-              ) : filteredMembers.length === 0 ? (
-                <tr>
-                  <td colSpan={5} className="py-12 text-center text-text-muted">
-                    <div className="flex flex-col items-center justify-center gap-2">
-                      <Users size={32} className="opacity-40" />
-                      <p className="font-medium text-text-primary">Eşleşen üye bulunamadı</p>
-                      <p className="text-xs">Arama kriterlerinizi değiştirmeyi deneyin.</p>
-                    </div>
-                  </td>
-                </tr>
-              ) : (
-                filteredMembers.map((member) => {
-                  const isCurrentSessionUser = currentUser?.id === member.id;
-                  const roleInfo = ROLE_CONFIG[member.role] || {
-                    label: member.role,
-                    desc: "",
-                    badgeClass: "bg-gray-500/10 text-gray-500 border-gray-500/20",
-                  };
+              </thead>
+              <tbody className="divide-y divide-border">
+                {filteredMembers.map((member) => {
+                  const roleConfig = getRoleInfo(member.role);
+                  const isCurrent = currentUser?.email === member.email;
 
                   return (
-                    <tr 
-                      key={member.id} 
-                      className={`hover:bg-surface-elevated/50 transition-colors ${
-                        !member.is_active ? "opacity-60 bg-surface-elevated/20" : ""
-                      }`}
-                    >
-                      {/* Name & Email */}
-                      <td className="px-6 py-4">
+                    <tr key={member.id} className="hover:bg-surface-elevated/30 transition-colors">
+                      <td className="p-4">
                         <div className="flex items-center gap-3">
-                          <div className="h-9 w-9 rounded-full bg-primary/10 text-primary font-bold flex items-center justify-center text-sm shrink-0 border border-primary/20">
+                          <div className="w-8 h-8 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center font-bold text-xs text-primary">
                             {member.full_name.charAt(0).toUpperCase()}
                           </div>
                           <div>
-                            <div className="flex items-center gap-2">
-                              <span className="font-semibold text-text-primary">
-                                {member.full_name}
-                              </span>
-                              {isCurrentSessionUser && (
-                                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/20 text-primary font-semibold border border-primary/30">
-                                  Siz
+                            <div className="font-semibold text-text-primary flex items-center gap-2">
+                              <span>{member.full_name}</span>
+                              {isCurrent && (
+                                <span className="text-[10px] px-1.5 py-0.2 rounded bg-surface-elevated border border-border text-primary font-medium">
+                                  You
                                 </span>
                               )}
                             </div>
-                            <div className="flex items-center gap-1.5 text-xs text-text-muted mt-0.5">
-                              <Mail size={12} />
-                              <span>{member.email}</span>
-                            </div>
+                            <span className="text-text-muted text-[11px]">{member.email}</span>
                           </div>
                         </div>
                       </td>
 
-                      {/* Role */}
-                      <td className="px-6 py-4">
-                        <div className="flex items-center gap-2">
-                          <span 
-                            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium border ${roleInfo.badgeClass}`}
-                            title={roleInfo.desc}
-                          >
-                            <Shield size={12} />
-                            {roleInfo.label}
-                          </span>
-                        </div>
+                      <td className="p-4">
+                        <span className={`inline-block px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${roleConfig.badgeClass}`}>
+                          {roleConfig.label}
+                        </span>
                       </td>
 
-                      {/* Status */}
-                      <td className="px-6 py-4">
+                      <td className="p-4">
                         {member.is_active ? (
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
-                            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
-                            Aktif
+                          <span className="inline-flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 font-medium text-xs">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                            {t("team_page.status_active")}
                           </span>
                         ) : (
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-zinc-500/10 text-zinc-500 border border-zinc-500/20">
-                            <span className="h-1.5 w-1.5 rounded-full bg-zinc-400"></span>
-                            Pasif
+                          <span className="inline-flex items-center gap-1.5 text-rose-500 font-medium text-xs">
+                            <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
+                            {t("team_page.status_inactive")}
                           </span>
                         )}
                       </td>
 
-                      {/* Created At */}
-                      <td className="px-6 py-4 text-xs text-text-muted">
-                        {new Date(member.created_at).toLocaleDateString("tr-TR", {
-                          day: "numeric",
-                          month: "short",
-                          year: "numeric",
-                        })}
+                      <td className="p-4 text-text-muted">
+                        {fmtDate(member.created_at, locale)}
                       </td>
 
-                      {/* Actions */}
-                      <td className="px-6 py-4 text-right">
-                        <div className="flex items-center justify-end gap-2">
-                          
-                          {/* Role Change Button (Admin only) */}
-                          {isAdmin && (
+                      {isAdmin && (
+                        <td className="p-4 text-right">
+                          <div className="flex items-center justify-end gap-2">
                             <button
                               onClick={() => {
-                                setModalActionError(null);
                                 setRoleChangeMember(member);
                                 setNewSelectedRole(member.role);
+                                setModalActionError(null);
                               }}
-                              className="px-2.5 py-1 text-xs font-medium text-text-muted hover:text-text-primary bg-surface-elevated hover:bg-surface border border-border rounded-md transition-colors"
-                              title="Rolü Değiştir"
+                              className="px-2.5 py-1 text-xs font-medium text-text-muted hover:text-text-primary bg-surface-elevated border border-border rounded-lg transition-colors"
                             >
-                              Rol Değiştir
+                              {t("team_page.btn_change_role")}
                             </button>
-                          )}
 
-                          {/* Deactivate / Reactivate Button */}
-                          {isAdmin && (
-                            <>
-                              {member.is_active ? (
-                                <button
-                                  disabled={isCurrentSessionUser}
-                                  onClick={() => {
-                                    setModalActionError(null);
-                                    setDeactivatingMember(member);
-                                  }}
-                                  className={`px-2.5 py-1 text-xs font-medium rounded-md border transition-colors ${
-                                    isCurrentSessionUser
-                                      ? "opacity-40 cursor-not-allowed bg-zinc-500/10 text-zinc-400 border-zinc-500/20"
-                                      : "text-rose-600 dark:text-rose-400 bg-rose-500/10 hover:bg-rose-500/20 border-rose-500/20"
-                                  }`}
-                                  title={
-                                    isCurrentSessionUser
-                                      ? "Kendi hesabınızı devre dışı bırakamazsınız."
-                                      : "Kullanıcıyı pasife al"
-                                  }
-                                >
-                                  Pasife Al
-                                </button>
-                              ) : (
-                                <button
-                                  onClick={() => {
-                                    setModalActionError(null);
-                                    setReactivatingMember(member);
-                                  }}
-                                  className="px-2.5 py-1 text-xs font-medium rounded-md border text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 border-emerald-500/20 transition-colors"
-                                  title="Kullanıcıyı aktifleştir"
-                                >
-                                  Aktifleştir
-                                </button>
-                              )}
-                            </>
-                          )}
-
-                          {!isAdmin && (
-                            <span className="text-xs text-text-muted italic">Yetki yok</span>
-                          )}
-                        </div>
-                      </td>
+                            {member.is_active ? (
+                              <button
+                                onClick={() => {
+                                  setDeactivatingMember(member);
+                                  setModalActionError(null);
+                                }}
+                                disabled={isCurrent || (member.role === "admin" && adminCount <= 1)}
+                                className="px-2.5 py-1 text-xs font-medium text-rose-600 hover:text-rose-700 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 rounded-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                                title={isCurrent ? "Cannot deactivate own account" : undefined}
+                              >
+                                {t("team_page.btn_deactivate")}
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => {
+                                  setReactivatingMember(member);
+                                  setModalActionError(null);
+                                }}
+                                className="px-2.5 py-1 text-xs font-medium text-emerald-600 hover:text-emerald-700 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 rounded-lg transition-colors"
+                              >
+                                {t("team_page.btn_reactivate")}
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      )}
                     </tr>
                   );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
-      {/* ── Modal: Add New Member ────────────────────────────────────────── */}
+      {/* ── Modal: Add Member ────────────────────────────────────────────── */}
       {isAddModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
-          <div className="bg-surface rounded-2xl border border-border shadow-xl max-w-md w-full overflow-hidden">
-            <div className="flex items-center justify-between p-5 border-b border-border">
-              <div className="flex items-center gap-2.5">
-                <div className="p-2 rounded-lg bg-primary/10 text-primary">
-                  <UserPlus size={18} />
-                </div>
-                <div>
-                  <h3 className="font-bold text-text-primary text-base">Yeni Ekip Üyesi Ekle</h3>
-                  <p className="text-xs text-text-muted">Organizasyonunuza yeni bir çalışma arkadaşı tanımlayın</p>
-                </div>
-              </div>
-              <button 
-                onClick={() => setIsAddModalOpen(false)}
-                className="text-text-muted hover:text-text-primary p-1 rounded-md"
-              >
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+          <div className="bg-surface rounded-2xl border border-border shadow-2xl max-w-md w-full p-6 space-y-4">
+            <div className="flex items-center justify-between border-b border-border pb-3">
+              <h3 className="font-bold text-text-primary text-base">{t("team_page.modal_add_title")}</h3>
+              <button onClick={() => setIsAddModalOpen(false)} className="text-text-muted hover:text-text-primary">
                 <X size={18} />
               </button>
             </div>
 
-            <form onSubmit={handleAddMember} className="p-5 space-y-4">
-              {addError && (
-                <div className="p-3 text-xs rounded-lg bg-rose-500/10 border border-rose-500/20 text-rose-600 dark:text-rose-400 flex items-center gap-2">
-                  <AlertCircle size={14} className="shrink-0" />
-                  <span>{addError}</span>
-                </div>
-              )}
+            {addError && (
+              <div className="p-3 text-xs rounded-lg bg-rose-500/10 border border-rose-500/20 text-rose-600 dark:text-rose-400">
+                {addError}
+              </div>
+            )}
 
+            <form onSubmit={handleAddMember} className="space-y-4 text-xs">
               <div>
-                <label className="block text-xs font-semibold text-text-primary mb-1">
-                  Ad Soyad
+                <label className="block font-semibold text-text-primary mb-1">
+                  {t("team_page.modal_full_name")} *
                 </label>
                 <input
                   type="text"
                   required
-                  placeholder="Örn: Ayşe Yılmaz"
                   value={fullName}
                   onChange={(e) => setFullName(e.target.value)}
-                  className="w-full px-3 py-2 text-sm bg-surface-elevated border border-border rounded-lg text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary"
+                  className="w-full px-3 py-2 text-sm bg-surface-elevated border border-border rounded-lg text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/40"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-text-primary mb-1">
-                  Kurumsal E-posta
+                <label className="block font-semibold text-text-primary mb-1">
+                  {t("team_page.modal_email")} *
                 </label>
                 <input
                   type="email"
                   required
-                  placeholder="Örn: ayse@sirketiniz.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="w-full px-3 py-2 text-sm bg-surface-elevated border border-border rounded-lg text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary"
+                  className="w-full px-3 py-2 text-sm bg-surface-elevated border border-border rounded-lg text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/40"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-text-primary mb-1">
-                  Erişim Rolü
+                <label className="block font-semibold text-text-primary mb-1">
+                  {t("team_page.modal_role")} *
                 </label>
                 <select
                   value={role}
                   onChange={(e) => setRole(e.target.value as UserRole)}
-                  className="w-full px-3 py-2 text-sm bg-surface-elevated border border-border rounded-lg text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary"
+                  className="w-full px-3 py-2 text-sm bg-surface-elevated border border-border rounded-lg text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/40"
                 >
-                  <option value="employee">Satın Alma Uzmanı (Employee)</option>
-                  <option value="manager">Satın Alma Yöneticisi (Manager)</option>
-                  <option value="viewer">Gözlemci (Viewer)</option>
-                  <option value="admin">Yönetici (Admin)</option>
+                  <option value="admin">{t("team_page.roles.admin.label")}</option>
+                  <option value="manager">{t("team_page.roles.manager.label")}</option>
+                  <option value="purchasing_director">{t("team_page.roles.purchasing_director.label")}</option>
+                  <option value="cfo">{t("team_page.roles.cfo.label")}</option>
+                  <option value="employee">{t("team_page.roles.employee.label")}</option>
+                  <option value="viewer">{t("team_page.roles.viewer.label")}</option>
                 </select>
-                <p className="text-[11px] text-text-muted mt-1">
-                  {ROLE_CONFIG[role].desc}
-                </p>
               </div>
 
               <div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="text-xs font-semibold text-text-primary">
-                    Başlangıç Şifresi
-                  </label>
-                  <span className="text-[10px] text-text-muted">En az 8 karakter</span>
-                </div>
-                <div className="relative">
-                  <input
-                    type={showPassword ? "text" : "password"}
-                    required
-                    minLength={8}
-                    placeholder="••••••••"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="w-full pl-3 pr-10 py-2 text-sm bg-surface-elevated border border-border rounded-lg text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary"
-                  >
-                    {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
-                  </button>
-                </div>
+                <label className="block font-semibold text-text-primary mb-1">
+                  {t("team_page.modal_password")} *
+                </label>
+                <input
+                  type="password"
+                  required
+                  minLength={8}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full px-3 py-2 text-sm bg-surface-elevated border border-border rounded-lg text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/40"
+                />
               </div>
 
               <div className="pt-3 flex items-center justify-end gap-2 border-t border-border">
                 <button
                   type="button"
                   onClick={() => setIsAddModalOpen(false)}
-                  className="px-4 py-2 text-xs font-medium text-text-muted hover:text-text-primary bg-surface-elevated border border-border rounded-lg transition-colors"
+                  className="px-4 py-2 font-medium text-text-muted hover:text-text-primary bg-surface-elevated border border-border rounded-lg transition-colors"
                 >
-                  Vazgeç
+                  {t("team_page.modal_cancel")}
                 </button>
                 <button
                   type="submit"
                   disabled={isSubmitting}
-                  className="px-4 py-2 text-xs font-semibold text-white bg-primary hover:bg-primary-hover rounded-lg transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                  className="px-4 py-2 font-semibold text-white bg-primary hover:bg-primary-hover rounded-lg transition-colors disabled:opacity-50 flex items-center gap-1.5"
                 >
                   {isSubmitting && <RefreshCw size={14} className="animate-spin" />}
-                  <span>{isSubmitting ? "Ekleniyor..." : "Üyeyi Kaydet"}</span>
+                  <span>{isSubmitting ? t("team_page.modal_saving") : t("team_page.modal_save_btn")}</span>
                 </button>
               </div>
             </form>
@@ -720,7 +568,7 @@ export default function TeamManagementPage() {
                 <Shield size={20} />
               </div>
               <div>
-                <h3 className="font-bold text-text-primary text-base">Rolü Güncelle</h3>
+                <h3 className="font-bold text-text-primary text-base">{t("team_page.confirm_role_title")}</h3>
                 <p className="text-xs text-text-muted">{roleChangeMember.full_name}</p>
               </div>
             </div>
@@ -734,35 +582,28 @@ export default function TeamManagementPage() {
 
             <div>
               <label className="block text-xs font-semibold text-text-primary mb-1">
-                Yeni Rol Seçin
+                {t("team_page.confirm_role_desc", { name: roleChangeMember.full_name })}
               </label>
               <select
                 value={newSelectedRole}
                 onChange={(e) => setNewSelectedRole(e.target.value as UserRole)}
                 className="w-full px-3 py-2 text-sm bg-surface-elevated border border-border rounded-lg text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/40"
               >
-                <option value="admin">Yönetici (Admin)</option>
-                <option value="manager">Satın Alma Yöneticisi (Manager)</option>
-                <option value="employee">Satın Alma Uzmanı (Employee)</option>
-                <option value="viewer">Gözlemci (Viewer)</option>
+                <option value="admin">{t("team_page.roles.admin.label")}</option>
+                <option value="manager">{t("team_page.roles.manager.label")}</option>
+                <option value="purchasing_director">{t("team_page.roles.purchasing_director.label")}</option>
+                <option value="cfo">{t("team_page.roles.cfo.label")}</option>
+                <option value="employee">{t("team_page.roles.employee.label")}</option>
+                <option value="viewer">{t("team_page.roles.viewer.label")}</option>
               </select>
-              <p className="text-[11px] text-text-muted mt-1.5">
-                {ROLE_CONFIG[newSelectedRole].desc}
-              </p>
             </div>
-
-            {roleChangeMember.role === "admin" && newSelectedRole !== "admin" && (
-              <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-700 dark:text-amber-400 text-xs">
-                ⚠️ Dikkat: Eğer bu kullanıcı organizasyondaki son aktif yönetici ise rolü düşürülemez.
-              </div>
-            )}
 
             <div className="pt-2 flex items-center justify-end gap-2 border-t border-border">
               <button
                 onClick={() => setRoleChangeMember(null)}
                 className="px-3.5 py-1.5 text-xs font-medium text-text-muted hover:text-text-primary bg-surface-elevated border border-border rounded-lg"
               >
-                Vazgeç
+                {t("team_page.modal_cancel")}
               </button>
               <button
                 onClick={handleConfirmRoleChange}
@@ -770,7 +611,7 @@ export default function TeamManagementPage() {
                 className="px-3.5 py-1.5 text-xs font-semibold text-white bg-primary hover:bg-primary-hover rounded-lg disabled:opacity-50 flex items-center gap-1.5"
               >
                 {isSubmitting && <RefreshCw size={14} className="animate-spin" />}
-                <span>Güncelle</span>
+                <span>{t("team_page.btn_change_role")}</span>
               </button>
             </div>
           </div>
@@ -786,7 +627,7 @@ export default function TeamManagementPage() {
                 <UserX size={20} />
               </div>
               <div>
-                <h3 className="font-bold text-text-primary text-base">Üyeyi Pasife Al</h3>
+                <h3 className="font-bold text-text-primary text-base">{t("team_page.confirm_deactivate_title")}</h3>
                 <p className="text-xs text-text-muted">{deactivatingMember.full_name}</p>
               </div>
             </div>
@@ -799,22 +640,15 @@ export default function TeamManagementPage() {
             )}
 
             <p className="text-xs text-text-secondary leading-relaxed">
-              <strong>{deactivatingMember.full_name}</strong> kullanıcısının hesabı dondurulacaktır.
-              Kullanıcı uygulamaya giriş yapamayacak ve API çağrıları reddedilecektir. İleride tekrar aktifleştirebilirsiniz.
+              {t("team_page.confirm_deactivate_desc", { name: deactivatingMember.full_name })}
             </p>
-
-            {deactivatingMember.role === "admin" && (
-              <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-700 dark:text-amber-400 text-xs">
-                ⚠️ Güvenlik Değişmezi: Organizasyondaki son aktif yönetici pasife alınamaz.
-              </div>
-            )}
 
             <div className="pt-2 flex items-center justify-end gap-2 border-t border-border">
               <button
                 onClick={() => setDeactivatingMember(null)}
                 className="px-3.5 py-1.5 text-xs font-medium text-text-muted hover:text-text-primary bg-surface-elevated border border-border rounded-lg"
               >
-                Vazgeç
+                {t("team_page.modal_cancel")}
               </button>
               <button
                 onClick={handleConfirmDeactivate}
@@ -822,7 +656,7 @@ export default function TeamManagementPage() {
                 className="px-3.5 py-1.5 text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 rounded-lg disabled:opacity-50 flex items-center gap-1.5"
               >
                 {isSubmitting && <RefreshCw size={14} className="animate-spin" />}
-                <span>Pasife Al</span>
+                <span>{t("team_page.btn_deactivate")}</span>
               </button>
             </div>
           </div>
@@ -838,7 +672,7 @@ export default function TeamManagementPage() {
                 <UserCheck size={20} />
               </div>
               <div>
-                <h3 className="font-bold text-text-primary text-base">Hesabı Aktifleştir</h3>
+                <h3 className="font-bold text-text-primary text-base">{t("team_page.confirm_reactivate_title")}</h3>
                 <p className="text-xs text-text-muted">{reactivatingMember.full_name}</p>
               </div>
             </div>
@@ -851,8 +685,7 @@ export default function TeamManagementPage() {
             )}
 
             <p className="text-xs text-text-secondary leading-relaxed">
-              <strong>{reactivatingMember.full_name}</strong> kullanıcısının hesabı yeniden etkinleştirilecektir.
-              Kullanıcı mevcut bilgileriyle giriş yapabilir hale gelecektir.
+              {t("team_page.confirm_reactivate_desc", { name: reactivatingMember.full_name })}
             </p>
 
             <div className="pt-2 flex items-center justify-end gap-2 border-t border-border">
@@ -860,7 +693,7 @@ export default function TeamManagementPage() {
                 onClick={() => setReactivatingMember(null)}
                 className="px-3.5 py-1.5 text-xs font-medium text-text-muted hover:text-text-primary bg-surface-elevated border border-border rounded-lg"
               >
-                Vazgeç
+                {t("team_page.modal_cancel")}
               </button>
               <button
                 onClick={handleConfirmReactivate}
@@ -868,7 +701,7 @@ export default function TeamManagementPage() {
                 className="px-3.5 py-1.5 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg disabled:opacity-50 flex items-center gap-1.5"
               >
                 {isSubmitting && <RefreshCw size={14} className="animate-spin" />}
-                <span>Aktifleştir</span>
+                <span>{t("team_page.btn_reactivate")}</span>
               </button>
             </div>
           </div>
