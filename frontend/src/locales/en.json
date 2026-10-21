@@ -834,7 +834,24 @@
       "rfq_cond_payment": "RFQ Condition: {terms}",
       "ocr_confidence": "OCR / Extraction Confidence",
       "item_count_label": "Item Count",
-      "items_unit": "{count} Items"
+      "items_unit": "{count} Items",
+      "fx_converted_badge": "FX Normalized",
+      "fx_original_amount": "Original: {amount}",
+      "fx_rate_label": "Effective Rate",
+      "fx_date_label": "Bulletin Date",
+      "fx_source_label": "Rate Source",
+      "fx_type_label": "Rate Type",
+      "fx_path_label": "Conversion Path",
+      "fx_path_identity": "Identity (1.0)",
+      "fx_path_direct": "Direct Rate",
+      "fx_path_inverse": "Inverse Rate",
+      "fx_path_cross": "Cross Rate",
+      "fx_formula_label": "Calculation Detail",
+      "fx_info_tooltip_title": "Exchange Rate & Conversion Detail",
+      "fx_normalized_banner_title": "FX Normalization Active",
+      "fx_normalized_banner_desc": "Quotes were submitted in different currencies and have been normalized to the common budget currency ({currency}) using official Central Bank exchange rates.",
+      "fx_rate_unavailable_badge": "Rate Unavailable (Incomparable)",
+      "fx_rate_unavailable_desc": "Exchange rate could not be obtained for this quote; budget comparison could not be performed."
     },
     "evidence": {
       "title": "AI Decision Rationale & Citations",
@@ -899,7 +916,9 @@
       "rules_inspected_count": "{count} Rules Inspected",
       "no_rule_records": "No rule records found.",
       "actual_value_label": "Actual: ",
-      "required_value_label": "Required: "
+      "required_value_label": "Required: ",
+      "fx_evidence_badge": "FX RATE EVIDENCE",
+      "fx_evidence_formula_prefix": "Formula: "
     },
     "review": {
       "title": "Human-in-the-Loop Decision Review",

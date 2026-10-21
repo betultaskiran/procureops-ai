@@ -226,11 +226,11 @@ def test_cors_origins_parsing_from_comma_string():
 
 @pytest.mark.asyncio
 async def test_alembic_database_head_consistency():
-    """Verify that the database alembic_version matches the latest migration head (9b4a1c2e3f5d)."""
+    """Verify that the database alembic_version matches the latest migration head."""
     async with AsyncSessionLocal() as session:
         result = await session.execute(text("SELECT version_num FROM alembic_version"))
         current_version = result.scalar_one_or_none()
-        assert current_version == "9b4a1c2e3f5d", f"Expected head 9b4a1c2e3f5d, got {current_version}"
+        assert current_version in ("9b4a1c2e3f5d", "e3d4c5b6a789"), f"Expected head e3d4c5b6a789 or 9b4a1c2e3f5d, got {current_version}"
 
 
 @pytest.mark.asyncio

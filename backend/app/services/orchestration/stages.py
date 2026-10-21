@@ -732,9 +732,12 @@ class IndependentVerificationStage:
         unsupported_claims = False
         valid_evidence_items: List[EvidenceItem] = []
 
-        # Önceki evidence_items kayıtlarını temizle
+        # Önceki RAG/politik kanıt kayıtlarını temizle (FX kanıtlarını koru)
         await db.execute(
-            delete(EvidenceItem).where(EvidenceItem.analysis_id == analysis_id)
+            delete(EvidenceItem).where(
+                EvidenceItem.analysis_id == analysis_id,
+                EvidenceItem.source_type != "fx_rate"
+            )
         )
 
         for cit in set(citations_found):

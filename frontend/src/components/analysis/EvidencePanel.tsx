@@ -16,7 +16,9 @@ import {
   Award,
   Layers,
   Clock,
-  Check
+  Check,
+  TrendingUp,
+  DollarSign
 } from "lucide-react";
 import { AnalysisResponse, Quote } from "@/lib/api/types";
 import { useTranslation } from "@/lib/i18n";
@@ -405,26 +407,45 @@ export const EvidencePanel: React.FC<EvidencePanelProps> = ({
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {analysis.evidence_items.map((item, idx) => (
-              <div
-                key={idx}
-                className="p-3.5 rounded-lg bg-surface/50 border border-border flex flex-col justify-between hover:border-primary/40 transition-colors"
-              >
-                <div>
-                  <div className="flex items-center justify-between gap-2 mb-1.5">
-                    <span className="text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded bg-primary/10 text-primary border border-primary/20">
-                      {item.source_type}
-                    </span>
-                    <span className="text-[11px] font-mono text-text-muted">
-                      {item.source_reference}
-                    </span>
+            {analysis.evidence_items.map((item, idx) => {
+              const isFx = item.source_type === "fx_rate" || item.source_type === "currency_conversion";
+              return (
+                <div
+                  key={idx}
+                  className={`p-3.5 rounded-lg border flex flex-col justify-between transition-colors ${
+                    isFx
+                      ? "bg-blue-500/5 border-blue-500/30 hover:border-blue-500/50"
+                      : "bg-surface/50 border-border hover:border-primary/40"
+                  }`}
+                >
+                  <div>
+                    <div className="flex items-center justify-between gap-2 mb-1.5 flex-wrap">
+                      <span
+                        className={`text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded border inline-flex items-center gap-1 ${
+                          isFx
+                            ? "bg-blue-500/15 text-blue-300 border-blue-500/30"
+                            : "bg-primary/10 text-primary border border-primary/20"
+                        }`}
+                      >
+                        {isFx && <TrendingUp size={11} className="text-blue-400" />}
+                        {isFx ? t("analysis.evidence.fx_evidence_badge") : item.source_type}
+                      </span>
+                      <span className="text-[11px] font-mono text-text-muted">
+                        {item.source_reference}
+                      </span>
+                    </div>
+                    <p className="text-xs text-text-primary font-medium leading-relaxed mt-1">
+                      &ldquo;{item.claim}&rdquo;
+                    </p>
+                    {item.content && (
+                      <div className="mt-2 p-2 rounded bg-surface/80 border border-border/70 text-[11px] font-mono text-text-secondary leading-relaxed break-words">
+                        {item.content}
+                      </div>
+                    )}
                   </div>
-                  <p className="text-xs text-text-primary font-medium leading-relaxed mt-1">
-                    &ldquo;{item.claim}&rdquo;
-                  </p>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}

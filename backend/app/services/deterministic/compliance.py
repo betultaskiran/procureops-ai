@@ -101,15 +101,7 @@ class ComplianceChecker:
                         "Para birimi belirtilmemiş: Karşılaştırma yapılamıyor.",
                     )
                 )
-            elif quote_curr != budget_curr:
-                checks.append(
-                    cls._create_check(
-                        analysis_id, quote.id, rule_name, desc, ComplianceResult.FAIL,
-                        str(tco_result.total_tco), str(rules.max_tco_budget),
-                        f"Para birimi uyuşmazlığı: Teklif para birimi ({quote_curr}) ile bütçe para birimi ({budget_curr}) eşleşmiyor. Doğrudan karşılaştırılamaz.",
-                    )
-                )
-            else:
+            elif quote_curr == budget_curr:
                 try:
                     total_decimal = Decimal(str(tco_result.total_tco))
                     budget_decimal = Decimal(str(rules.max_tco_budget))
@@ -129,6 +121,39 @@ class ComplianceChecker:
                         cls._create_check(
                             analysis_id, quote.id, rule_name, desc, ComplianceResult.PASS,
                             str(tco_result.total_tco), str(rules.max_tco_budget), "Uygun."
+                        )
+                    )
+            else:
+                # quote_curr != budget_curr
+                if tco_result.converted_total_tco is not None:
+                    try:
+                        conv_decimal = Decimal(str(tco_result.converted_total_tco))
+                        budget_decimal = Decimal(str(rules.max_tco_budget))
+                    except Exception:
+                        conv_decimal = Decimal(float(tco_result.converted_total_tco))
+                        budget_decimal = Decimal(float(rules.max_tco_budget))
+
+                    if conv_decimal > budget_decimal:
+                        checks.append(
+                            cls._create_check(
+                                analysis_id, quote.id, rule_name, desc, ComplianceResult.FAIL,
+                                str(tco_result.converted_total_tco), str(rules.max_tco_budget),
+                                f"Bütçeyi aşıyor (Dönüştürülmüş TCO: {tco_result.converted_total_tco} {budget_curr}, Orijinal: {tco_result.total_tco} {quote_curr}).",
+                            )
+                        )
+                    else:
+                        checks.append(
+                            cls._create_check(
+                                analysis_id, quote.id, rule_name, desc, ComplianceResult.PASS,
+                                str(tco_result.converted_total_tco), str(rules.max_tco_budget), "Uygun.",
+                            )
+                        )
+                else:
+                    checks.append(
+                        cls._create_check(
+                            analysis_id, quote.id, rule_name, desc, ComplianceResult.FAIL,
+                            str(tco_result.total_tco), str(rules.max_tco_budget),
+                            f"Para birimi uyuşmazlığı: Teklif para birimi ({quote_curr}) ile bütçe para birimi ({budget_curr}) eşleşmiyor. Doğrudan karşılaştırılamaz.",
                         )
                     )
 

@@ -834,7 +834,24 @@
       "rfq_cond_payment": "RFQ Koşulu: {terms}",
       "ocr_confidence": "OCR / Çıkarma Güveni",
       "item_count_label": "Kalem Sayısı",
-      "items_unit": "{count} Kalem"
+      "items_unit": "{count} Kalem",
+      "fx_converted_badge": "Döviz Çevrimi",
+      "fx_original_amount": "Orijinal: {amount}",
+      "fx_rate_label": "Efektif Kur",
+      "fx_date_label": "Bülten Tarihi",
+      "fx_source_label": "Kur Kaynağı",
+      "fx_type_label": "Kur Türü",
+      "fx_path_label": "Dönüşüm Yolu",
+      "fx_path_identity": "Aynı Para Birimi (1.0)",
+      "fx_path_direct": "Doğrudan Kur",
+      "fx_path_inverse": "Ters Kur",
+      "fx_path_cross": "Çapraz Kur",
+      "fx_formula_label": "Hesaplama Detayı",
+      "fx_info_tooltip_title": "Döviz Kuru ve Çevrim Detayı",
+      "fx_normalized_banner_title": "Döviz Kuru Normalizasyonu Aktif",
+      "fx_normalized_banner_desc": "Teklifler farklı para birimlerinde sunulmuş olup, TCMB gösterge kurlarıyla ortak bütçe para birimine ({currency}) çevrilerek adil kıyaslama sağlanmıştır.",
+      "fx_rate_unavailable_badge": "Kur Bulunamadı (Kıyaslanamaz)",
+      "fx_rate_unavailable_desc": "Bu teklif için döviz kuru temin edilemediği için bütçe karşılaştırması yapılamamıştır."
     },
     "evidence": {
       "title": "AI Karar Gerekçesi ve Kanıtlar",
@@ -899,7 +916,9 @@
       "rules_inspected_count": "{count} Kural Denetlendi",
       "no_rule_records": "Kural kaydı bulunamadı.",
       "actual_value_label": "Gerçekleşen: ",
-      "required_value_label": "Beklenen Kural: "
+      "required_value_label": "Beklenen Kural: ",
+      "fx_evidence_badge": "DÖVİZ KURU KANITI",
+      "fx_evidence_formula_prefix": "Formül: "
     },
     "review": {
       "title": "İnsan Denetimli Karar İncelemesi",

@@ -200,9 +200,29 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
                         <div className="font-semibold text-xs text-text-primary pr-12 truncate">
                           {q.supplier_name || t("analysis.matrix.unknown_supplier")}
                         </div>
-                        <div className="text-xs font-mono font-bold text-text-secondary mt-1">
-                          {fmtCurrency(q.total_price, q.currency || "TRY", locale)}
-                        </div>
+                        {(() => {
+                          const qTco = analysis.tco_results?.find((t) => t.quote_id === q.id);
+                          const isConverted = Boolean(
+                            qTco?.converted_total_tco != null &&
+                            qTco?.target_currency &&
+                            qTco.currency &&
+                            qTco.currency.toUpperCase() !== qTco.target_currency.toUpperCase()
+                          );
+                          return (
+                            <div className="text-xs font-mono font-bold text-text-secondary mt-1">
+                              {isConverted && qTco?.converted_total_tco != null && qTco?.target_currency ? (
+                                <>
+                                  <span>{fmtCurrency(qTco.converted_total_tco, qTco.target_currency, locale)}</span>
+                                  <span className="text-[10px] font-normal text-text-muted block">
+                                    ({fmtCurrency(q.total_price, q.currency || "TRY", locale)})
+                                  </span>
+                                </>
+                              ) : (
+                                fmtCurrency(q.total_price, q.currency || "TRY", locale)
+                              )}
+                            </div>
+                          );
+                        })()}
                         <div className="mt-1 flex items-center gap-1.5 text-[11px]">
                           {qHasFail ? (
                             <span className="text-red-400 flex items-center gap-1">

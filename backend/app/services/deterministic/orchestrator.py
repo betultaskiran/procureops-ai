@@ -4,8 +4,11 @@ app/services/deterministic/orchestrator.py
 Deterministik analiz sürecini (TCO ve Hard Rules) yöneten orkestratör.
 """
 
+import logging
 import uuid
-from typing import List
+from datetime import datetime, timezone
+from decimal import Decimal
+from typing import List, Optional, TYPE_CHECKING
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +20,11 @@ from app.services.deterministic.schemas import PolicyRules
 from app.services.deterministic.tco import TCOCalculator
 from app.services.deterministic.compliance import ComplianceChecker
 
+if TYPE_CHECKING:
+    from app.services.fx.service import ExchangeRateService
+
+logger = logging.getLogger("app.services.deterministic.orchestrator")
+
 
 class DeterministicEngine:
     """
@@ -24,8 +32,13 @@ class DeterministicEngine:
     (PolicyRules) göre doğrular.
     """
 
-    def __init__(self, db: AsyncSession):
+    def __init__(
+        self,
+        db: AsyncSession,
+        fx_service: Optional["ExchangeRateService"] = None,
+    ):
         self.db = db
+        self.fx_service = fx_service
 
     async def run_analysis(
         self, 
@@ -64,9 +77,17 @@ class DeterministicEngine:
                 f"Bu talep için {len(quotes)} teklif bulundu."
             )
 
-        # Para birimi tutarlılık kontrolü (Döviz kuru doğrulaması olmadan karşılaştırma yapılamaz)
+        # Para birimi geçerlilik kontrolü
+        if any(not q.currency or not q.currency.strip() for q in quotes):
+            analysis.status = AnalysisStatus.FAILED
+            await self.db.commit()
+            raise ValueError("Tüm tekliflerin geçerli bir para birimi belirtmesi zorunludur.")
+
+        target_currency = (rules.budget_currency or "TRY").strip().upper()
         currencies = {q.currency.strip().upper() for q in quotes if q.currency and q.currency.strip()}
-        if len(currencies) > 1:
+
+        # Farklı para birimleri var ve FX servisi yapılandırılmamışsa, doğrudan kıyaslama fail-closed engellenir
+        if len(currencies) > 1 and self.fx_service is None:
             analysis.status = AnalysisStatus.FAILED
             await self.db.commit()
             curr_str = ", ".join(sorted(currencies))
@@ -74,10 +95,6 @@ class DeterministicEngine:
                 f"Teklifler farklı para birimleri içermektedir ({curr_str}). "
                 "Doğrulanmış döviz kuru olmadan doğrudan sayısal karşılaştırmaya izin verilmez."
             )
-        if any(not q.currency or not q.currency.strip() for q in quotes):
-            analysis.status = AnalysisStatus.FAILED
-            await self.db.commit()
-            raise ValueError("Tüm tekliflerin geçerli bir para birimi belirtmesi zorunludur.")
 
         # Teklif belgesi parse durum kontrolü
         doc_ids = [q.quote_document_id for q in quotes if q.quote_document_id]
@@ -96,12 +113,95 @@ class DeterministicEngine:
                         f"(durum: {doc.parse_status})."
                     )
 
-        # 3 & 4. TCO ve Compliance adımları
+        # 3 & 4. TCO, FX Dönüşümü ve Compliance adımları
+        today_date = datetime.now(timezone.utc).date()
+
         for quote in quotes:
-            # TCO Hesapla
+            # TCO Hesapla (Orijinal para biriminde)
             tco_result = TCOCalculator.calculate(quote=quote, analysis_id=analysis.id)
+            quote_curr = (quote.currency or "").strip().upper()
+
+            # FX Çevrimi & Denetim Kanıtı (Milestone 2C)
+            if quote_curr == target_currency:
+                # Aynı para birimi (Identity path): Dış sağlayıcı / DB araması yapmadan 1.0 kimlik kuru
+                tco_result.converted_total_tco = tco_result.total_tco
+                tco_result.target_currency = target_currency
+                tco_result.exchange_rate = Decimal("1.000000")
+                tco_result.exchange_rate_source = "IDENTITY"
+                tco_result.exchange_rate_type = "ForexSelling"
+                tco_result.exchange_rate_date = today_date
+                same_note = f"[Aynı Para Birimi: {quote_curr} = {target_currency} (Kur: 1.0)]"
+                tco_result.calculation_notes = (
+                    f"{tco_result.calculation_notes} | {same_note}"
+                    if tco_result.calculation_notes
+                    else same_note
+                )
+            elif self.fx_service is not None:
+                # Farklı para birimi ve FX servisi mevcut: dönüştür
+                try:
+                    converted_amount, rate_dto = await self.fx_service.convert_amount(
+                        amount=tco_result.total_tco,
+                        source_currency=quote_curr,
+                        target_currency=target_currency,
+                        quantize_places="0.0001",
+                    )
+                    tco_result.converted_total_tco = converted_amount
+                    tco_result.target_currency = target_currency
+                    tco_result.exchange_rate = rate_dto.rate
+                    tco_result.exchange_rate_date = rate_dto.rate_date
+                    tco_result.exchange_rate_source = rate_dto.source
+                    tco_result.exchange_rate_type = rate_dto.rate_type
+                    fx_note = rate_dto.calculation_notes or f"[{rate_dto.conversion_path} Kur: {quote_curr}/{target_currency} = {rate_dto.rate}]"
+                    tco_result.calculation_notes = (
+                        f"{tco_result.calculation_notes} | {fx_note}"
+                        if tco_result.calculation_notes
+                        else fx_note
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        f"Döviz kuru çevrimi başarısız oldu (Teklif {quote.id}, {quote_curr} -> {target_currency}): {exc}"
+                    )
+                    if len(currencies) > 1:
+                        # Karma para birimli RFQ'da bir teklif dahi çevrilemezse karşılaştırma yapılamaz (fail-closed)
+                        analysis.status = AnalysisStatus.FAILED
+                        await self.db.commit()
+                        curr_str = ", ".join(sorted(currencies))
+                        raise ValueError(
+                            f"Teklifler farklı para birimleri içermektedir ({curr_str}). "
+                            "Doğrulanmış döviz kuru olmadan doğrudan sayısal karşılaştırmaya izin verilmez."
+                        )
+                    else:
+                        # Tek para birimli ancak bütçeden farklı teklif: TCO çevrimi None bırakılır, Compliance fail-closed kararı verir
+                        tco_result.converted_total_tco = None
+                        tco_result.target_currency = target_currency
+                        fail_note = f"[Döviz kuru temin edilemedi: {quote_curr} -> {target_currency} (fail-closed)]"
+                        tco_result.calculation_notes = (
+                            f"{tco_result.calculation_notes} | {fail_note}"
+                            if tco_result.calculation_notes
+                            else fail_note
+                        )
+            else:
+                # Farklı para birimi ancak fx_service None: tek para birimli teklif Compliance'a bırakılır
+                tco_result.converted_total_tco = None
+                tco_result.target_currency = target_currency
+
             self.db.add(tco_result)
             await self.db.flush() # TCOResult'a ait ID'nin üretilmesi için
+
+            # Döviz Çevrim Kanıtı Kaydı (EvidenceItem - Milestone 2D)
+            if quote_curr != target_currency and tco_result.exchange_rate is not None:
+                from app.models.analysis import EvidenceItem
+                source_reference = f"{tco_result.exchange_rate_source or 'TCMB'} ({tco_result.exchange_rate_date or today_date}, {tco_result.exchange_rate_type or 'ForexSelling'})"
+                claim = f"Döviz Kuru Çevrimi: {quote_curr} -> {target_currency} (Teklif #{str(quote.id)[:8]})"
+                content_text = tco_result.calculation_notes or f"Kur: {tco_result.exchange_rate}. TCO: {tco_result.total_tco} {quote_curr} -> {tco_result.converted_total_tco} {target_currency}"
+                fx_ev = EvidenceItem(
+                    analysis_id=analysis.id,
+                    source_type="fx_rate",
+                    source_reference=source_reference,
+                    claim=claim,
+                    content=content_text,
+                )
+                self.db.add(fx_ev)
 
             # Hard Rule Kontrolleri
             compliance_checks = ComplianceChecker.check_quote(
@@ -125,6 +225,6 @@ class DeterministicEngine:
         await self.db.commit()
         
         # Sonuçları tam haliyle geri döndürmek için ilişkilerle birlikte yükleyelim
-        await self.db.refresh(analysis, ["tco_results", "compliance_checks"])
+        await self.db.refresh(analysis, ["tco_results", "compliance_checks", "evidence_items"])
         
         return analysis

@@ -23,9 +23,9 @@ TASARIM PRENSİBİ:
 import enum
 import uuid
 from decimal import Decimal
-from datetime import datetime
+from datetime import datetime, date
 
-from sqlalchemy import String, ForeignKey, Integer, Numeric, Text, Boolean, DateTime, UUID
+from sqlalchemy import String, ForeignKey, Integer, Numeric, Text, Boolean, DateTime, Date, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
@@ -167,8 +167,42 @@ class TCOResult(Base, UUIDPrimaryKeyMixin):
     total_tco: Mapped[Decimal] = mapped_column(Numeric(14, 4), nullable=False)
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
 
+    # Döviz Kuru Çevirisi (FX Engine - Milestone 2)
+    converted_total_tco: Mapped[Decimal | None] = mapped_column(Numeric(14, 4), nullable=True)
+    target_currency: Mapped[str | None] = mapped_column(String(3), nullable=True)
+    exchange_rate: Mapped[Decimal | None] = mapped_column(Numeric(18, 6), nullable=True)
+    exchange_rate_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    exchange_rate_source: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    exchange_rate_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
+
     # Hesap adımlarının insan-okunabilir açıklaması (audit için)
     calculation_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    @property
+    def conversion_path(self) -> str | None:
+        """Döviz kuru çevrim yolunu (IDENTITY, DIRECT, INVERSE, CROSS) belirler."""
+        if self.exchange_rate_source == 'IDENTITY' or (
+            self.currency and self.target_currency and self.currency.strip().upper() == self.target_currency.strip().upper()
+        ):
+            return 'IDENTITY'
+        if not self.exchange_rate:
+            return None
+        notes = (self.calculation_notes or '').lower()
+        if 'çapraz kur' in notes or 'cross' in notes:
+            return 'CROSS'
+        if 'ters kur' in notes or 'inverse' in notes:
+            return 'INVERSE'
+        if 'doğrudan kur' in notes or 'direct' in notes:
+            return 'DIRECT'
+        if self.currency and self.target_currency:
+            if self.currency.strip().upper() == 'TRY':
+                return 'INVERSE'
+            elif self.target_currency.strip().upper() == 'TRY':
+                return 'DIRECT'
+            else:
+                return 'CROSS'
+        return 'DIRECT'
+
 
     # ── Relationships ──────────────────────────────────────────────────────────
     analysis: Mapped["Analysis"] = relationship(back_populates="tco_results")

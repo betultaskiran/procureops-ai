@@ -11,7 +11,11 @@ import {
   ArrowRight,
   TrendingUp,
   FileText,
-  Clock
+  Clock,
+  Info,
+  DollarSign,
+  ChevronDown,
+  ChevronUp
 } from "lucide-react";
 import { Quote, RFQ, AnalysisResponse } from "@/lib/api/types";
 import { useTranslation } from "@/lib/i18n";
@@ -37,6 +41,7 @@ export const ComparisonMatrix: React.FC<ComparisonMatrixProps> = ({
   onOpenSupplierDrawer,
 }) => {
   const { t, locale } = useTranslation();
+  const [expandedFxQuoteId, setExpandedFxQuoteId] = React.useState<string | null>(null);
 
   if (!quotes || quotes.length === 0) {
     return null;
@@ -48,11 +53,16 @@ export const ComparisonMatrix: React.FC<ComparisonMatrixProps> = ({
     return fmtCurrency(amount, currency || "TRY", locale);
   };
 
-  // Currency mismatch detection
+  // Currency mismatch detection & FX Normalization check
   const distinctCurrencies = Array.from(
     new Set(quotes.map((q) => q.currency).filter(Boolean))
   );
   const hasCurrencyMismatch = distinctCurrencies.length > 1;
+  const allQuotesConverted = hasCurrencyMismatch && quotes.every((q) => {
+    const tco = analysis?.tco_results?.find((t) => t.quote_id === q.id);
+    return tco?.converted_total_tco != null && tco?.target_currency;
+  });
+  const targetBudgetCurrency = analysis?.tco_results?.[0]?.target_currency || "TRY";
 
   const recommendedQuoteId = analysis?.recommendation?.recommended_quote_id;
 
@@ -134,8 +144,19 @@ export const ComparisonMatrix: React.FC<ComparisonMatrixProps> = ({
         </div>
       </div>
 
-      {/* Currency Mismatch Warning Banner */}
-      {hasCurrencyMismatch && (
+      {/* Currency Mismatch / FX Normalization Banner */}
+      {hasCurrencyMismatch && allQuotesConverted && (
+        <div className="p-4 bg-emerald-500/10 border-b border-emerald-500/30 text-emerald-300 text-xs flex items-start gap-2.5">
+          <CheckCircle size={16} className="text-emerald-400 shrink-0 mt-0.5" />
+          <div className="leading-relaxed">
+            <span className="font-semibold block text-emerald-200 mb-0.5">
+              {t("analysis.matrix.fx_normalized_banner_title")}
+            </span>
+            {t("analysis.matrix.fx_normalized_banner_desc", { currency: targetBudgetCurrency })}
+          </div>
+        </div>
+      )}
+      {hasCurrencyMismatch && !allQuotesConverted && (
         <div className="p-4 bg-amber-500/10 border-b border-amber-500/30 text-amber-300 text-xs flex items-start gap-2.5">
           <ShieldAlert size={16} className="text-amber-400 shrink-0 mt-0.5" />
           <div className="leading-relaxed">
@@ -276,7 +297,7 @@ export const ComparisonMatrix: React.FC<ComparisonMatrixProps> = ({
               ))}
             </tr>
 
-            {/* 2. Toplam TCO (Total Cost of Ownership) */}
+            {/* 2. Toplam TCO (Total Cost of Ownership) & FX Transparency */}
             <tr className="bg-primary/5 hover:bg-primary/10 transition-colors font-medium">
               <td className="p-3.5 text-text-primary sticky left-0 bg-surface/95 backdrop-blur border-r border-border">
                 <div className="font-semibold text-primary">{t("analysis.matrix.tco_calculated")}</div>
@@ -285,12 +306,116 @@ export const ComparisonMatrix: React.FC<ComparisonMatrixProps> = ({
               {quotes.map((q) => {
                 const tco = analysis?.tco_results?.find((t) => t.quote_id === q.id);
                 const isIncomplete = q.vat_rate === null || q.shipping_cost === null;
+                const isConverted = Boolean(
+                  tco?.converted_total_tco != null &&
+                  tco?.target_currency &&
+                  tco.currency &&
+                  tco.currency.toUpperCase() !== tco.target_currency.toUpperCase()
+                );
+                const isConversionMissing = Boolean(
+                  tco?.target_currency &&
+                  tco.currency &&
+                  tco.currency.toUpperCase() !== tco.target_currency.toUpperCase() &&
+                  tco?.converted_total_tco == null
+                );
+                const isFxExpanded = expandedFxQuoteId === q.id;
 
                 return (
                   <td key={q.id} className="p-3.5 border-r border-border last:border-r-0 align-top">
+                    {/* Primary Displayed Amount */}
                     <div className="text-sm font-bold text-text-primary">
-                      {tco ? formatCurrency(tco.total_tco, tco.currency) : formatCurrency(q.total_price, q.currency)}
+                      {isConverted && tco?.converted_total_tco != null && tco?.target_currency
+                        ? formatCurrency(tco.converted_total_tco, tco.target_currency)
+                        : tco
+                        ? formatCurrency(tco.total_tco, tco.currency)
+                        : formatCurrency(q.total_price, q.currency)}
                     </div>
+
+                    {/* Original Quote Amount if Converted */}
+                    {isConverted && tco && (
+                      <div className="text-[11px] text-text-muted mt-0.5 font-normal">
+                        {t("analysis.matrix.fx_original_amount", {
+                          amount: formatCurrency(tco.total_tco, tco.currency)
+                        })}
+                      </div>
+                    )}
+
+                    {/* FX Badge & Interactive Tooltip Trigger */}
+                    {isConverted && tco && (
+                      <div className="mt-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setExpandedFxQuoteId(isFxExpanded ? null : q.id)}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-blue-500/15 text-blue-300 border border-blue-500/30 hover:bg-blue-500/25 transition-colors group"
+                          title={t("analysis.matrix.fx_info_tooltip_title")}
+                        >
+                          <TrendingUp size={11} className="text-blue-400 group-hover:scale-110 transition-transform" />
+                          <span>
+                            1 {tco.currency} = {tco.exchange_rate} {tco.target_currency}
+                          </span>
+                          {isFxExpanded ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+                        </button>
+
+                        {/* Expandable FX Detail Card */}
+                        {isFxExpanded && (
+                          <div className="mt-2 p-2.5 rounded-lg bg-surface-elevated border border-blue-500/30 shadow-lg text-[10px] space-y-1 text-left animate-in fade-in duration-150">
+                            <div className="font-semibold text-blue-300 border-b border-border pb-1 mb-1">
+                              {t("analysis.matrix.fx_info_tooltip_title")}
+                            </div>
+                            <div className="flex justify-between gap-2">
+                              <span className="text-text-muted">{t("analysis.matrix.fx_rate_label")}:</span>
+                              <span className="font-mono font-medium text-text-primary">{tco.exchange_rate}</span>
+                            </div>
+                            {tco.exchange_rate_source && (
+                              <div className="flex justify-between gap-2">
+                                <span className="text-text-muted">{t("analysis.matrix.fx_source_label")}:</span>
+                                <span className="font-medium text-text-primary">{tco.exchange_rate_source}</span>
+                              </div>
+                            )}
+                            {tco.exchange_rate_type && (
+                              <div className="flex justify-between gap-2">
+                                <span className="text-text-muted">{t("analysis.matrix.fx_type_label")}:</span>
+                                <span className="font-medium text-text-primary">{tco.exchange_rate_type}</span>
+                              </div>
+                            )}
+                            {tco.exchange_rate_date && (
+                              <div className="flex justify-between gap-2">
+                                <span className="text-text-muted">{t("analysis.matrix.fx_date_label")}:</span>
+                                <span className="font-medium text-text-primary">{tco.exchange_rate_date}</span>
+                              </div>
+                            )}
+                            {tco.conversion_path && (
+                              <div className="flex justify-between gap-2">
+                                <span className="text-text-muted">{t("analysis.matrix.fx_path_label")}:</span>
+                                <span className="font-medium text-text-primary">
+                                  {tco.conversion_path === "DIRECT"
+                                    ? t("analysis.matrix.fx_path_direct")
+                                    : tco.conversion_path === "INVERSE"
+                                    ? t("analysis.matrix.fx_path_inverse")
+                                    : tco.conversion_path === "CROSS"
+                                    ? t("analysis.matrix.fx_path_cross")
+                                    : t("analysis.matrix.fx_path_identity")}
+                                </span>
+                              </div>
+                            )}
+                            {tco.calculation_notes && (
+                              <div className="pt-1 border-t border-border mt-1 text-[9px] text-text-muted leading-relaxed font-mono">
+                                {tco.calculation_notes}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Missing Conversion Warning */}
+                    {isConversionMissing && (
+                      <span className="inline-block mt-1 text-[10px] px-1.5 py-0.5 rounded bg-red-500/15 text-red-400 border border-red-500/30">
+                        {t("analysis.matrix.fx_rate_unavailable_badge")}
+                      </span>
+                    )}
+
+                    {/* Incomplete Item Cost Status */}
                     {isIncomplete ? (
                       <span className="inline-block mt-1 text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 border border-amber-500/30">
                         {t("analysis.matrix.missing_items_warning")}

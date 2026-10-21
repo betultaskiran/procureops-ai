@@ -51,6 +51,7 @@ from app.models.email_delivery import (
     EmailDeliveryStatus,
     EmailMessageType,
 )
+from app.models.exchange_rate import ExchangeRate
 
 __all__ = [
     # Base
@@ -104,4 +105,6 @@ __all__ = [
     "EmailDelivery",
     "EmailDeliveryStatus",
     "EmailMessageType",
+    # FX Engine (Milestone 2)
+    "ExchangeRate",
 ]

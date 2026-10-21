@@ -93,6 +93,13 @@ export interface TCOResultResponse {
   total_tco: number;
   currency: string;
   calculation_notes: string | null;
+  converted_total_tco?: number | null;
+  target_currency?: string | null;
+  exchange_rate?: number | null;
+  exchange_rate_date?: string | null;
+  exchange_rate_source?: string | null;
+  exchange_rate_type?: string | null;
+  conversion_path?: string | null;
 }
 
 export interface ComplianceCheckResponse {
@@ -118,6 +125,7 @@ export interface EvidenceItemResponse {
   source_type: string;
   source_reference: string;
   claim: string;
+  content?: string | null;
 }
 
 export interface StageEvidenceRef {

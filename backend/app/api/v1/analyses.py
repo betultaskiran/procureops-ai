@@ -9,7 +9,7 @@ import hashlib
 import json
 import uuid
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
@@ -59,7 +59,14 @@ class TCOResultResponse(BaseModel):
     quote_id: uuid.UUID
     total_tco: float
     currency: str
-    calculation_notes: str | None
+    calculation_notes: str | None = None
+    converted_total_tco: float | None = None
+    target_currency: str | None = None
+    exchange_rate: float | None = None
+    exchange_rate_date: date | None = None
+    exchange_rate_source: str | None = None
+    exchange_rate_type: str | None = None
+    conversion_path: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -87,6 +94,7 @@ class EvidenceItemResponse(BaseModel):
     source_type: str
     source_reference: str
     claim: str
+    content: str | None = None
 
     model_config = {"from_attributes": True}
 
