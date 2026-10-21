@@ -843,3 +843,40 @@ async def test_require_role_enforcement():
     with pytest.raises(HTTPException) as exc_info:
         await manager_or_admin_checker(current_user=employee_user)
     assert exc_info.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_logout_clears_httponly_cookie():
+    """POST /api/v1/auth/logout deletes the HttpOnly access_token session cookie."""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        unique_id = uuid.uuid4().hex[:6]
+        email = f"logout_user_{unique_id}@test.com"
+        password = "ValidPassword123!"
+
+        reg_res = await client.post(
+            "/api/v1/auth/register",
+            json={
+                "company_name": f"Logout Corp {unique_id}",
+                "full_name": "Logout User",
+                "email": email,
+                "password": password,
+            },
+        )
+        assert reg_res.status_code == 201
+        assert "access_token" in reg_res.cookies
+
+        # Invoke logout
+        logout_res = await client.post("/api/v1/auth/logout")
+        assert logout_res.status_code == 200
+        assert logout_res.json() == {"message": "Logged out successfully"}
+
+        # Verify deletion header for access_token cookie
+        set_cookie_headers = [
+            v for k, v in logout_res.headers.multi_items() if k.lower() == "set-cookie"
+        ]
+        assert any(
+            "access_token" in h and ("max-age=0" in h.lower() or "expires=" in h.lower())
+            for h in set_cookie_headers
+        )
+

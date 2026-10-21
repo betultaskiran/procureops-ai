@@ -95,6 +95,23 @@ services:
       - procureops_internal
     restart: always
 
+  # ── Asynchronous Email Outbox Worker ────────────────────────────────────────
+  outbox-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.prod
+    command: ["python", "-m", "app.services.email.worker", "--interval", "10", "--stuck-timeout", "300"]
+    env_file:
+      - .env
+    volumes:
+      - backend_uploads:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - procureops_internal
+    restart: always
+
   # ── PostgreSQL 16 ───────────────────────────────────────────────────────────
   postgres:
     image: postgres:16-alpine

@@ -33,22 +33,13 @@ export class ApiError extends Error {
 
 export function getAuthToken(): string | null {
   if (typeof window !== "undefined") {
-    // 1. Check primary and fallback localStorage keys
+    // 1. Check primary localStorage key (persistent 24-hour session)
     const local =
       localStorage.getItem("access_token") ||
-      localStorage.getItem("token") ||
-      localStorage.getItem("auth_token") ||
-      localStorage.getItem("jwt");
+      localStorage.getItem("token"); // Legacy fallback
     if (local) return local;
 
-    // 2. Check sessionStorage
-    const session =
-      sessionStorage.getItem("access_token") ||
-      sessionStorage.getItem("token") ||
-      sessionStorage.getItem("auth_token");
-    if (session) return session;
-
-    // 3. Check JSON auth objects in localStorage
+    // 2. Fallback check for JSON auth objects (backward compatibility)
     for (const key of ["auth", "user", "session", "procureops_auth"]) {
       const val = localStorage.getItem(key);
       if (val && (val.startsWith("{") || val.startsWith("["))) {
@@ -59,27 +50,16 @@ export function getAuthToken(): string | null {
         } catch {}
       }
     }
-
-    // 4. Check document.cookie for dual-transport non-HttpOnly client cookie
-    if (typeof document !== "undefined" && document.cookie) {
-      const match = document.cookie.match(/(?:^|;\s*)(?:access_token|token|jwt|auth_token)=([^;]+)/);
-      if (match && match[1]) {
-        return decodeURIComponent(match[1]);
-      }
-    }
   }
   return null;
 }
 
 export function setAuthToken(token: string): void {
   if (typeof window !== "undefined") {
+    // Store in authoritative localStorage for RFC-6750 Bearer headers.
+    // The HttpOnly cookie is managed strictly by the backend via Set-Cookie headers.
     localStorage.setItem("access_token", token);
-    localStorage.setItem("token", token);
-    sessionStorage.setItem("access_token", token);
-    // Also set a client-accessible cookie for dual-transport fallback
-    if (typeof document !== "undefined") {
-      document.cookie = `access_token=${encodeURIComponent(token)}; path=/; max-age=86400; SameSite=Lax`;
-    }
+
     // Dispatch event so active listeners can immediately sync
     window.dispatchEvent(new Event("auth:login"));
   }
@@ -87,14 +67,20 @@ export function setAuthToken(token: string): void {
 
 export function removeAuthToken(): void {
   if (typeof window !== "undefined") {
+    // Clear localStorage token keys
     localStorage.removeItem("access_token");
     localStorage.removeItem("token");
     localStorage.removeItem("auth_token");
+
+    // Clean up any legacy sessionStorage keys
     sessionStorage.removeItem("access_token");
     sessionStorage.removeItem("token");
+
+    // Expire any legacy JavaScript-accessible client cookie from older sessions
     if (typeof document !== "undefined") {
       document.cookie = "access_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax";
     }
+
     // Dispatch event so active listeners can immediately sync
     window.dispatchEvent(new Event("auth:logout"));
   }

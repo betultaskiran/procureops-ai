@@ -429,7 +429,7 @@ export default function QuotesAndRfqsPage() {
             const isLoadingQuotes = loadingQuotesFor.has(rfq.id);
             const shortId = `RFQ-${rfq.id.slice(0, 8).toUpperCase()}`;
             const itemsSummary = rfq.items && rfq.items.length > 0
-              ? `${rfq.items.length} Kalem: ${rfq.items.map(i => i.description).slice(0, 2).join(", ")}${rfq.items.length > 2 ? "..." : ""}`
+              ? `${t("quotes_page.items_count", { count: rfq.items.length })}: ${rfq.items.map(i => i.description).slice(0, 2).join(", ")}${rfq.items.length > 2 ? "..." : ""}`
               : t("quotes_page.no_items_specified");
 
             return (
@@ -486,18 +486,18 @@ export default function QuotesAndRfqsPage() {
                     <div className="flex flex-col">
                       <span className="text-[11px] font-medium text-text-muted">{t("quotes_page.table_total_price")}</span>
                       <span className="text-sm font-semibold text-text-primary">
-                        {rfq.budget ? `₺${rfq.budget.toLocaleString("tr-TR")}` : "Belirtilmedi"}
+                        {rfq.budget ? `₺${rfq.budget.toLocaleString(locale === "en" ? "en-US" : "tr-TR")}` : t("quotes_page.not_specified")}
                       </span>
                     </div>
 
                     <div className="flex flex-col">
-                      <span className="text-[11px] font-medium text-text-muted">{t("quotes_page.quotes_count", { count: quotes.length })}</span>
+                      <span className="text-[11px] font-medium text-text-muted">{t("quotes_page.col_quotes")}</span>
                       <button
                         onClick={() => toggleExpandRfq(rfq.id)}
                         className="inline-flex items-center gap-1 text-sm font-semibold text-primary hover:underline"
                       >
                         <FileCheck2 size={14} />
-                        <span>{rfq.quotes_count ?? 0} Teklif</span>
+                        <span>{t("quotes_page.quotes_count", { count: rfq.quotes_count ?? 0 })}</span>
                         {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                       </button>
                     </div>
@@ -510,7 +510,7 @@ export default function QuotesAndRfqsPage() {
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-surface-elevated hover:bg-border text-text-primary border border-border transition-colors"
                     >
                       <ExternalLink size={13} />
-                      Detay & Analiz
+                      {t("quotes_page.view_details")}
                     </Link>
 
                     {/* Quick Archive / Unarchive Action */}
@@ -591,7 +591,7 @@ export default function QuotesAndRfqsPage() {
                     {isLoadingQuotes ? (
                       <div className="py-6 flex items-center justify-center gap-2 text-text-muted text-xs">
                         <Loader2 size={16} className="animate-spin text-primary" />
-                        <span>Teklifler getiriliyor...</span>
+                        <span>{t("quotes_page.loading_quotes")}</span>
                       </div>
                     ) : quotes.length === 0 ? (
                       <div className="p-4 rounded-lg bg-surface border border-border text-center text-xs text-text-muted">
@@ -621,7 +621,7 @@ export default function QuotesAndRfqsPage() {
                                   {q.supplier_name || q.extracted_supplier_name || t("quotes_page.table_supplier")}
                                 </td>
                                 <td className="px-3.5 py-2.5 font-semibold text-emerald-400">
-                                  ₺{Number(q.total_price).toLocaleString("tr-TR")} {q.currency}
+                                  {fmtCurrency(Number(q.total_price), q.currency, locale)}
                                 </td>
                                 <td className="px-3.5 py-2.5 text-text-secondary">
                                   {q.delivery_days ? t("rfq_detail.days_unit", { count: q.delivery_days }) : "-"}
@@ -825,7 +825,7 @@ export default function QuotesAndRfqsPage() {
                 className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold bg-red-600 hover:bg-red-500 text-white transition-colors shadow-sm disabled:opacity-50"
               >
                 {isDeleting && <Loader2 size={13} className="animate-spin" />}
-                {isDeleting ? "Siliniyor..." : "Evet, RFQ'yu Sil"}
+                {isDeleting ? t("quotes_page.deleting") : t("quotes_page.confirm_delete_rfq_btn")}
               </button>
             </div>
           </div>
@@ -854,7 +854,7 @@ export default function QuotesAndRfqsPage() {
                 </p>
                 <div className="flex items-center gap-2 mt-2 text-xs text-text-secondary">
                   <span className="font-semibold text-emerald-400">
-                    ₺{Number(quoteToDelete.quote.total_price).toLocaleString("tr-TR")} {quoteToDelete.quote.currency}
+                    {fmtCurrency(Number(quoteToDelete.quote.total_price), quoteToDelete.quote.currency, locale)}
                   </span>
                   <span>•</span>
                   <span>{quoteToDelete.quote.delivery_days ? t("rfq_detail.days_unit", { count: quoteToDelete.quote.delivery_days }) : "-"}</span>
@@ -886,7 +886,7 @@ export default function QuotesAndRfqsPage() {
                 className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold bg-red-600 hover:bg-red-500 text-white transition-colors shadow-sm disabled:opacity-50"
               >
                 {isDeleting && <Loader2 size={13} className="animate-spin" />}
-                {isDeleting ? "Siliniyor..." : "Evet, Teklifi Sil"}
+                {isDeleting ? t("quotes_page.deleting") : t("quotes_page.confirm_delete_quote_btn")}
               </button>
             </div>
           </div>
