@@ -77,10 +77,11 @@ export const rfqsApi = {
     return quotesApi.reprocessQuoteDocument(rfqId, documentId);
   },
   
-  async analyzeRfq(rfqId: string, organizationId?: string): Promise<AnalysisResponse> {
+  async analyzeRfq(rfqId: string, organizationId?: string, locale: "tr" | "en" = "tr"): Promise<AnalysisResponse> {
     return apiClient.post<AnalysisResponse>(`/api/v1/rfqs/${rfqId}/analyze`, {
       rules: {}, // Use default rules
-      organization_id: organizationId
+      organization_id: organizationId,
+      locale,
     });
   },
 

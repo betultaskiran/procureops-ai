@@ -201,7 +201,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
       const updated = await rfqsApi.archiveRfq(rfqId);
       setRfq(updated);
     } catch (err: any) {
-      alert(err.message || "Arşivleme başarısız oldu.");
+      alert(err.message || (locale === "tr" ? "Arşivleme başarısız oldu." : "Failed to archive RFQ."));
     } finally {
       setIsArchiving(false);
     }
@@ -213,7 +213,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
       const updated = await rfqsApi.unarchiveRfq(rfqId);
       setRfq(updated);
     } catch (err: any) {
-      alert(err.message || "Arşivden çıkarma başarısız oldu.");
+      alert(err.message || (locale === "tr" ? "Arşivden çıkarma başarısız oldu." : "Failed to restore RFQ from archive."));
     } finally {
       setIsArchiving(false);
     }
@@ -437,7 +437,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
     try {
       setIsAnalyzing(true);
       setAnalysisError(null);
-      const res = await rfqsApi.analyzeRfq(rfqId, rfq?.organization_id || undefined);
+      const res = await rfqsApi.analyzeRfq(rfqId, rfq?.organization_id || undefined, locale as "tr" | "en");
       setAnalysis(res);
       const [updatedRfq, updatedQuotes] = await Promise.all([
         rfqsApi.getRfq(rfqId),
@@ -517,7 +517,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
       await rfqsApi.retryRfqInvitation(rfqId, invitationId);
       await fetchInvitations();
     } catch (err: any) {
-      alert(`Davet yeniden denenirken hata oluştu: ${err.message || err}`);
+      alert(locale === "tr" ? `Davet yeniden denenirken hata oluştu: ${err.message || err}` : `Failed to retry invitation: ${err.message || err}`);
     } finally {
       setRetryingInvitationId(null);
     }
@@ -532,7 +532,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
       await rfqsApi.revokeRfqInvitation(rfqId, invitationId);
       await fetchInvitations();
     } catch (err: any) {
-      alert(`Davet iptal edilirken hata oluştu: ${err.message || err}`);
+      alert(locale === "tr" ? `Davet iptal edilirken hata oluştu: ${err.message || err}` : `Failed to revoke invitation: ${err.message || err}`);
     } finally {
       setRevokingInvitationId(null);
     }
@@ -2036,7 +2036,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                 className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold bg-red-600 hover:bg-red-500 text-white transition-colors shadow-sm disabled:opacity-50"
               >
                 {isDeleting && <Loader2 size={13} className="animate-spin" />}
-                {isDeleting ? "Siliniyor..." : "Evet, RFQ'yu Sil"}
+                {isDeleting ? t("quotes_page.deleting") : t("quotes_page.confirm_delete_rfq_btn")}
               </button>
             </div>
           </div>
@@ -2081,7 +2081,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                 className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold bg-red-600 hover:bg-red-500 text-white transition-colors shadow-sm disabled:opacity-50"
               >
                 {isDeleting && <Loader2 size={13} className="animate-spin" />}
-                {isDeleting ? "Siliniyor..." : "Evet, Teklifi Sil"}
+                {isDeleting ? t("quotes_page.deleting") : t("quotes_page.confirm_delete_quote_btn")}
               </button>
             </div>
           </div>

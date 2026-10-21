@@ -56,6 +56,7 @@ class AnalysisPipelineOrchestrator:
         current_user: User,
         llm_provider = None,
         rag_service = None,
+        locale: str = "tr",
     ) -> Tuple[Analysis, List[StageResultResponse]]:
         pipeline_start_mono = time.monotonic()
         stage_results: List[StageResultResponse] = []
@@ -75,6 +76,7 @@ class AnalysisPipelineOrchestrator:
                 db=self.db,
                 rfq_id=rfq_id,
                 organization_id=current_user.organization_id,
+                locale=locale,
             )
             stage_results.append(s1_res)
 
@@ -84,6 +86,7 @@ class AnalysisPipelineOrchestrator:
                 analysis_id=analysis.id,
                 quotes=quotes,
                 rules=rules,
+                locale=locale,
             )
             stage_results.append(s2_res)
 
@@ -93,6 +96,7 @@ class AnalysisPipelineOrchestrator:
                 rfq=rfq,
                 quotes=quotes,
                 rag_service=rag_service,
+                locale=locale,
             )
             stage_results.append(s3_res)
 
@@ -109,6 +113,7 @@ class AnalysisPipelineOrchestrator:
                 rag_context=rag_context,
                 llm_provider=llm_provider,
                 policy_output=s3_out,
+                locale=locale,
             )
             stage_results.append(s4_res)
 
@@ -124,6 +129,7 @@ class AnalysisPipelineOrchestrator:
                 compliance_checks=compliance_checks,
                 policy_evidence_refs=evidence_refs,
                 policy_output=s3_out,
+                locale=locale,
             )
             stage_results.append(s5_res)
 
@@ -143,6 +149,7 @@ class AnalysisPipelineOrchestrator:
                 entity_id=analysis.id,
                 payload={
                     "rfq_id": str(rfq.id),
+                    "locale": locale,
                     "total_duration_ms": total_duration_ms,
                     "stages_count": len(stage_results),
                     "verification_outcome": s5_out.verification_status.value,

@@ -85,6 +85,7 @@ class ExtractionValidationStage:
         db: AsyncSession,
         rfq_id: uuid.UUID,
         organization_id: uuid.UUID,
+        locale: str = "tr",
     ) -> Tuple[StageResultResponse, ExtractionValidationOutput, List[Quote], RFQ]:
         started_at = datetime.now(timezone.utc)
         start_mono = time.monotonic()
@@ -197,7 +198,7 @@ class ExtractionValidationStage:
             started_at=started_at,
             completed_at=completed_at,
             duration_ms=round(duration_ms, 2),
-            summary=f"{len(quotes)} teklif başarıyla doğrulandı ({primary_currency}).",
+            summary=f"{len(quotes)} quotes successfully validated ({primary_currency})." if locale == "en" else f"{len(quotes)} teklif başarıyla doğrulandı ({primary_currency}).",
             details=output.model_dump(mode="json"),
             warnings=warnings,
         )
@@ -219,6 +220,7 @@ class DeterministicEvaluationStage:
         analysis_id: uuid.UUID,
         quotes: List[Quote],
         rules: PolicyRules,
+        locale: str = "tr",
     ) -> Tuple[StageResultResponse, DeterministicEvaluationOutput, List[Quote], List[Quote], List[TCOResult], List[ComplianceCheck]]:
         started_at = datetime.now(timezone.utc)
         start_mono = time.monotonic()
@@ -284,7 +286,7 @@ class DeterministicEvaluationStage:
             started_at=started_at,
             completed_at=completed_at,
             duration_ms=round(duration_ms, 2),
-            summary=f"TCO ve kural denetimi tamamlandı: {len(eligible_quotes)} uygun, {len(eliminated_quotes)} elenen teklif.",
+            summary=f"TCO and rule evaluation completed: {len(eligible_quotes)} eligible, {len(eliminated_quotes)} eliminated." if locale == "en" else f"TCO ve kural denetimi tamamlandı: {len(eligible_quotes)} uygun, {len(eliminated_quotes)} elenen teklif.",
             details=output.model_dump(mode="json"),
             warnings=warnings,
         )
@@ -330,6 +332,7 @@ class PolicyComplianceStage:
         rfq: RFQ,
         quotes: List[Quote],
         rag_service: Optional[RAGService] = None,
+        locale: str = "tr",
     ) -> Tuple[StageResultResponse, PolicyComplianceOutput, str, List[StageEvidenceRef]]:
         started_at = datetime.now(timezone.utc)
         start_mono = time.monotonic()
@@ -397,7 +400,7 @@ class PolicyComplianceStage:
                         StageEvidenceRef(
                             source_type=CitationSourceType.POLICY,
                             source_reference=ref_str,
-                            claim=f"Politika kuralı: {sec_title or doc_title}",
+                            claim=f"Policy rule: {sec_title or doc_title}" if locale == "en" else f"Politika kuralı: {sec_title or doc_title}",
                             content=claim_text,
                             document_id=str(hit.get("doc_id", "")),
                             section_title=sec_title,
@@ -435,7 +438,7 @@ class PolicyComplianceStage:
         if is_infrastructure_failure:
             summary = f"Politika analizi altyapı kesintisi nedeniyle tamamlanamadı: {infra_error_type} (insan incelemesi zorunlu)."
         else:
-            summary = f"Politika analizi tamamlandı: {rag_status} ({len(evidence_refs)} kanıt maddesi)."
+            summary = f"Policy analysis completed: {rag_status} ({len(evidence_refs)} evidence items)." if locale == "en" else f"Politika analizi tamamlandı: {rag_status} ({len(evidence_refs)} kanıt maddesi)."
 
         stage_result = StageResultResponse(
             stage=StageName.POLICY_COMPLIANCE,
@@ -480,6 +483,7 @@ class SupplierRecommendationStage:
         rag_context: str,
         llm_provider = None,
         policy_output: Optional[PolicyComplianceOutput] = None,
+        locale: str = "tr",
     ) -> Tuple[StageResultResponse, SupplierRecommendationOutput, AgentRecommendationSchema]:
         started_at = datetime.now(timezone.utc)
         start_mono = time.monotonic()
@@ -557,8 +561,25 @@ class SupplierRecommendationStage:
             })
 
         # 3. Prompt oluştur
-        prompt = (
-            "Sen kıdemli bir Satın Alma Uzmanı ve Danışman AI Ajanısın. "
+        if locale == "en":
+            prompt = (
+                "You are a Senior Procurement Specialist and Advisory AI Agent. "
+                "Review the verified data below and recommend the most suitable supplier quote for the company.\n\n"
+                "IMPORTANT RULE 1: Never use technical IDs like 'quote_id' or UUIDs. Always refer to suppliers naturally using 'supplier_name'.\n"
+                "IMPORTANT RULE 2: You are an advisory consultant. Never use definitive assertions like 'This quote is approved'. Use recommendation phrasing.\n"
+                "IMPORTANT RULE 3: Price is not the only criterion; balance delivery time, warranty, policy compliance, and supplier history.\n"
+                "IMPORTANT RULE 4 (VERBATIM CITATIONS): When citing policy or supplier history, use '[Source X: ...]' or '[Kaynak X: ...]'. Preserve official source quotations verbatim.\n"
+                "IMPORTANT RULE 5 (ELIMINATED QUOTES): NEVER select eliminated quotes as winners. Only reference them in trade-off comparisons.\n\n"
+            )
+            prompt += f"--- CORPORATE MEMORY (RAG CONTEXT) ---\n{rag_context}\n\n"
+            if sql_context:
+                prompt += f"{sql_context}\n"
+            prompt += "--- ELIMINATED QUOTES (HARD FAIL) ---\n" + json.dumps(eliminated_payload, indent=2, ensure_ascii=False) + "\n\n"
+            prompt += "--- ELIGIBLE QUOTES (ELIGIBLE) ---\n" + json.dumps(eligible_payload, indent=2, ensure_ascii=False) + "\n\n"
+            prompt += "Task: Analyze all data, conduct a trade-off analysis, and select the best quote. Adhere strictly to the requested JSON schema."
+        else:
+            prompt = (
+                "Sen kıdemli bir Satın Alma Uzmanı ve Danışman AI Ajanısın. "
             "Aşağıdaki doğrulanmış verileri inceleyerek şirket için en uygun tedarikçi teklifini önermelisin.\n\n"
             "ÖNEMLİ KURAL 1: Analizini yazarken ASLA 'quote_id' veya UUID gibi teknik kimlikleri kullanma. "
             "Her zaman 'supplier_name' (Tedarikçi Adı) alanını kullanarak akıcı bir dille hitap et.\n"
@@ -623,7 +644,7 @@ class SupplierRecommendationStage:
             started_at=started_at,
             completed_at=completed_at,
             duration_ms=round(duration_ms, 2),
-            summary=f"Öneri oluşturuldu: {chosen_supplier_name or 'Teklif seçilmedi'} (Güven: {agent_output.confidence_score}/100).",
+            summary=f"Recommendation generated: {chosen_supplier_name or 'No quote selected'} (Confidence: {agent_output.confidence_score}/100)." if locale == "en" else f"Öneri oluşturuldu: {chosen_supplier_name or 'Teklif seçilmedi'} (Güven: {agent_output.confidence_score}/100).",
             details=output.model_dump(mode="json"),
             warnings=warnings,
         )
@@ -656,6 +677,7 @@ class IndependentVerificationStage:
         compliance_checks: List[ComplianceCheck],
         policy_evidence_refs: List[StageEvidenceRef],
         policy_output: Optional[PolicyComplianceOutput] = None,
+        locale: str = "tr",
     ) -> Tuple[StageResultResponse, IndependentVerificationOutput, Recommendation]:
         started_at = datetime.now(timezone.utc)
         start_mono = time.monotonic()
@@ -727,7 +749,7 @@ class IndependentVerificationStage:
 
         # ── Denetim 3: Kanıt Atıfı & Halüsinasyon Kontrolü ─────────────────────
         all_text = f"{recommendation_schema.justification}\n{recommendation_schema.trade_off_analysis}\n{' '.join(recommendation_schema.risk_factors)}"
-        citations_found = re.findall(r"\[Kaynak \d+:\s*(.*?)\]", all_text)
+        citations_found = re.findall(r"\[(?:Kaynak|Source)\s*\d+:\s*(.*?)\]", all_text)
 
         unsupported_claims = False
         valid_evidence_items: List[EvidenceItem] = []
@@ -747,12 +769,22 @@ class IndependentVerificationStage:
 
             if is_policy_match or is_sql_match:
                 src_type = "policy" if is_policy_match else "supplier_history"
+                claim_text = (
+                    f"Claim asserted by LLM citing '{cit}'."
+                    if locale == "en"
+                    else f"LLM tarafından '{cit}' kaynak gösterilerek iddiada bulunuldu."
+                )
+                content_text = (
+                    "Verified by system."
+                    if locale == "en"
+                    else "Sistem tarafından doğrulandı."
+                )
                 ev_item = EvidenceItem(
                     analysis_id=analysis_id,
                     source_type=src_type,
                     source_reference=cit,
-                    claim=f"LLM tarafından '{cit}' kaynak gösterilerek iddiada bulunuldu.",
-                    content="Sistem tarafından doğrulandı.",
+                    claim=claim_text,
+                    content=content_text,
                 )
                 valid_evidence_items.append(ev_item)
             else:
@@ -829,24 +861,49 @@ class IndependentVerificationStage:
         if is_failed:
             final_status = VerificationOutcome.FAILED
             db_status = VerificationStatus.OVERRIDDEN.value
-            # Başarısız doğrulama kazananı temizler
             effective_recommended_id = None
-            notes.insert(0, "SİSTEM UYARISI: Doğrulama başarısız oldu (failed). Bu öneri otomatik olarak reddedilmiştir.")
+            override_msg = (
+                "SYSTEM OVERRIDE: Verification failed. This recommendation has been automatically rejected."
+                if locale == "en"
+                else "SİSTEM UYARISI: Doğrulama başarısız oldu (failed). Bu öneri otomatik olarak reddedilmiştir."
+            )
+            notes.insert(0, override_msg)
         elif is_inconclusive:
             final_status = VerificationOutcome.INCONCLUSIVE
             db_status = VerificationStatus.INCONCLUSIVE.value
             effective_recommended_id = chosen_id
-            notes.insert(0, "DOĞRULAMA SONUCU: Yetersiz kanıt veya uyarılar mevcut (inconclusive). Yönetici incelemesi zorunludur.")
+            inconclusive_msg = (
+                "VERIFICATION INCONCLUSIVE: Insufficient evidence or warnings present. Manager review is required."
+                if locale == "en"
+                else "DOĞRULAMA SONUCU: Yetersiz kanıt veya uyarılar mevcut (inconclusive). Yönetici incelemesi zorunludur."
+            )
+            notes.insert(0, inconclusive_msg)
         else:
             final_status = VerificationOutcome.PASSED
             db_status = VerificationStatus.VERIFIED.value
             effective_recommended_id = chosen_id
-            notes.insert(0, "DOĞRULAMA GEÇTİ: Tüm deterministik kontroller ve kanıt doğrulamaları başarıyla onaylandı (passed).")
+            passed_msg = (
+                "VERIFICATION PASSED: All deterministic checks and evidence verifications successfully verified."
+                if locale == "en"
+                else "DOĞRULAMA GEÇTİ: Tüm deterministik kontroller ve kanıt doğrulamaları başarıyla onaylandı (passed)."
+            )
+            notes.insert(0, passed_msg)
 
         verification_notes_text = "\n".join(notes)
 
         # ── Veritabanına Recommendation ve Evidence Kayıtlarını Yaz ───────────
-        combined_reasoning = f"{recommendation_schema.justification}\n\n**Trade-off Analizi:**\n{recommendation_schema.trade_off_analysis}"
+        trade_off_header = "**Trade-off Analysis:**" if locale == "en" else "**Trade-off Analizi:**"
+        combined_reasoning = f"{recommendation_schema.justification}\n\n{trade_off_header}\n{recommendation_schema.trade_off_analysis}"
+        human_review_text = (
+            ("Yes" if recommendation_schema.is_human_review_required else "No")
+            if locale == "en"
+            else ("Evet" if recommendation_schema.is_human_review_required else "Hayır")
+        )
+        alt_notes = (
+            f"Confidence Score: {recommendation_schema.confidence_score}/100. Human Review Required: {human_review_text}"
+            if locale == "en"
+            else f"Güven Skoru: {recommendation_schema.confidence_score}/100. İnsan Onayı Gerekli mi: {human_review_text}"
+        )
 
         # Mevcut recommendation varsa güncelle, yoksa ekle
         rec_res = await db.execute(
@@ -860,7 +917,7 @@ class IndependentVerificationStage:
                 recommended_quote_id=effective_recommended_id,
                 reasoning=combined_reasoning,
                 risks=json.dumps(recommendation_schema.risk_factors, ensure_ascii=False),
-                alternative_notes=f"Güven Skoru: {recommendation_schema.confidence_score}/100. İnsan Onayı Gerekli mi: {'Evet' if recommendation_schema.is_human_review_required else 'Hayır'}",
+                alternative_notes=alt_notes,
                 verification_status=db_status,
                 verification_notes=verification_notes_text,
             )
@@ -869,7 +926,7 @@ class IndependentVerificationStage:
             recommendation_record.recommended_quote_id = effective_recommended_id
             recommendation_record.reasoning = combined_reasoning
             recommendation_record.risks = json.dumps(recommendation_schema.risk_factors, ensure_ascii=False)
-            recommendation_record.alternative_notes = f"Güven Skoru: {recommendation_schema.confidence_score}/100. İnsan Onayı Gerekli mi: {'Evet' if recommendation_schema.is_human_review_required else 'Hayır'}"
+            recommendation_record.alternative_notes = alt_notes
             recommendation_record.verification_status = db_status
             recommendation_record.verification_notes = verification_notes_text
 
@@ -904,7 +961,7 @@ class IndependentVerificationStage:
             started_at=started_at,
             completed_at=completed_at,
             duration_ms=round(duration_ms, 2),
-            summary=f"Bağımsız doğrulama tamamlandı: {final_status.value.upper()}.",
+            summary=f"Independent verification completed: {final_status.value.upper()}." if locale == "en" else f"Bağımsız doğrulama tamamlandı: {final_status.value.upper()}.",
             details=output.model_dump(mode="json"),
             warnings=warnings,
         )

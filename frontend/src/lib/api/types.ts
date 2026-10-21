@@ -157,6 +157,7 @@ export interface AnalysisResponse {
   id: string;
   rfq_id: string;
   status: string;
+  locale?: string;
   tco_results: TCOResultResponse[];
   compliance_checks: ComplianceCheckResponse[];
   recommendation: RecommendationResponse | null;

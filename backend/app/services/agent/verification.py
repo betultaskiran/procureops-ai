@@ -26,6 +26,7 @@ class VerificationService:
         self,
         recommendation_id: uuid.UUID,
         known_sources: Optional[List[str]] = None,
+        locale: str = "tr",
     ) -> Recommendation:
         """
         Agent'ın yaptığı öneriyi deterministik kurallara göre doğrular ve
@@ -65,7 +66,10 @@ class VerificationService:
             if failed_checks:
                 is_compliant = False
                 for fail in failed_checks:
-                    verification_notes.append(f"KURAL İHLALİ: {fail.rule_name} (Gerçek: {fail.actual_value}, Beklenen: {fail.required_value})")
+                    fail_label = "RULE VIOLATION" if locale == "en" else "KURAL İHLALİ"
+                    act_label = "Actual" if locale == "en" else "Gerçek"
+                    exp_label = "Expected" if locale == "en" else "Beklenen"
+                    verification_notes.append(f"{fail_label}: {fail.rule_name} ({act_label}: {fail.actual_value}, {exp_label}: {fail.required_value})")
 
             # Deterministik TCO kaydı: Önerilen teklife ve bu analize ait olmalı
             matching_tco = next(
@@ -76,10 +80,15 @@ class VerificationService:
             if not matching_tco:
                 has_tco = False
                 is_compliant = False
-                verification_notes.append("TCO UYUMSUZLUĞU: Önerilen teklife ait deterministik TCO hesabı bulunamadı.")
+                tco_msg = (
+                    "TCO MISMATCH: Deterministic TCO calculation for recommended quote was not found."
+                    if locale == "en"
+                    else "TCO UYUMSUZLUĞU: Önerilen teklife ait deterministik TCO hesabı bulunamadı."
+                )
+                verification_notes.append(tco_msg)
 
         # 3. Kanıt Çıkarımı ve Desteklenmeyen Atıf Denetimi (Citations Grounding)
-        pattern = r"\[Kaynak \d+:\s*(.*?)\]"
+        pattern = r"\[(?:Kaynak|Source)\s*\d+:\s*(.*?)\]"
         all_text = f"{recommendation.reasoning}\n{recommendation.risks or ''}\n{recommendation.alternative_notes or ''}"
         citations = re.findall(pattern, all_text)
         unique_citations = set(citations)
@@ -107,27 +116,28 @@ class VerificationService:
                 known_sources = [p[0] for p in active_pols if p[0]] + [p[1] for p in active_pols if p[1]]
             else:
                 known_sources = []
-            known_sources.extend(["sql", "geçmiş", "sipariş"])
+            known_sources.extend(["sql", "geçmiş", "sipariş", "history", "order", "supplier history"])
 
         for citation in unique_citations:
             cit_lower = citation.lower()
 
             # 1. Deterministik Kural Motoru & Hesaplama Atıfları
             is_calculation = any(k in cit_lower for k in [
-                "kural motoru", "rule engine", "deterministik", "kural", "hesap", "tco",
-                "maliyet", "bütçe kontrolü", "teslimat kontrolü", "garanti kontrolü", "sistem", "calculation"
+                "kural motoru", "rule engine", "deterministik", "deterministic", "kural", "hesap", "tco",
+                "maliyet", "bütçe kontrolü", "teslimat kontrolü", "garanti kontrolü", "sistem", "calculation",
+                "cost", "budget check", "delivery check", "warranty check", "system"
             ])
             # 2. Teklif Belgesi Atıfları
             is_quote = any(k in cit_lower for k in [
-                "teklif", "quote", "fatura", "şartname", "belge", "pdf", "xlsx"
+                "teklif", "quote", "fatura", "invoice", "şartname", "specification", "belge", "document", "pdf", "xlsx"
             ])
             # 3. SQL / Tedarikçi Geçmişi Atıfları
             is_sql = any(k in cit_lower for k in [
-                "sql", "geçmiş", "sipariş", "supplier history", "tedarikçi geçmişi", "performans"
+                "sql", "geçmiş", "sipariş", "history", "order", "supplier history", "tedarikçi geçmişi", "performans", "performance"
             ])
             # 4. Kurumsal Politika Atıfları
             is_policy = any(k in cit_lower for k in [
-                "sözleşme", "politika", "yönetmelik", "madde", "prosedür", "sla"
+                "sözleşme", "contract", "politika", "policy", "yönetmelik", "regulation", "madde", "article", "section", "prosedür", "procedure", "sla"
             ])
 
             if is_calculation:
@@ -149,12 +159,22 @@ class VerificationService:
                     if not cit_matched:
                         unsupported_citations.append(citation)
 
+            claim_text = (
+                f"Claim asserted by LLM citing '{citation}'."
+                if locale == "en"
+                else f"LLM tarafından '{citation}' kaynak gösterilerek iddiada bulunuldu."
+            )
+            content_text = (
+                "Automatically extracted and verified by system."
+                if locale == "en"
+                else "Sistem tarafından otomatik çıkarıldı ve doğrulandı."
+            )
             item = EvidenceItem(
                 analysis_id=analysis.id,
                 source_type=source_type,
                 source_reference=citation,
-                claim=f"LLM tarafından '{citation}' kaynak gösterilerek iddiada bulunuldu.",
-                content="Sistem tarafından otomatik çıkarıldı ve doğrulandı."
+                claim=claim_text,
+                content=content_text
             )
             evidence_items.append(item)
 
@@ -165,15 +185,30 @@ class VerificationService:
         if not is_compliant:
             # LLM kural dışı bir teklif önerdi veya TCO uyumsuz: Sistem override ediyor
             recommendation.verification_status = VerificationStatus.OVERRIDDEN.value
-            verification_notes.insert(0, "SİSTEM UYARISI: LLM kurallara uymayan bir teklif önerdi. Bu öneri geçersiz kılınmıştır.")
+            override_msg = (
+                "SYSTEM OVERRIDE: LLM recommended a non-compliant quote. This recommendation has been overridden."
+                if locale == "en"
+                else "SİSTEM UYARISI: LLM kurallara uymayan bir teklif önerdi. Bu öneri geçersiz kılınmıştır."
+            )
+            verification_notes.insert(0, override_msg)
             recommendation.recommended_quote_id = None  # Teklifi reddet
         elif unsupported_citations:
             recommendation.verification_status = VerificationStatus.INCONCLUSIVE.value
-            verification_notes.append(f"UYARI: Sistem hafızasında bulunmayan desteklenmeyen atıflar tespit edildi: {', '.join(unsupported_citations)}")
+            warn_msg = (
+                f"WARNING: Unsupported citations detected that are not in system memory: {', '.join(unsupported_citations)}"
+                if locale == "en"
+                else f"UYARI: Sistem hafızasında bulunmayan desteklenmeyen atıflar tespit edildi: {', '.join(unsupported_citations)}"
+            )
+            verification_notes.append(warn_msg)
         else:
             recommendation.verification_status = VerificationStatus.VERIFIED.value
             if not verification_notes:
-                verification_notes.append("Tüm deterministik kurallar ve kanıt doğrulamaları sağlandı.")
+                pass_msg = (
+                    "All deterministic rules and evidence verifications passed."
+                    if locale == "en"
+                    else "Tüm deterministik kurallar ve kanıt doğrulamaları sağlandı."
+                )
+                verification_notes.append(pass_msg)
 
         recommendation.verification_notes = "\n".join(verification_notes)
 

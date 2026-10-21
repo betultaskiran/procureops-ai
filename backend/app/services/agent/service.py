@@ -70,7 +70,7 @@ class AgentService:
 
         return " ve ".join(clauses)
 
-    async def generate_recommendation(self, analysis_id: uuid.UUID, organization_id: str) -> Recommendation:
+    async def generate_recommendation(self, analysis_id: uuid.UUID, organization_id: str, locale: str = "tr") -> Recommendation:
         """
         Analizi alır, RAG'dan context çeker ve LLM'den trade-off analizi ister.
         """
@@ -189,7 +189,7 @@ class AgentService:
                     sql_context += f"- Toplam Kalite Sorunu: {metric.total_quality_issues or 0}\n\n"
 
         # 4. LLM Promptunu oluştur
-        prompt = self._build_prompt(eligible_quotes, eliminated_quotes, rag_context, sql_context)
+        prompt = self._build_prompt(eligible_quotes, eliminated_quotes, rag_context, sql_context, locale=locale)
 
         # 5. LLM'den Yapılandırılmış Çıktı İste (Structured Output)
         config = ExtractionConfig(thinking_budget=1024)
@@ -206,14 +206,26 @@ class AgentService:
             raise ValueError(f"Agent failed to generate recommendation: {str(e)}")
 
         # 6. Recommendation Kaydını Oluştur ve Veritabanına Yaz
-        combined_reasoning = f"{agent_output.justification}\n\n**Trade-off Analizi:**\n{agent_output.trade_off_analysis}"
+        trade_off_header = "**Trade-off Analysis:**" if locale == "en" else "**Trade-off Analizi:**"
+        combined_reasoning = f"{agent_output.justification}\n\n{trade_off_header}\n{agent_output.trade_off_analysis}"
+        
+        human_review_text = (
+            ("Yes" if agent_output.is_human_review_required else "No")
+            if locale == "en"
+            else ("Evet" if agent_output.is_human_review_required else "Hayır")
+        )
+        alt_notes = (
+            f"Confidence Score: {agent_output.confidence_score}/100. Human Review Required: {human_review_text}"
+            if locale == "en"
+            else f"Güven Skoru: {agent_output.confidence_score}/100. İnsan Onayı Gerekli mi: {human_review_text}"
+        )
         
         recommendation = Recommendation(
             analysis_id=analysis.id,
             recommended_quote_id=agent_output.recommended_quote_id,
             reasoning=combined_reasoning,
             risks=json.dumps(agent_output.risk_factors, ensure_ascii=False),
-            alternative_notes=f"Güven Skoru: {agent_output.confidence_score}/100. İnsan Onayı Gerekli mi: {'Evet' if agent_output.is_human_review_required else 'Hayır'}",
+            alternative_notes=alt_notes,
         )
         self.db.add(recommendation)
         
@@ -228,8 +240,41 @@ class AgentService:
         eligible_quotes: List[Dict[str, Any]], 
         eliminated_quotes: List[Dict[str, Any]],
         rag_context: str,
-        sql_context: str = ""
+        sql_context: str = "",
+        locale: str = "tr"
     ) -> str:
+        if locale == "en":
+            prompt = (
+                "You are a Senior Procurement Specialist and AI Agent. "
+                "Review the data below and recommend the most suitable supplier quote for the company.\n\n"
+                "IMPORTANT RULE 1: When writing your analysis, NEVER use technical IDs such as 'quote_id' or UUIDs. "
+                "Always refer to suppliers naturally using their 'supplier_name' (e.g., 'DEF New\'s quote...').\n"
+                "IMPORTANT RULE 2: You are strictly an advisory consultant. Never use definitive assertions such as 'This quote is approved' or 'Purchased'. "
+                "Always use recommendation phrasing such as 'I recommend this quote' or 'It is advised to evaluate'. Final decisions are made by human approvers.\n"
+                "IMPORTANT RULE 3 (EVIDENCE INTEGRITY & VERBATIM CITATIONS): When citing information from the 'CORPORATE MEMORY (RAG CONTEXT)' section "
+                "(e.g., delay risks, ISO requirements, approval thresholds) or historical performance metrics from 'SQL SUPPLIER MEMORY' "
+                "(e.g., average delay days, quality issues), you MUST explicitly cite the source using the exact format '[Source X: <document or section title>]' or '[Kaynak X: <document or section title>]'. "
+                "DO NOT translate, rewrite, or alter official policy titles, article numbers (e.g., 'Madde 2.1'), or regulatory quotations—preserve the source quotation verbatim in its original language. "
+                "Do not invent any corporate or historical information without citation (zero hallucinations).\n\n"
+                "IMPORTANT RULE 4 (SECURITY & INCOMPLETE DATA): If the chosen quote has 'has_incomplete_financial_data' as true, "
+                "or if there are warnings, or if 'extraction_confidence' is below 0.70, "
+                "you MUST mark 'is_human_review_required' as true and clearly disclose this deficiency or warning in your risk factors.\n\n"
+                "IMPORTANT RULE 5 (LANGUAGE): Provide your narrative, justification, trade-off analysis, and risk factors in English. "
+                "However, keep official policy citations, document titles, and article numbers verbatim in their original language.\n\n"
+            )
+            prompt += "--- CORPORATE MEMORY (RAG CONTEXT) ---\n"
+            prompt += f"{rag_context}\n\n"
+            if sql_context:
+                prompt += f"{sql_context}\n"
+            prompt += "--- ELIMINATED QUOTES (HARD FAIL) ---\n"
+            prompt += "These quotes failed deterministic compliance rules. NEVER select them. Only reference them in trade-off comparisons.\n"
+            prompt += json.dumps(eliminated_quotes, indent=2, ensure_ascii=False) + "\n\n"
+            prompt += "--- ELIGIBLE QUOTES (ELIGIBLE) ---\n"
+            prompt += "These quotes passed all rules. Make your selection among these quotes.\n"
+            prompt += json.dumps(eligible_quotes, indent=2, ensure_ascii=False) + "\n\n"
+            prompt += "Task: Analyze all data, conduct a trade-off analysis, and select the best quote. Adhere strictly to the requested JSON schema."
+            return prompt
+
         prompt = (
             "Sen kıdemli bir Satın Alma Uzmanı ve AI Agent'sın. "
             "Aşağıdaki verileri inceleyerek şirket için en uygun tedarikçi teklifini önermelisin.\n\n"

@@ -1,4 +1,4 @@
-import { apiClient } from "./client";
+import { apiClient, getBaseUrl } from "./client";
 
 export interface PolicyDocument {
   id: string;
@@ -61,7 +61,7 @@ export const policiesApi = {
   },
 
   getFileUrl(docId: string, pageNumber?: number): string {
-    const base = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+    const base = getBaseUrl();
     const pageHash = pageNumber ? `#page=${pageNumber}` : "";
     return `${base}/api/v1/policies/${docId}/file${pageHash}`;
   }

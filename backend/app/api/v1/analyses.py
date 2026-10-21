@@ -10,10 +10,10 @@ import json
 import uuid
 import time
 from datetime import date, datetime, timezone
-from typing import List
+from typing import List, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -88,6 +88,7 @@ class ComplianceCheckResponse(BaseModel):
 class AnalyzeRequest(BaseModel):
     organization_id: uuid.UUID | None = None
     rules: PolicyRules | None = None
+    locale: Literal["tr", "en"] = Field(default="tr", description="Language for AI reasoning and verification evidence (tr or en)")
 
 
 class EvidenceItemResponse(BaseModel):
@@ -121,6 +122,7 @@ class AnalysisResponse(BaseModel):
     evidence_items: List[EvidenceItemResponse] = []
     stage_results: List[StageResultResponse] = []
     is_stale: bool = False
+    locale: str = "tr"
 
     model_config = {"from_attributes": True}
 
@@ -294,6 +296,7 @@ async def run_analysis(
 
     # Kuralları çözümle (RFQ alanları ile fallback)
     effective_rules = _resolve_policy_rules(rfq, request.rules)
+    locale = request.locale
 
     stage_results: List[StageResultResponse] = []
 
@@ -319,7 +322,7 @@ async def run_analysis(
         started_at=det_start_time,
         completed_at=datetime.now(timezone.utc),
         duration_ms=round(det_duration_ms * 0.3, 2),
-        summary=f"{len(analysis.tco_results)} teklif ve doküman başarıyla doğrulandı.",
+        summary=f"{len(analysis.tco_results)} quotes and documents successfully validated." if locale == "en" else f"{len(analysis.tco_results)} teklif ve doküman başarıyla doğrulandı.",
         details={"quote_count": len(analysis.tco_results), "currency": analysis.tco_results[0].currency if analysis.tco_results else "TRY"},
     ))
 
@@ -330,7 +333,7 @@ async def run_analysis(
         started_at=det_start_time,
         completed_at=datetime.now(timezone.utc),
         duration_ms=round(det_duration_ms * 0.7, 2),
-        summary=f"TCO ve kural denetimi tamamlandı ({len(analysis.compliance_checks)} kural denetlendi).",
+        summary=f"TCO and rule evaluation completed ({len(analysis.compliance_checks)} rules checked)." if locale == "en" else f"TCO ve kural denetimi tamamlandı ({len(analysis.compliance_checks)} kural denetlendi).",
         details={
             "tco_results_count": len(analysis.tco_results),
             "compliance_checks_count": len(analysis.compliance_checks),
@@ -345,10 +348,21 @@ async def run_analysis(
     agent_start_time = datetime.now(timezone.utc)
     try:
         tenant_org_id = str(current_user.organization_id)
-        recommendation = await agent_service.generate_recommendation(
-            analysis_id=analysis.id,
-            organization_id=tenant_org_id
-        )
+        try:
+            recommendation = await agent_service.generate_recommendation(
+                analysis_id=analysis.id,
+                organization_id=tenant_org_id,
+                locale=locale,
+            )
+        except TypeError as te:
+            err_msg = str(te)
+            if "unexpected keyword argument 'locale'" in err_msg or "got an unexpected keyword argument 'locale'" in err_msg:
+                recommendation = await agent_service.generate_recommendation(
+                    analysis_id=analysis.id,
+                    organization_id=tenant_org_id,
+                )
+            else:
+                raise
         agent_duration_ms = (time.monotonic() - agent_start_mono) * 1000
 
         # Stage 3: Policy Compliance Analysis
@@ -358,7 +372,7 @@ async def run_analysis(
             started_at=agent_start_time,
             completed_at=datetime.now(timezone.utc),
             duration_ms=round(agent_duration_ms * 0.25, 2),
-            summary="Kurumsal hafıza (Qdrant RAG) başarıyla tarandı ve bağlam hazırlandı.",
+            summary="Corporate memory (Qdrant RAG) successfully scanned and context prepared." if locale == "en" else "Kurumsal hafıza (Qdrant RAG) başarıyla tarandı ve bağlam hazırlandı.",
         ))
 
         # Stage 4: Supplier Recommendation
@@ -368,7 +382,7 @@ async def run_analysis(
             started_at=agent_start_time,
             completed_at=datetime.now(timezone.utc),
             duration_ms=round(agent_duration_ms * 0.75, 2),
-            summary="LLM ile trade-off analizi ve tedarikçi önerisi oluşturuldu.",
+            summary="Trade-off analysis and supplier recommendation generated via LLM." if locale == "en" else "LLM ile trade-off analizi ve tedarikçi önerisi oluşturuldu.",
         ))
         
         # ── AŞAMA 5: Bağımsız Doğrulama Katmanı (Verification) ─────────────────
@@ -376,7 +390,14 @@ async def run_analysis(
         verif_start_time = datetime.now(timezone.utc)
         from app.services.agent.verification import VerificationService
         verification_service = VerificationService(db=db)
-        verified_recommendation = await verification_service.verify_recommendation(recommendation_id=recommendation.id)
+        try:
+            verified_recommendation = await verification_service.verify_recommendation(recommendation_id=recommendation.id, locale=locale)
+        except TypeError as te:
+            err_msg = str(te)
+            if "unexpected keyword argument 'locale'" in err_msg or "got an unexpected keyword argument 'locale'" in err_msg:
+                verified_recommendation = await verification_service.verify_recommendation(recommendation_id=recommendation.id)
+            else:
+                raise
         verif_duration_ms = (time.monotonic() - verif_start_mono) * 1000
 
         v_outcome = (
@@ -393,7 +414,7 @@ async def run_analysis(
             started_at=verif_start_time,
             completed_at=datetime.now(timezone.utc),
             duration_ms=round(verif_duration_ms, 2),
-            summary=f"Bağımsız doğrulama tamamlandı: {verified_recommendation.verification_status.upper()}.",
+            summary=f"Independent verification completed: {verified_recommendation.verification_status.upper()}." if locale == "en" else f"Bağımsız doğrulama tamamlandı: {verified_recommendation.verification_status.upper()}.",
             details={"verification_status": verified_recommendation.verification_status},
         ))
 
@@ -446,6 +467,7 @@ async def run_analysis(
             entity_id=analysis.id,
             payload={
                 "rfq_id": str(rfq.id),
+                "locale": locale,
                 "quote_count": len(analysis.tco_results),
                 "rules": effective_rules.model_dump(),
                 "stage_summaries": [
@@ -463,6 +485,7 @@ async def run_analysis(
         resp = AnalysisResponse.model_validate(analysis)
         resp.stage_results = stage_results
         resp.is_stale = False
+        resp.locale = locale
         return resp
     except Exception as e:
         if isinstance(e, HTTPException):
@@ -844,6 +867,8 @@ async def get_latest_analysis(
         ).limit(1)
     )
     audit_payload = audit_res.scalar_one_or_none()
+    persisted_locale = audit_payload.get("locale", "tr") if (audit_payload and isinstance(audit_payload, dict)) else "tr"
+    resp.locale = persisted_locale
     if audit_payload and isinstance(audit_payload, dict) and "stage_summaries" in audit_payload:
         for s in audit_payload["stage_summaries"]:
             stage_results_list.append(StageResultResponse(
