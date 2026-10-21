@@ -127,6 +127,11 @@ def _resolve_policy_rules(rfq, explicit_rules: PolicyRules | None) -> PolicyRule
         if explicit_rules and explicit_rules.max_tco_budget is not None
         else (float(rfq.budget) if rfq.budget is not None else None)
     )
+    budget_currency = (
+        explicit_rules.budget_currency
+        if explicit_rules and explicit_rules.budget_currency is not None
+        else "TRY"
+    )
     delivery = (
         explicit_rules.max_delivery_days
         if explicit_rules and explicit_rules.max_delivery_days is not None
@@ -146,6 +151,7 @@ def _resolve_policy_rules(rfq, explicit_rules: PolicyRules | None) -> PolicyRule
 
     return PolicyRules(
         max_tco_budget=budget,
+        budget_currency=budget_currency,
         max_delivery_days=delivery,
         min_warranty_months=warranty,
         require_payment_terms=payment_terms,

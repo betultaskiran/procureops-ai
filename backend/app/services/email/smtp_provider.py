@@ -39,15 +39,15 @@ class SMTPEmailProvider(EmailProvider):
         use_ssl: bool | None = None,
         timeout: int | None = None,
     ):
-        self.host = host or settings.SMTP_HOST
-        self.port = port or settings.SMTP_PORT
-        self.username = username or settings.SMTP_USER
-        self.password = password or settings.SMTP_PASSWORD
-        self.from_email = from_email or settings.SMTP_FROM_EMAIL
-        self.from_name = from_name or settings.SMTP_FROM_NAME
+        self.host = host if host is not None else settings.SMTP_HOST
+        self.port = port if port is not None else settings.SMTP_PORT
+        self.username = username if username is not None else settings.SMTP_USER
+        self.password = password if password is not None else settings.SMTP_PASSWORD
+        self.from_email = from_email if from_email is not None else settings.SMTP_FROM_EMAIL
+        self.from_name = from_name if from_name is not None else settings.SMTP_FROM_NAME
         self.use_tls = use_tls if use_tls is not None else settings.SMTP_USE_TLS
         self.use_ssl = use_ssl if use_ssl is not None else settings.SMTP_USE_SSL
-        self.timeout = timeout or settings.SMTP_TIMEOUT
+        self.timeout = timeout if timeout is not None else settings.SMTP_TIMEOUT
 
     async def send_email(self, message: EmailMessage) -> EmailSendResult:
         """Asynchronously dispatches message to SMTP server in a worker thread."""
@@ -55,9 +55,20 @@ class SMTPEmailProvider(EmailProvider):
 
     def _sync_send(self, message: EmailMessage) -> EmailSendResult:
         """Synchronous SMTP transmission with comprehensive error classification."""
+        # Validate configuration
+        if not self.host or not str(self.host).strip():
+            err = "SMTP configuration error: Host is missing or not configured."
+            logger.error(f"[SMTP] {err}")
+            return EmailSendResult(success=False, is_transient=False, error_message=err)
+
+        if not self.port or not isinstance(self.port, int) or self.port <= 0 or self.port > 65535:
+            err = f"SMTP configuration error: Invalid port '{self.port}'."
+            logger.error(f"[SMTP] {err}")
+            return EmailSendResult(success=False, is_transient=False, error_message=err)
+
         client = None
         message_id = f"<{uuid.uuid4()}@{socket.getfqdn()}>"
-        
+
         try:
             # 1. Build MIME Message
             mime_msg = MIMEMultipart("alternative")

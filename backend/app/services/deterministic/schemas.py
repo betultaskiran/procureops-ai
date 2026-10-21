@@ -30,3 +30,7 @@ class PolicyRules(BaseModel):
         default=None, 
         description="Bu RFQ için maksimum bütçe"
     )
+    budget_currency: str | None = Field(
+        default="TRY",
+        description="Maksimum bütçenin para birimi (varsayılan: TRY)"
+    )

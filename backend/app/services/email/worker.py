@@ -32,11 +32,21 @@ logging.basicConfig(
 logger = logging.getLogger("app.email.worker")
 
 
-async def process_outbox_batch(batch_size: int = 10) -> int:
+async def process_outbox_batch(batch_size: int = 10, stuck_timeout_seconds: int = 300) -> int:
     """
-    Finds due pending deliveries (status='queued' and next_retry_at is None or <= now)
-    and dispatches each through EmailDeliveryService.
+    1. Recovers any deliveries stuck in 'sending' state (older than stuck_timeout_seconds).
+    2. Finds due pending deliveries (status='queued' and next_retry_at is None or <= now)
+       and dispatches each through EmailDeliveryService.
     """
+    # Step 1: Recover stuck deliveries from prior worker crashes/timeouts
+    try:
+        recovered = await EmailDeliveryService.recover_stuck_deliveries(timeout_seconds=stuck_timeout_seconds)
+        if recovered > 0:
+            logger.warning(f"[OutboxWorker] Recovered {recovered} stuck deliveries from 'sending' state.")
+    except Exception as exc:
+        logger.exception(f"[OutboxWorker] Error during stuck delivery recovery: {exc}")
+
+    # Step 2: Fetch and dispatch due pending deliveries
     now_utc = datetime.now(timezone.utc)
     delivery_ids: list = []
 
@@ -74,18 +84,28 @@ async def process_outbox_batch(batch_size: int = 10) -> int:
     return processed_count
 
 
-async def run_worker_loop(poll_interval: int = 5, stop_event: asyncio.Event | None = None) -> None:
+async def run_worker_loop(
+    poll_interval: int = 5,
+    stuck_timeout_seconds: int = 300,
+    stop_event: asyncio.Event | None = None,
+) -> None:
     """
     Continuous worker loop polling outbox queue until interrupted.
     """
     if stop_event is None:
         stop_event = asyncio.Event()
 
-    logger.info(f"[OutboxWorker] Started email outbox worker loop (poll_interval={poll_interval}s)")
+    logger.info(
+        f"[OutboxWorker] Started email outbox worker loop "
+        f"(poll_interval={poll_interval}s, stuck_timeout={stuck_timeout_seconds}s)"
+    )
 
     while not stop_event.is_set():
         try:
-            processed = await process_outbox_batch(batch_size=10)
+            processed = await process_outbox_batch(
+                batch_size=10,
+                stuck_timeout_seconds=stuck_timeout_seconds,
+            )
             if processed > 0:
                 logger.info(f"[OutboxWorker] Successfully dispatched {processed} emails.")
                 # If jobs were found, check immediately for more without delay
@@ -106,6 +126,12 @@ def main():
     parser = argparse.ArgumentParser(description="ProcureOps Email Outbox Worker")
     parser.add_argument("--once", action="store_true", help="Process a single batch and exit")
     parser.add_argument("--interval", type=int, default=5, help="Polling interval in seconds")
+    parser.add_argument(
+        "--stuck-timeout",
+        type=int,
+        default=300,
+        help="Timeout in seconds before considering in-flight 'sending' deliveries stuck (default: 300)",
+    )
     args = parser.parse_args()
 
     stop_event = asyncio.Event()
@@ -119,10 +145,17 @@ def main():
 
     async def _runner():
         if args.once:
-            count = await process_outbox_batch(batch_size=50)
+            count = await process_outbox_batch(
+                batch_size=50,
+                stuck_timeout_seconds=args.stuck_timeout,
+            )
             logger.info(f"[OutboxWorker] Completed single batch run. Processed {count} jobs.")
         else:
-            await run_worker_loop(poll_interval=args.interval, stop_event=stop_event)
+            await run_worker_loop(
+                poll_interval=args.interval,
+                stuck_timeout_seconds=args.stuck_timeout,
+                stop_event=stop_event,
+            )
         await engine.dispose()
 
     try:

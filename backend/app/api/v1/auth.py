@@ -20,6 +20,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.core.auth import get_current_active_user
+from app.core.rate_limit import rate_limit
 from app.core.security import (
     MAX_PASSWORD_BYTES,
     create_access_token,
@@ -141,6 +142,7 @@ def _set_auth_cookie(response: Response, token: str) -> None:
     "/register",
     response_model=TokenResponse,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(rate_limit(max_requests=10, window_seconds=60))],
     summary="Register new organization & initial admin",
     description=(
         "Public onboarding endpoint. Atomically creates a new organization and its "
@@ -239,6 +241,7 @@ async def register(
     "/login",
     response_model=TokenResponse,
     status_code=status.HTTP_200_OK,
+    dependencies=[Depends(rate_limit(max_requests=10, window_seconds=60))],
     summary="Login with email and password",
     description="Authenticate an active user and receive an access token.",
 )

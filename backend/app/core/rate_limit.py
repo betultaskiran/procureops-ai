@@ -174,3 +174,23 @@ def rate_limit(max_requests: int = 60, window_seconds: int = 60) -> Callable:
             _memory_store[key] = timestamps
 
     return dependency
+
+
+def reset_rate_limit_store() -> None:
+    """Clear in-memory and Redis rate limit counters (for testing and isolation)."""
+    _memory_store.clear()
+    try:
+        import redis
+        r = redis.Redis(
+            host=settings.REDIS_HOST,
+            port=settings.REDIS_PORT,
+            db=0,
+            socket_connect_timeout=0.2,
+            socket_timeout=0.2,
+        )
+        keys = r.keys("rl:*")
+        if keys:
+            r.delete(*keys)
+        r.close()
+    except Exception:
+        pass

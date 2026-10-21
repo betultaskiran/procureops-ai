@@ -318,111 +318,134 @@ class EmailDeliveryService:
                 return None
 
             # Mark state as 'sending' to avoid double-processing
+            now_utc = datetime.now(timezone.utc)
             delivery.status = EmailDeliveryStatus.SENDING.value
+            delivery.updated_at = now_utc
             await db.commit()
             await db.refresh(delivery)
 
-            # Re-render message from stored data or metadata
-            metadata = {}
-            if delivery.metadata_json:
-                try:
-                    metadata = json.loads(delivery.metadata_json)
-                except Exception:
-                    pass
+            try:
+                # Re-render message from stored data or metadata
+                metadata = {}
+                if delivery.metadata_json:
+                    try:
+                        metadata = json.loads(delivery.metadata_json)
+                    except Exception:
+                        pass
 
-            org_res = await db.execute(
-                select(Organization).where(Organization.id == delivery.organization_id)
-            )
-            org = org_res.scalars().first()
-            org_name = org.name if org else "ProcureOps Organization"
-
-            if delivery.message_type == EmailMessageType.RFQ_INVITATION.value:
-                rfq_res = await db.execute(select(RFQ).where(RFQ.id == delivery.rfq_id))
-                rfq = rfq_res.scalars().first()
-                rfq_title = rfq.title if rfq else metadata.get("rfq_title", "Procurement Request")
-                rfq_desc = rfq.description if rfq else None
-                req_qty = rfq.required_quantity if rfq else None
-                req_date = rfq.required_date if rfq else None
-
-                subject, text_body, html_body = render_rfq_invitation(
-                    rfq_id=delivery.rfq_id or uuid.uuid4(),
-                    rfq_title=rfq_title,
-                    rfq_description=rfq_desc,
-                    required_quantity=req_qty,
-                    required_date=req_date,
-                    supplier_name=metadata.get("supplier_name", "Valued Supplier"),
-                    recipient_name=delivery.recipient_name,
-                    organization_name=org_name,
-                    app_base_url=settings.APP_BASE_URL,
-                    custom_message=metadata.get("custom_message"),
-                    portal_url=metadata.get("portal_url"),
+                org_res = await db.execute(
+                    select(Organization).where(Organization.id == delivery.organization_id)
                 )
-            else:
-                # PO Notification
-                subject = delivery.subject
-                text_body = f"Purchase Order Notification from {org_name}.\nPO ID: {delivery.purchase_order_id}"
-                html_body = f"<p>Purchase Order Notification from <strong>{org_name}</strong>.</p><p>PO ID: {delivery.purchase_order_id}</p>"
+                org = org_res.scalars().first()
+                org_name = org.name if org else "ProcureOps Organization"
 
-            email_msg = EmailMessage(
-                recipient_email=delivery.recipient_email,
-                recipient_name=delivery.recipient_name,
-                subject=subject,
-                text_body=text_body,
-                html_body=html_body,
-            )
+                if delivery.message_type == EmailMessageType.RFQ_INVITATION.value:
+                    rfq_res = await db.execute(select(RFQ).where(RFQ.id == delivery.rfq_id))
+                    rfq = rfq_res.scalars().first()
+                    rfq_title = rfq.title if rfq else metadata.get("rfq_title", "Procurement Request")
+                    rfq_desc = rfq.description if rfq else None
+                    req_qty = rfq.required_quantity if rfq else None
+                    req_date = rfq.required_date if rfq else None
 
-            # Call provider
-            provider = get_email_provider()
-            send_result = await provider.send_email(email_msg)
-
-            # Update DB according to outcome
-            if send_result.success:
-                delivery.status = EmailDeliveryStatus.SENT.value
-                delivery.sent_at = datetime.now(timezone.utc)
-                delivery.provider_message_id = send_result.provider_message_id
-                delivery.last_error = None
-                delivery.next_retry_at = None
-
-                # If this was linked to a PurchaseOrder, update PO's legacy flags
-                if delivery.purchase_order_id:
-                    po_res = await db.execute(
-                        select(PurchaseOrder).where(PurchaseOrder.id == delivery.purchase_order_id)
-                    )
-                    po = po_res.scalars().first()
-                    if po:
-                        po.email_sent = True
-                        po.email_sent_at = datetime.now(timezone.utc)
-
-                logger.info(
-                    f"[EmailService] Successfully sent delivery_id={delivery.id} to={delivery.recipient_email} "
-                    f"msg_id={send_result.provider_message_id}"
-                )
-            else:
-                delivery.attempt_count += 1
-                sanitized_error = send_result.error_message or "Unknown delivery failure"
-
-                if send_result.is_transient and delivery.attempt_count < delivery.max_attempts:
-                    # Bounded exponential backoff
-                    backoff_sec = settings.EMAIL_RETRY_BACKOFF_SECONDS * (2 ** (delivery.attempt_count - 1))
-                    delivery.status = EmailDeliveryStatus.QUEUED.value
-                    delivery.next_retry_at = datetime.now(timezone.utc) + timedelta(seconds=backoff_sec)
-                    delivery.last_error = f"[Transient - Retry {delivery.attempt_count}/{delivery.max_attempts}] {sanitized_error}"
-                    logger.warning(
-                        f"[EmailService] Transient failure for delivery_id={delivery.id}. Scheduled retry in {backoff_sec}s: {sanitized_error}"
+                    subject, text_body, html_body = render_rfq_invitation(
+                        rfq_id=delivery.rfq_id or uuid.uuid4(),
+                        rfq_title=rfq_title,
+                        rfq_description=rfq_desc,
+                        required_quantity=req_qty,
+                        required_date=req_date,
+                        supplier_name=metadata.get("supplier_name", "Valued Supplier"),
+                        recipient_name=delivery.recipient_name,
+                        organization_name=org_name,
+                        app_base_url=settings.APP_BASE_URL,
+                        custom_message=metadata.get("custom_message"),
+                        portal_url=metadata.get("portal_url"),
                     )
                 else:
-                    # Permanent failure or max attempts reached
+                    # PO Notification
+                    subject = delivery.subject
+                    text_body = f"Purchase Order Notification from {org_name}.\nPO ID: {delivery.purchase_order_id}"
+                    html_body = f"<p>Purchase Order Notification from <strong>{org_name}</strong>.</p><p>PO ID: {delivery.purchase_order_id}</p>"
+
+                email_msg = EmailMessage(
+                    recipient_email=delivery.recipient_email,
+                    recipient_name=delivery.recipient_name,
+                    subject=subject,
+                    text_body=text_body,
+                    html_body=html_body,
+                )
+
+                # Call provider
+                provider = get_email_provider()
+                send_result = await provider.send_email(email_msg)
+
+                # Update DB according to outcome
+                if send_result.success:
+                    delivery.status = EmailDeliveryStatus.SENT.value
+                    delivery.sent_at = datetime.now(timezone.utc)
+                    delivery.provider_message_id = send_result.provider_message_id
+                    delivery.last_error = None
+                    delivery.next_retry_at = None
+
+                    # If this was linked to a PurchaseOrder, update PO's legacy flags
+                    if delivery.purchase_order_id:
+                        po_res = await db.execute(
+                            select(PurchaseOrder).where(PurchaseOrder.id == delivery.purchase_order_id)
+                        )
+                        po = po_res.scalars().first()
+                        if po:
+                            po.email_sent = True
+                            po.email_sent_at = datetime.now(timezone.utc)
+
+                    logger.info(
+                        f"[EmailService] Successfully sent delivery_id={delivery.id} to={delivery.recipient_email} "
+                        f"msg_id={send_result.provider_message_id}"
+                    )
+                else:
+                    delivery.attempt_count += 1
+                    sanitized_error = send_result.error_message or "Unknown delivery failure"
+
+                    if send_result.is_transient and delivery.attempt_count < delivery.max_attempts:
+                        # Bounded exponential backoff
+                        backoff_sec = settings.EMAIL_RETRY_BACKOFF_SECONDS * (2 ** (delivery.attempt_count - 1))
+                        delivery.status = EmailDeliveryStatus.QUEUED.value
+                        delivery.next_retry_at = datetime.now(timezone.utc) + timedelta(seconds=backoff_sec)
+                        delivery.last_error = f"[Transient - Retry {delivery.attempt_count}/{delivery.max_attempts}] {sanitized_error}"
+                        logger.warning(
+                            f"[EmailService] Transient failure for delivery_id={delivery.id}. Scheduled retry in {backoff_sec}s: {sanitized_error}"
+                        )
+                    else:
+                        # Permanent failure or max attempts reached
+                        delivery.status = EmailDeliveryStatus.FAILED.value
+                        delivery.next_retry_at = None
+                        prefix = f"[Max attempts ({delivery.max_attempts}) exceeded]" if delivery.attempt_count >= delivery.max_attempts else "[Permanent failure]"
+                        delivery.last_error = f"{prefix} {sanitized_error}"
+                        logger.error(
+                            f"[EmailService] Delivery failed terminal state: delivery_id={delivery.id} error={sanitized_error}"
+                        )
+
+                delivery.updated_at = datetime.now(timezone.utc)
+                await db.commit()
+                await db.refresh(delivery)
+                return delivery
+
+            except Exception as exc:
+                # Catch unhandled rendering or transmission crash to avoid leaving row stuck in 'sending'
+                logger.exception(f"[EmailService] Unhandled execution error during delivery {delivery.id}: {exc}")
+                delivery.attempt_count += 1
+                now_err_utc = datetime.now(timezone.utc)
+                if delivery.attempt_count >= delivery.max_attempts:
                     delivery.status = EmailDeliveryStatus.FAILED.value
                     delivery.next_retry_at = None
-                    prefix = f"[Max attempts ({delivery.max_attempts}) exceeded]" if delivery.attempt_count >= delivery.max_attempts else "[Permanent failure]"
-                    delivery.last_error = f"{prefix} {sanitized_error}"
-                    logger.error(
-                        f"[EmailService] Delivery failed terminal state: delivery_id={delivery.id} error={sanitized_error}"
-                    )
-
-            await db.commit()
-            await db.refresh(delivery)
-            return delivery
+                    delivery.last_error = f"[Max attempts ({delivery.max_attempts}) exceeded] Unhandled dispatch crash: {exc}"
+                else:
+                    backoff_sec = settings.EMAIL_RETRY_BACKOFF_SECONDS * (2 ** (delivery.attempt_count - 1))
+                    delivery.status = EmailDeliveryStatus.QUEUED.value
+                    delivery.next_retry_at = now_err_utc + timedelta(seconds=backoff_sec)
+                    delivery.last_error = f"[Transient crash - Retry {delivery.attempt_count}/{delivery.max_attempts}] {exc}"
+                delivery.updated_at = now_err_utc
+                await db.commit()
+                await db.refresh(delivery)
+                return delivery
 
     @staticmethod
     async def retry_delivery(
@@ -484,20 +507,89 @@ class EmailDeliveryService:
             if po and po.status != PurchaseOrderStatus.ISSUED.value:
                 raise ValueError(f"Sipariş durumu '{po.status}' iken tedarikçiye bildirim tekrar gönderilemez.")
 
-        # 5. Block duplicate sends for already sent or delivered messages
+        # 5. Block duplicate sends for already sent, delivered, or in-flight messages
         if delivery.status in (EmailDeliveryStatus.SENT.value, EmailDeliveryStatus.DELIVERED.value):
             raise ValueError(f"Zaten başarıyla iletilmiş e-posta kaydı ({delivery.status}) mükerrer olarak tekrar gönderilemez.")
+        if delivery.status == EmailDeliveryStatus.SENDING.value:
+            raise ValueError("Şu anda iletim aşamasında (sending) olan bir e-posta kaydı tekrar kuyruğa alınamaz.")
 
         delivery.status = EmailDeliveryStatus.QUEUED.value
         delivery.attempt_count = 0
         delivery.last_error = None
         delivery.next_retry_at = None
         delivery.queued_at = datetime.now(timezone.utc)
+        delivery.updated_at = datetime.now(timezone.utc)
 
         await db.commit()
         await db.refresh(delivery)
         logger.info(f"[EmailService] Manually re-enqueued delivery_id={delivery_id}")
         return delivery
+
+    @staticmethod
+    async def recover_stuck_deliveries(
+        timeout_seconds: int = 300,
+        max_batch: int = 50,
+    ) -> int:
+        """
+        Safely identifies and recovers deliveries that have been stuck in 'sending' state
+        longer than timeout_seconds (e.g. following an abnormal worker termination or crash).
+
+        Safety & Deduplication Invariants:
+        1. Uses SELECT ... FOR UPDATE SKIP LOCKED to prevent concurrent recovery collisions.
+        2. Bounded recovery: increments attempt_count by 1 to protect against crash-inducing poison payloads.
+        3. If attempt_count >= max_attempts: transitions to 'failed'.
+        4. If attempt_count < max_attempts: transitions to 'queued' with exponential backoff next_retry_at.
+        """
+        cutoff_utc = datetime.now(timezone.utc) - timedelta(seconds=timeout_seconds)
+        recovered_count = 0
+
+        async with AsyncSessionLocal() as db:
+            stmt = (
+                select(EmailDelivery)
+                .where(
+                    and_(
+                        EmailDelivery.status == EmailDeliveryStatus.SENDING.value,
+                        EmailDelivery.updated_at <= cutoff_utc,
+                    )
+                )
+                .order_by(EmailDelivery.updated_at.asc())
+                .limit(max_batch)
+                .with_for_update(skip_locked=True)
+            )
+            res = await db.execute(stmt)
+            stuck_records = list(res.scalars().all())
+
+            now_utc = datetime.now(timezone.utc)
+            for delivery in stuck_records:
+                delivery.attempt_count += 1
+                if delivery.attempt_count >= delivery.max_attempts:
+                    delivery.status = EmailDeliveryStatus.FAILED.value
+                    delivery.next_retry_at = None
+                    delivery.last_error = (
+                        f"[Max attempts ({delivery.max_attempts}) exceeded] "
+                        f"Delivery was stuck in 'sending' state for >{timeout_seconds}s (worker crash or timeout)."
+                    )
+                    logger.error(
+                        f"[EmailService] Stuck delivery {delivery.id} failed terminally after {delivery.attempt_count} attempts."
+                    )
+                else:
+                    backoff_sec = settings.EMAIL_RETRY_BACKOFF_SECONDS * (2 ** (delivery.attempt_count - 1))
+                    delivery.status = EmailDeliveryStatus.QUEUED.value
+                    delivery.next_retry_at = now_utc + timedelta(seconds=backoff_sec)
+                    delivery.last_error = (
+                        f"[Stuck in sending recovered - Retry {delivery.attempt_count}/{delivery.max_attempts}] "
+                        f"Recovered from interrupted worker after {timeout_seconds}s."
+                    )
+                    logger.warning(
+                        f"[EmailService] Recovered stuck delivery {delivery.id}. Scheduled retry in {backoff_sec}s."
+                    )
+                delivery.updated_at = now_utc
+                recovered_count += 1
+
+            if recovered_count > 0:
+                await db.commit()
+
+        return recovered_count
 
     @staticmethod
     async def list_rfq_invitations(

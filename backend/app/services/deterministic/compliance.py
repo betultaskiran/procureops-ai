@@ -89,20 +89,48 @@ class ComplianceChecker:
         if rules.max_tco_budget is not None:
             rule_name = "max_tco_budget"
             desc = "Maksimum bütçe kontrolü"
-            if float(tco_result.total_tco) > rules.max_tco_budget:
+
+            quote_curr = (tco_result.currency or quote.currency or "").strip().upper()
+            budget_curr = (rules.budget_currency or "TRY").strip().upper()
+
+            if not quote_curr or not budget_curr:
                 checks.append(
                     cls._create_check(
                         analysis_id, quote.id, rule_name, desc, ComplianceResult.FAIL,
-                        str(tco_result.total_tco), str(rules.max_tco_budget), "Bütçeyi aşıyor."
+                        str(tco_result.total_tco), str(rules.max_tco_budget),
+                        "Para birimi belirtilmemiş: Karşılaştırma yapılamıyor.",
+                    )
+                )
+            elif quote_curr != budget_curr:
+                checks.append(
+                    cls._create_check(
+                        analysis_id, quote.id, rule_name, desc, ComplianceResult.FAIL,
+                        str(tco_result.total_tco), str(rules.max_tco_budget),
+                        f"Para birimi uyuşmazlığı: Teklif para birimi ({quote_curr}) ile bütçe para birimi ({budget_curr}) eşleşmiyor. Doğrudan karşılaştırılamaz.",
                     )
                 )
             else:
-                checks.append(
-                    cls._create_check(
-                        analysis_id, quote.id, rule_name, desc, ComplianceResult.PASS,
-                        str(tco_result.total_tco), str(rules.max_tco_budget), "Uygun."
+                try:
+                    total_decimal = Decimal(str(tco_result.total_tco))
+                    budget_decimal = Decimal(str(rules.max_tco_budget))
+                except Exception:
+                    total_decimal = Decimal(float(tco_result.total_tco))
+                    budget_decimal = Decimal(float(rules.max_tco_budget))
+
+                if total_decimal > budget_decimal:
+                    checks.append(
+                        cls._create_check(
+                            analysis_id, quote.id, rule_name, desc, ComplianceResult.FAIL,
+                            str(tco_result.total_tco), str(rules.max_tco_budget), "Bütçeyi aşıyor."
+                        )
                     )
-                )
+                else:
+                    checks.append(
+                        cls._create_check(
+                            analysis_id, quote.id, rule_name, desc, ComplianceResult.PASS,
+                            str(tco_result.total_tco), str(rules.max_tco_budget), "Uygun."
+                        )
+                    )
 
         # 4. Ödeme Koşulları (Payment Terms) Kuralı
         if rules.require_payment_terms is not None and len(rules.require_payment_terms) > 0:
