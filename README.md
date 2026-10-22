@@ -66,7 +66,7 @@ flowchart TD
 - **Idempotent Reprocessing:** Document reprocessing endpoint (`POST /api/v1/rfqs/{rfq_id}/quote-documents/{document_id}/reprocess`) permits re-extraction without orphaned or duplicate quote records.
 
 ### 2. Deterministic TCO & FX Currency Normalization
-- **Strict Decimal Precision:** All financial calculations (`subtotal`, `vat`, `shipping`, `discount`, `other_fees`) are computed using Python `Decimal` types with Banker's rounding (`ROUND_HALF_UP`), avoiding IEEE 754 floating-point inaccuracies.
+- **Strict Decimal Precision:** All financial calculations (`subtotal`, `vat`, `shipping`, `discount`, `other_fees`) are computed using Python `Decimal` types with standard commercial half-up rounding (`ROUND_HALF_UP`), avoiding IEEE 754 floating-point inaccuracies.
 - **Multi-Currency Normalization:** Quotes submitted in foreign currencies (EUR, USD, GBP) are converted into the RFQ's target base currency.
 - **Auditable Rate Paths:** The FX engine resolves conversion rates via direct, inverse, or cross-currency paths, persisting the exchange rate source (e.g., Central Bank rates), date, rate type, and human-readable audit notes in `tco_results`.
 - **Fail-Closed Currency Guards:** If a foreign currency cannot be resolved via verified rates, the system refrains from numerical comparison and marks the compliance check as non-evaluable rather than fabricating numbers.
@@ -99,11 +99,11 @@ All RFQ analyses execute through a sequential, observable state machine:
 - **Zero Account Overhead:** Suppliers submit quotes directly without internal employee accounts.
 - **Strict Data Isolation:** Suppliers only see the specific RFQ items they were invited to quote on. Internal budgets, competing quotes, policy documents, and AI analysis results are strictly redacted.
 
-### 7. Transactional Outbox Pattern & Background Workers
-- **Guaranteed Notification Dispatch:** Outbound communications (invitations, purchase order awards) are written atomically to the `email_deliveries` database table within the same transaction as the business event.
-- **Worker Execution Loop:** A background worker polls for pending records using `SELECT ... FOR UPDATE SKIP LOCKED` to prevent duplicate processing across concurrent replicas.
-- **Bounded Exponential Backoff:** Transient network failures trigger backoff retries (`retry_backoff * 2^(attempts-1)`). Permanent errors (e.g., invalid recipient format) terminate immediately without retries.
-- **Idempotency Keys:** Unique database constraints on `idempotency_key` prevent duplicate emails during network partitions.
+### 7. Reliable Asynchronous Email Processing (Transactional Outbox)
+- **Atomic Event Persistence:** Outbound notifications (invitations, purchase order awards) are written atomically to the `email_deliveries` database table within the same transaction as the triggering business event, avoiding dual-write discrepancies.
+- **Asynchronous Worker Loop:** An independent background worker polls pending records using `SELECT ... FOR UPDATE SKIP LOCKED` to prevent race conditions and duplicate processing across concurrent container replicas.
+- **Bounded Exponential Backoff:** Transient socket or network failures trigger bounded exponential backoff (`retry_backoff * 2^(attempts-1)`). Permanent rejections (e.g., malformed recipient format) fail fast without retrying.
+- **Idempotency Safeguards:** Enforced at the database level with a unique constraint on `idempotency_key` to guard against duplicate dispatch attempts during network retries.
 
 ### 8. Full Turkish/English Bilingual Architecture
 - **Dual Presentation Dictionaries:** Complete UI parity (1,100+ keys) synchronized across Turkish (`tr`) and English (`en`).
@@ -138,6 +138,7 @@ procureops-ai/
 ├── .env.example                    # Local environment variables template
 ├── .env.production.example         # Production environment template with security guidelines
 ├── .gitignore                      # Hardened ignore file
+├── LICENSE                         # MIT License
 ├── DECISIONS.md                    # Architectural Decision Records (ADRs)
 ├── LEARNING.md                     # Engineering journal & system design reference
 │
@@ -175,8 +176,6 @@ procureops-ai/
 │       ├── lib/                    # i18n context, formatters, and API clients
 │       └── locales/                # Bilingual translation dictionaries (en.json, tr.json)
 │
-├── docs/
-│   └── reports/                    # Infrastructure readiness & verification reports
 └── scripts/
     ├── backup_db.py                # PostgreSQL backup utility (compressed -Fc)
     ├── backup_db.sh / .ps1         # Shell/PowerShell backup wrappers
@@ -329,7 +328,7 @@ docker compose exec backend python -m app.services.email.worker --once
 | **Supplier Quote Portal** | Implemented (Tokenized authentication, magic links, tenant isolation) |
 | **RBAC & Exception Approval** | Implemented (6 roles, separation of duties, violation overrides) |
 | **Bilingual Localization (TR/EN)** | Implemented (Full UI parity, locale-aware prompt synthesis) |
-| **Automated Test Coverage** | Implemented (60+ backend test cases, type checks, i18n parity check) |
+| **Automated Test Coverage** | Implemented (Automated backend test suite covering authentication, tenant isolation, quote processing, workflow orchestration, email delivery, policy retrieval, and localization, alongside frontend type-checking and translation parity checks) |
 | **ERP / SAP Connectors** | Planned (Future roadmap integration via webhook architecture) |
 
 ---

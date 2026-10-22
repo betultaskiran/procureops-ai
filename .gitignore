@@ -48,5 +48,6 @@ uploads/
 !backend/tests/fixtures/*.xlsx
 scratch/
 backups/
+docs/
 *.dump
 *.log
