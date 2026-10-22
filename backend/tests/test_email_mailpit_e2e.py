@@ -52,6 +52,16 @@ MAILPIT_HOST = "procureops-mailpit"
 MAILPIT_PORT = 1025
 
 
+def is_mailpit_available() -> bool:
+    """Checks if the Mailpit container is running and reachable."""
+    try:
+        req = urllib.request.Request(f"{MAILPIT_HTTP_URL}/api/v1/messages")
+        with urllib.request.urlopen(req, timeout=1) as resp:
+            return resp.status == 200
+    except Exception:
+        return False
+
+
 def clear_mailpit_messages():
     """Helper to wipe Mailpit mailbox before or between tests."""
     try:
@@ -73,6 +83,9 @@ def get_mailpit_messages():
 @pytest.fixture(autouse=True)
 def ensure_smtp_mailpit():
     """Sets the active provider to SMTPEmailProvider targeting local Mailpit."""
+    if not is_mailpit_available():
+        pytest.skip("Mailpit container (procureops-mailpit) is not running; skipping Mailpit E2E tests.")
+
     mailpit_provider = SMTPEmailProvider(
         host=MAILPIT_HOST,
         port=MAILPIT_PORT,
