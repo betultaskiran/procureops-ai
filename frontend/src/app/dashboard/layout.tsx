@@ -21,6 +21,7 @@ import { useAuth } from "@/lib/auth/AuthContext";
 import { useTranslation } from "@/lib/i18n/I18nContext";
 import { TranslationKey } from "@/lib/i18n/types";
 import { UserRole } from "@/lib/api/types";
+import { ProcureOpsLogo } from "@/components/brand/ProcureOpsLogo";
 
 const ROLE_BADGE_CLASSES: Record<UserRole, string> = {
   admin: "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20",
@@ -74,11 +75,14 @@ export default function DashboardLayout({
         
         {/* Brand Logo & Organization */}
         <div className="h-16 flex items-center px-6 border-b border-border justify-between">
-          <Link href="/dashboard" className="flex items-center gap-3">
-            <div className="h-8 w-8 rounded bg-primary flex items-center justify-center text-white font-bold text-lg shadow-sm">
-              P
-            </div>
-            <span className="font-semibold tracking-tight text-lg text-text-primary">ProcureOps</span>
+          <Link href="/dashboard" className="flex items-center gap-2.5 group">
+            <ProcureOpsLogo size={32} className="group-hover:scale-105 transition-transform" />
+            <span className="font-bold tracking-tight text-lg text-text-primary">
+              ProcureOps
+            </span>
+            <span className="bg-gradient-to-r from-cyan-500 to-emerald-500 text-white font-bold text-[10px] px-1.5 py-0.5 rounded tracking-wider uppercase shadow-sm shadow-cyan-500/25">
+              AI
+            </span>
           </Link>
         </div>
 

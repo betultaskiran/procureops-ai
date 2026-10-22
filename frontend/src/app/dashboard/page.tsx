@@ -164,20 +164,20 @@ export default function DashboardPage() {
               placeholder={t("dashboard_home.search_placeholder")} 
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 text-sm bg-background border border-border rounded-lg text-text-primary focus:outline-none focus:border-primary transition-colors"
+              className="w-full pl-10 pr-4 py-2 text-sm bg-surface border border-border rounded-lg text-text-primary focus:outline-none focus:border-primary transition-colors"
             />
           </div>
           <div className="flex items-center gap-2">
             <select 
               value={statusFilter || ""}
               onChange={(e) => setStatusFilter(e.target.value || null)}
-              className="px-3 py-2 text-sm bg-background border border-border rounded-lg text-text-primary focus:outline-none focus:border-primary transition-colors"
+              className="px-3 py-2 text-sm bg-surface dark:bg-slate-800 border border-border rounded-lg text-text-primary focus:outline-none focus:border-primary transition-colors cursor-pointer"
             >
-              <option value="">{t("dashboard_home.all_statuses")}</option>
-              <option value="draft">{t("common.status.draft")}</option>
-              <option value="pending_approval">{t("common.status.pending")}</option>
-              <option value="approved">{t("common.status.approved")}</option>
-              <option value="rejected">{t("common.status.rejected")}</option>
+              <option className="bg-surface text-text-primary dark:bg-slate-800 dark:text-slate-100" value="">{t("dashboard_home.all_statuses")}</option>
+              <option className="bg-surface text-text-primary dark:bg-slate-800 dark:text-slate-100" value="draft">{t("common.status.draft")}</option>
+              <option className="bg-surface text-text-primary dark:bg-slate-800 dark:text-slate-100" value="pending_approval">{t("common.status.pending")}</option>
+              <option className="bg-surface text-text-primary dark:bg-slate-800 dark:text-slate-100" value="approved">{t("common.status.approved")}</option>
+              <option className="bg-surface text-text-primary dark:bg-slate-800 dark:text-slate-100" value="rejected">{t("common.status.rejected")}</option>
             </select>
           </div>
         </div>

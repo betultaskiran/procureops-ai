@@ -5,6 +5,7 @@
   --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
   
   --color-bg: var(--bg);
+  --color-background: var(--bg);
   --color-surface: var(--surface);
   --color-surface-elevated: var(--surface-elevated);
   --color-border: var(--border);
@@ -19,6 +20,7 @@
 }
 
 :root {
+  color-scheme: light;
   /* ☀️ Light Mode (Default) */
   --bg: #F8FAFC;
   --surface: #FFFFFF;
@@ -38,6 +40,7 @@
 }
 
 .dark {
+  color-scheme: dark;
   /* 🌑 Dark Mode */
   --bg: #0F172A;
   --surface: #1E293B;
@@ -54,6 +57,24 @@
   --warning: #FBBF24;
   --error: #FB7185;
   --ai: #38BDF8;
+}
+
+select {
+  color-scheme: light;
+}
+
+.dark select {
+  color-scheme: dark;
+}
+
+select option {
+  background-color: var(--surface);
+  color: var(--text-primary);
+}
+
+.dark select option {
+  background-color: #1e293b;
+  color: #f8fafc;
 }
 
 html {

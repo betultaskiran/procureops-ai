@@ -245,6 +245,7 @@ class DeterministicEvaluationStage:
                 tco_result=tco_result,
                 rules=rules,
                 analysis_id=analysis_id,
+                locale=locale,
             )
 
             is_quote_compliant = True
@@ -257,7 +258,8 @@ class DeterministicEvaluationStage:
                     is_quote_compliant = False
                     quote_fail_reasons.append(f"{check.rule_name}: {check.notes}")
                 elif check.result == ComplianceResult.WARNING:
-                    warnings.append(f"Tedarikçi {quote.supplier.name if quote.supplier else quote.id}: {check.notes}")
+                    supplier_label = f"Supplier {quote.supplier.name if quote.supplier else quote.id}" if locale == "en" else f"Tedarikçi {quote.supplier.name if quote.supplier else quote.id}"
+                    warnings.append(f"{supplier_label}: {check.notes}")
 
             quote.is_compliant = is_quote_compliant
             if is_quote_compliant:

@@ -22,6 +22,7 @@ import { useTranslation } from "@/lib/i18n/I18nContext";
 import { getLocalizedApiError } from "@/lib/i18n/apiErrorMap";
 import { LanguageToggle } from "@/components/language-toggle";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { ProcureOpsLogo } from "@/components/brand/ProcureOpsLogo";
 
 function RegisterForm() {
   const router = useRouter();
@@ -94,11 +95,12 @@ function RegisterForm() {
       {/* ── Brand Logo Header ────────────────────────────────────────────── */}
       <div className="mb-8 text-center">
         <Link href="/" className="inline-flex items-center gap-3 group">
-          <div className="h-10 w-10 rounded-xl bg-primary flex items-center justify-center text-white font-bold text-xl shadow-md group-hover:scale-105 transition-transform">
-            P
-          </div>
+          <ProcureOpsLogo size={46} className="group-hover:scale-105 transition-transform" />
           <span className="font-bold tracking-tight text-2xl text-text-primary">
-            ProcureOps <span className="text-primary font-normal">AI</span>
+            ProcureOps
+          </span>
+          <span className="bg-gradient-to-r from-cyan-500 to-emerald-500 text-white font-bold text-xs px-2 py-0.5 rounded-md tracking-wider uppercase shadow-md shadow-cyan-500/25">
+            AI
           </span>
         </Link>
         <p className="text-xs text-text-muted mt-2">

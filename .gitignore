@@ -49,3 +49,4 @@ uploads/
 scratch/
 backups/
 *.dump
+*.log

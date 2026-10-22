@@ -1,63 +1,131 @@
 # ProcureOps AI
 
-> Evidence-Backed Procurement Decision & Workflow Engine
+> **Evidence-Grounded B2B Procurement Decision Support & Autonomous Workflow Engine**
 
-An AI-assisted procurement system that combines structured document extraction, deterministic computation, enterprise knowledge retrieval, and agentic AI orchestration — with a human in the loop for every consequential decision.
+ProcureOps AI is a multi-tenant enterprise procurement platform engineered to automate request-for-quotation (RFQ) processing, supplier quote ingestion, multi-currency total cost of ownership (TCO) calculation, and corporate policy compliance.
 
----
+Rather than delegating high-stakes financial calculations or compliance verdicts to probabilistic large language models (LLMs), ProcureOps AI implements a **two-tier hybrid architecture**:
+1. **Deterministic Core:** Python `Decimal` arithmetic, currency exchange normalization, and strict rule enforcement calculate exact numbers and evaluate non-negotiable policy constraints.
+2. **AI Reasoning & Retrieval:** Retrieval-Augmented Generation (RAG) over vector-indexed corporate governance documents and structured LLM orchestration synthesize trade-offs, extract unstructured documents, and provide cited, human-reviewable recommendations.
 
-## Quick Start
-
-### Prerequisites
-
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/) installed and running
-- Git
-
-### Run locally
-
-```bash
-# 1. Clone the repository
-git clone <your-repo-url>
-cd procureops-ai
-
-# 2. The .env file is already created for local development
-#    (it is listed in .gitignore — never commit it)
-#    To see all available variables: cat .env.example
-
-# 3. Build and start all services
-docker compose up --build
-
-# 4. Verify everything is running
-#    Landing page:   http://localhost:3000
-#    API root:       http://localhost:8000
-#    API docs:       http://localhost:8000/docs
-#    Health check:   http://localhost:8000/health
-```
-
-### Stop all services
-
-```bash
-docker compose down
-```
-
-### Stop and delete all data (database, vector store)
-
-```bash
-docker compose down -v   # WARNING: destroys all persistent data
-```
+Every consequential action—such as purchase order generation and supplier awarding—remains governed by human-in-the-loop review, strict separation of duties, and an independent verification layer.
 
 ---
 
-## Services
+## Architecture Overview
 
-| Service  | URL                      | Purpose                        |
-|----------|--------------------------|--------------------------------|
-| Frontend | http://localhost:3000    | Next.js / TypeScript UI        |
-| Backend  | http://localhost:8000    | FastAPI Python API             |
-| API Docs | http://localhost:8000/docs | Auto-generated Swagger UI    |
-| Postgres | localhost:5432           | Relational database            |
-| Qdrant   | http://localhost:6333    | Vector database (policy docs)  |
-| Redis    | localhost:6379           | Cache and job queue            |
+```mermaid
+flowchart TD
+    subgraph Client ["Client Interfaces"]
+        UI["Web Application (Next.js 15 / Tailwind / TR & EN)"]
+        Portal["External Supplier Portal (/portal/rfq/:token)"]
+    end
+
+    subgraph Gateway ["API Gateway & Core Security"]
+        FastAPI["FastAPI 0.115 Application Server"]
+        RateLimiter["Sliding-Window Rate Limiter (Redis + In-Memory Fallback)"]
+        AuthRBAC["Auth & RBAC (JWT + Scoped Session Cookies)"]
+    end
+
+    subgraph Pipeline ["6-Stage Procurement Analysis Pipeline"]
+        S1["Stage 1: Input & Currency Validation (Deterministic)"]
+        S2["Stage 2: Deterministic TCO & FX Engine (Python Decimal)"]
+        S3["Stage 3: Corporate Policy Retrieval (Dense RAG + Qdrant)"]
+        S4["Stage 4: Structured LLM Synthesis (Gemini 2.5 Flash-Lite)"]
+        S5["Stage 5: Independent Verification Engine (Fail-Closed)"]
+        S6["Stage 6: Human Decision Gate (Standard vs. Exception Approval)"]
+    end
+
+    subgraph DataStorage ["Persistent Storage & Services"]
+        PG[(PostgreSQL 16 Relational Database)]
+        Qdrant[(Qdrant Vector Database 1.13)]
+        Redis[(Redis 7 Cache & Job Store)]
+        OutboxWorker["Transactional Outbox Worker (Async Loop)"]
+    end
+
+    UI --> AuthRBAC --> FastAPI
+    Portal --> RateLimiter --> FastAPI
+    FastAPI --> S1 --> S2 --> S3 --> S4 --> S5 --> S6
+    S2 <--> PG
+    S3 <--> Qdrant
+    S4 <--> S5
+    S6 --> PG
+    PG --> OutboxWorker
+    OutboxWorker --> SMTP["Enterprise SMTP Relay"]
+```
+
+---
+
+## Key Capabilities
+
+### 1. Document Intelligence & Multi-Format Extraction
+- **Native PDF Extraction:** High-precision text and tabular layout extraction using `pdfplumber`.
+- **Scanned PDF & Image OCR:** Automatic multimodal vision fallback via Google Gemini when text density falls below 50 characters or when handling raster images (`PNG`, `JPG`, `JPEG`).
+- **Excel Ingestion:** Structured worksheet ingestion via `openpyxl` with `data_only=True` to resolve formulas into concrete values, generating markdown tables for downstream ingestion. Legacy binary `.xls` files are rejected fail-closed.
+- **Arithmetic Discrepancy Auditing:** Computes expected item math (`quantity * unit_price`), subtotal comparisons, and grand total calculations. Discrepancies are flagged as audit warnings in quote notes without dropping valid data.
+- **Idempotent Reprocessing:** Document reprocessing endpoint (`POST /api/v1/rfqs/{rfq_id}/quote-documents/{document_id}/reprocess`) permits re-extraction without orphaned or duplicate quote records.
+
+### 2. Deterministic TCO & FX Currency Normalization
+- **Strict Decimal Precision:** All financial calculations (`subtotal`, `vat`, `shipping`, `discount`, `other_fees`) are computed using Python `Decimal` types with Banker's rounding (`ROUND_HALF_UP`), avoiding IEEE 754 floating-point inaccuracies.
+- **Multi-Currency Normalization:** Quotes submitted in foreign currencies (EUR, USD, GBP) are converted into the RFQ's target base currency.
+- **Auditable Rate Paths:** The FX engine resolves conversion rates via direct, inverse, or cross-currency paths, persisting the exchange rate source (e.g., Central Bank rates), date, rate type, and human-readable audit notes in `tco_results`.
+- **Fail-Closed Currency Guards:** If a foreign currency cannot be resolved via verified rates, the system refrains from numerical comparison and marks the compliance check as non-evaluable rather than fabricating numbers.
+
+### 3. Corporate Policy Knowledge Base (Hybrid RAG)
+- **Vector Search over Corporate Governance:** Policies, Service Level Agreements (SLAs), supplier codes of conduct, and framework contracts are chunked, embedded, and stored in Qdrant.
+- **Topical Grounding & Citation Matching:** Policy searches enforce a similarity score threshold (default `0.65`). When relevant policy clauses are located, citations are linked by document name, section, and article.
+- **Honest Insufficient Evidence Handling:** When corporate policies do not address a specific procurement criterion, the engine explicitly marks `insufficient_evidence` instead of hallucinatory compliance.
+
+### 4. 6-Stage Sequential Analysis Pipeline
+All RFQ analyses execute through a sequential, observable state machine:
+1. **Stage 1 — Input & Currency Validation:** Validates that at least two valid quotes exist and verifies financial completeness before any external AI service invocation.
+2. **Stage 2 — Deterministic TCO & Hard Rules:** Evaluates hard boundary constraints (maximum budget thresholds, maximum delivery timelines, minimum warranty duration, and mandatory certifications).
+3. **Stage 3 — Policy Compliance Analysis:** Queries Qdrant for semantic matching against organizational guidelines.
+4. **Stage 4 — Supplier Recommendation (LLM Synthesis):** Synthesizes operational trade-offs, reliability history, delivery commitments, and cost drivers into an `AgentRecommendationSchema`.
+5. **Stage 5 — Independent Verification Layer:** Validates the LLM's claims against deterministic results and retrieved citations:
+   - `passed`: All deterministic checks and policy citations are verified.
+   - `failed`: Hard-rule violation detected; recommendation is revoked (`recommended_quote_id = None`).
+   - `inconclusive`: Citations reference ungrounded or contradictory sources.
+6. **Stage 6 — Human Decision Gate:** Human review controls final awarding.
+
+### 5. Procurement Governance, RBAC & Exception Approval
+- **Role-Based Access Control (RBAC):** Hierarchical permissions enforced across `admin`, `manager`, `purchasing_director`, `cfo`, `employee`, and `viewer`.
+- **Multi-Tenant Isolation:** All data access is strictly scoped to the user's `organization_id`.
+- **Exception Approval Workflow:** If a recommended supplier fails a hard compliance rule (e.g., budget exceeded by 5%), standard approval returns `HTTP 400 Bad Request`. Overriding this outcome requires an explicit `exception_approved` action by an authorized role, setting `acknowledged_policy_violation = True` along with mandatory justification.
+- **Separation of Duties:** Approval endpoints enforce that the user who submitted the RFQ cannot unilaterally approve high-value orders without governance escalation.
+
+### 6. Supplier Portal & Secure Quote Submission
+- **Tokenized Access:** External vendors receive scoped magic links containing high-entropy tokens (`{delivery_id}.{raw_secret}`). The server validates the token against a SHA-256 cryptographic hash stored in the outbox metadata.
+- **Zero Account Overhead:** Suppliers submit quotes directly without internal employee accounts.
+- **Strict Data Isolation:** Suppliers only see the specific RFQ items they were invited to quote on. Internal budgets, competing quotes, policy documents, and AI analysis results are strictly redacted.
+
+### 7. Transactional Outbox Pattern & Background Workers
+- **Guaranteed Notification Dispatch:** Outbound communications (invitations, purchase order awards) are written atomically to the `email_deliveries` database table within the same transaction as the business event.
+- **Worker Execution Loop:** A background worker polls for pending records using `SELECT ... FOR UPDATE SKIP LOCKED` to prevent duplicate processing across concurrent replicas.
+- **Bounded Exponential Backoff:** Transient network failures trigger backoff retries (`retry_backoff * 2^(attempts-1)`). Permanent errors (e.g., invalid recipient format) terminate immediately without retries.
+- **Idempotency Keys:** Unique database constraints on `idempotency_key` prevent duplicate emails during network partitions.
+
+### 8. Full Turkish/English Bilingual Architecture
+- **Dual Presentation Dictionaries:** Complete UI parity (1,100+ keys) synchronized across Turkish (`tr`) and English (`en`).
+- **Locale-Aware AI Analysis:** Prompts instruct the LLM to output analysis summaries, executive recommendations, and trade-off rationales in the active locale.
+- **Dual Citation Verification:** Verification algorithms validate policy citations across English and Turkish terminologies.
+- **Source Data Integrity:** Original supplier quotes and legal texts remain in their authentic source language while presentation labels, currency formats, and dates reflect the user's locale.
+
+---
+
+## Technology Stack
+
+| Layer | Technologies |
+|---|---|
+| **Backend Framework** | Python 3.12, FastAPI 0.115, Pydantic v2, Pydantic-Settings |
+| **Database & ORM** | PostgreSQL 16, SQLAlchemy 2.0 (asyncio, `asyncpg`), Alembic migrations |
+| **Vector Database** | Qdrant 1.13.6 (dense vector indexing & cosine similarity) |
+| **Cache & Queue** | Redis 7 (sliding-window rate limiting, session cache) |
+| **AI & LLM Services** | Google Gemini (Gemini 2.5 Flash-Lite via Google GenAI SDK) |
+| **Document Processing** | `pdfplumber` (PDF layout/tables), `openpyxl` (Excel), Gemini Multimodal Vision |
+| **Frontend Framework** | Next.js 15 (App Router, Turbopack), React 19, TypeScript |
+| **Styling & Components** | Tailwind CSS v4, Lucide React, Next-Themes |
+| **Containerization** | Docker, Docker Compose (multi-stage build & non-root containers) |
 
 ---
 
@@ -65,171 +133,207 @@ docker compose down -v   # WARNING: destroys all persistent data
 
 ```
 procureops-ai/
-├── docker-compose.yml      # Orchestrates all services
-├── .env.example            # Template for environment variables
-├── .env                    # Local dev values (git-ignored)
+├── docker-compose.yml              # Local development compose (live mounts)
+├── docker-compose.prod.yml         # Production compose (non-root, port isolation)
+├── .env.example                    # Local environment variables template
+├── .env.production.example         # Production environment template with security guidelines
+├── .gitignore                      # Hardened ignore file
+├── DECISIONS.md                    # Architectural Decision Records (ADRs)
+├── LEARNING.md                     # Engineering journal & system design reference
 │
-├── backend/                # Python / FastAPI
-│   ├── Dockerfile
-│   ├── pyproject.toml      # Dependencies and project config
-│   └── app/
-│       ├── main.py         # FastAPI application entry point
-│       ├── core/
-│       │   └── config.py   # Centralised settings (env vars)
-│       └── api/
-│           └── health.py   # Health check endpoints
+├── backend/
+│   ├── Dockerfile                  # Development Dockerfile
+│   ├── Dockerfile.prod             # Lean production Dockerfile
+│   ├── pyproject.toml              # Dependencies & Ruff/pytest configurations
+│   ├── alembic.ini                 # Database migration configuration
+│   ├── migrations/                 # Alembic migration revisions
+│   ├── app/
+│   │   ├── main.py                 # FastAPI application entry & middleware
+│   │   ├── core/                   # Security, JWT, rate limiting, and config
+│   │   ├── db/                     # Async session factory & base models
+│   │   ├── models/                 # SQLAlchemy ORM models (RFQ, Quote, Order, etc.)
+│   │   ├── schemas/                # Pydantic validation schemas
+│   │   ├── api/v1/                 # REST endpoints (auth, rfqs, quotes, portal, etc.)
+│   │   └── services/               # Core business services:
+│   │       ├── deterministic/      # TCO calculator, compliance rules, orchestrator
+│   │       ├── fx/                 # Multi-currency exchange rate engine
+│   │       ├── rag/                # Qdrant policy indexing and retrieval
+│   │       ├── agent/              # LLM recommendation synthesis
+│   │       ├── orchestration/      # 6-stage master pipeline
+│   │       ├── extraction/         # PDF, OCR, and Excel parsing
+│   │       └── email/              # Outbox models, providers, and worker loop
+│   └── tests/                      # Automated test suite (unit, integration, regression)
 │
-├── frontend/               # Next.js / TypeScript
-│   ├── Dockerfile
-│   ├── package.json
+├── frontend/
+│   ├── Dockerfile                  # Development container configuration
+│   ├── package.json                # Dependencies & scripts
+│   ├── tsconfig.json               # TypeScript configuration
+│   ├── scripts/                    # Parity check scripts (check-i18n-parity.mjs)
 │   └── src/
-│       └── app/
-│           ├── layout.tsx  # Root layout (wraps every page)
-│           └── page.tsx    # Landing page
+│       ├── app/                    # Next.js 15 App Router pages & layouts
+│       ├── components/             # UI components (analysis matrix, evidence panel, brand)
+│       ├── lib/                    # i18n context, formatters, and API clients
+│       └── locales/                # Bilingual translation dictionaries (en.json, tr.json)
 │
-├── ARCHITECTURE.md         # System design documentation
-├── LEARNING.md             # Concepts learned at each phase
-└── DECISIONS.md            # Architectural decisions with trade-offs
+├── docs/
+│   └── reports/                    # Infrastructure readiness & verification reports
+└── scripts/
+    ├── backup_db.py                # PostgreSQL backup utility (compressed -Fc)
+    ├── backup_db.sh / .ps1         # Shell/PowerShell backup wrappers
+    └── restore_db.sh / .ps1        # Shell/PowerShell restore wrappers
 ```
 
 ---
 
-## Development Phases & Roadmap Audit
+## Local Development Setup
 
-The following table reflects the actual implementation state verified by the codebase, endpoints, database schema, and test suite.
+### Prerequisites
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) installed and running.
+- [Git](https://git-scm.com/) installed.
+- A Google AI Studio API key for LLM functionality ([Get API Key](https://aistudio.google.com/app/apikey)).
 
-| Phase | Milestone / Domain | Implementation Scope & Evidence | Status |
-|-------|--------------------|---------------------------------|--------|
-| **Phase 0** | **Product & Architecture** | System design, ADRs (`DECISIONS.md`), architecture specifications (`ARCHITECTURE.md`). | ✅ Complete |
-| **Phase 1** | **Development Foundation** | FastAPI + Next.js + PostgreSQL + Qdrant + Redis containerization (`docker-compose.yml`, health endpoints). | ✅ Complete |
-| **Phase 2** | **Domain Models & Multi-Analysis** | SQLAlchemy models (`models/`), multi-quote analysis safety, fallback rules, staleness detection (`analyses.py`, `test_multi_analysis.py`). | ✅ Complete |
-| **Phase 3** | **Quote Ingestion & Multi-Analysis Matrix** | PDF quote upload, structured LLM extraction, side-by-side comparison matrix, stale analysis banner (`ComparisonMatrix.tsx`, `quote_documents`, `test_rfq_quote_lifecycle.py`). | ✅ Complete |
-| **Phase 4A** | **Supplier History Data Foundation** | Delivery fields on PO (`expected_delivery_date`, `actual_delivery_date`, `final_amount`, `delivery_notes`), `SupplierHistory` PO link (`models/order.py`, `models/supplier.py`, `test_supplier_history_foundation.py`). | ✅ Complete |
-| **Phase 4B** | **Supplier Performance Engine & APIs** | `SupplierPerformanceService`, delivery reliability %, currency-isolated financials, quality metrics, collision detection (`/api/v1/suppliers/{id}/performance`, `history`, `test_supplier_performance.py`). | ✅ Complete |
-| **Phase 4C** | **Supplier Performance UI & Drawer** | Accessible slide-over drawer (`SupplierPerformanceDrawer.tsx`), matrix triggers, focus trap, request identity guards, zero-page safety (`frontend/tests/supplier-drawer.test.mjs`). | ✅ Complete |
-| **Phase 5** | **Authentication, RBAC & Team Management** | Real JWT auth, Argon2/Bcrypt hashing, role enforcement (`admin`, `manager`, `employee`, `viewer`), tenant-isolated organization scoping, `/dashboard/team` page, last-admin protection (`test_team_management.py`, `test_auth_core.py`, `test_rbac_tenant_isolation.py`). | ✅ Complete |
-| **Phase 6** | **Purchase Order Lifecycle & Quality Tracking** | Dedicated lifecycle endpoints (`/api/v1/orders/{id}/deliver`, `/complete`, `/cancel`, `/quality-issues`), `POQualityIssue` model, delay metrics, terminal state safety, UI modals & delay badges (`test_order_lifecycle.py`). | ✅ Complete |
-| **Phase 7** | **Production Readiness & Observability** | Alembic migration consistency (`7c4b92df0a12`), fail-closed production config, dual HttpOnly cookie + Bearer token session security, structured JSON logging with correlation IDs, `/health/live` & `/health/ready` probes, Sentry integration hook (`test_production_readiness.py`). | ✅ Complete |
-| **Core AI** | **Deterministic TCO & Hard Rules** | Deterministic VAT, shipping, discount calculation (`tco.py`), hard rules evaluation (`compliance.py`, `orchestrator.py`, `test_multi_analysis.py`). | ✅ Complete |
-| **Core AI** | **Policy Knowledge Base (RAG & Hybrid Search)** | Dense + BM25 sparse hybrid retrieval with Reciprocal Rank Fusion (RRF), topical grounding, PDF chunking (`rag/service.py`, `test_policy_rag.py` 10 tests). | ✅ Complete |
-| **Core AI** | **Agentic Reasoning & Evidence Verification** | LLM trade-off synthesis, single-agent verification layer, evidence grounding cards (`agent/service.py`, `verification.py`, `EvidencePanel.tsx`). | ✅ Complete |
-| **Workflow** | **Human Review, Approval & Idempotent PO** | Standard vs Exception approval (`acknowledged_policy_violation`), duplicate PO blocking, cancellation flow (`ReviewModal.tsx`, `order.py`, `email.py`). | ✅ Complete |
-| **Phase 8** | **Document Intelligence & Reliable Ingestion** | Robust ingestion pipeline: text-based PDF (`pdfplumber`), scanned PDF & image OCR fallback (Gemini Multimodal Vision), `.xlsx` Excel parsing (`openpyxl`), arithmetic validation & discrepancy warnings, idempotent re-extraction & retry endpoint (`/reprocess`) (`services/extraction/`, `test_document_intelligence.py`). | ✅ Complete |
-| **Phase 9** | **Reliable Email Integration** | Provider abstraction (`SMTPEmailProvider`, `MockEmailProvider`), persistent transactional outbox (`email_deliveries`), idempotent RFQ invitations & PO notifications, runnable worker loop, bounded exponential backoff (`services/email/`, `test_email_integration.py`). | ✅ Complete |
-| **Phase 10** | **AI Workflow & Agent Orchestration** | 6-stage sequential pipeline (deterministic input validation, TCO & hard rules, Qdrant policy RAG with citation grounding, structured LLM synthesis, independent verification layer setting `passed`/`failed`/`inconclusive`, and human-in-the-loop review with exception approvals blocking PO generation on verification failure) (`services/orchestration/`, `test_workflow_orchestration.py`). | ✅ Complete |
-| **Phase 11** | **Security & Pilot Readiness** | Full HttpOnly cookie session hardening, CSRF/CORS, concurrency, end-to-end logging, and pilot UAT. | ⏳ Pending |
+### Quick Start
+
+1. **Clone the repository:**
+   ```bash
+   git clone https://github.com/betultaskiran/procureops-ai.git
+   cd procureops-ai
+   ```
+
+2. **Configure environment variables:**
+   ```bash
+   cp .env.example .env
+   ```
+   Open `.env` in an editor and insert your Google Gemini API key:
+   ```ini
+   GEMINI_API_KEY=your_actual_gemini_api_key_here
+   ```
+
+3. **Start all services with Docker Compose:**
+   ```bash
+   docker compose up --build
+   ```
+
+4. **Verify running services:**
+   - **Web Application:** [http://localhost:3000](http://localhost:3000)
+   - **Backend API:** [http://localhost:8000](http://localhost:8000)
+   - **Interactive API Docs (Swagger):** [http://localhost:8000/docs](http://localhost:8000/docs)
+   - **Health Readiness Check:** [http://localhost:8000/health/ready](http://localhost:8000/health/ready)
+   - **Qdrant Vector Console:** [http://localhost:6333/dashboard](http://localhost:6333/dashboard)
+
+5. **Stop services:**
+   ```bash
+   docker compose down
+   ```
+   *(To wipe volumes and start from scratch, run `docker compose down -v`)*.
 
 ---
 
-## Production Deployment & Operational Runbook
+## Database Migrations & Administration
 
-### 1. Production Configuration & Secret Generation
-Never run with default development secrets in production (`ENVIRONMENT=production` or `DEBUG=false` fails fast if default secrets are detected).
+Alembic manages all schema revisions. Migrations execute inside the backend container:
 
-Generate cryptographically secure secrets:
-```bash
-# Generate 64-character hex JWT secret
-openssl rand -hex 32
-
-# Generate high-entropy database password
-openssl rand -base64 24
-```
-
-Required production environment variables:
-```ini
-ENVIRONMENT=production
-DEBUG=false
-POSTGRES_USER=procureops
-POSTGRES_PASSWORD=<strong_random_password>
-POSTGRES_DB=procureops_db
-POSTGRES_HOST=<database_host>
-POSTGRES_PORT=5432
-JWT_SECRET_KEY=<64_char_random_hex_key>
-CORS_ORIGINS=https://app.yourdomain.com
-GEMINI_API_KEY=<your_google_ai_studio_api_key>
-LOG_FORMAT=json
-LOG_LEVEL=INFO
-# SENTRY_DSN=https://your_sentry_key@o0.ingest.sentry.io/0
-```
-
-### 2. Database Migrations
-Always apply migrations before directing user traffic to new backend releases:
 ```bash
 # Check current migration revision
 docker compose exec backend alembic current
 
-# Upgrade to latest head (7c4b92df0a12)
+# Upgrade to latest revision
 docker compose exec backend alembic upgrade head
 
-# Rollback one revision if necessary
+# Create a new migration revision
+docker compose exec backend alembic revision --autogenerate -m "describe_changes"
+
+# Downgrade by one revision
 docker compose exec backend alembic downgrade -1
 ```
 
-### 3. Database Backup & Restore Procedures
-Backup (Logical dump):
+### Database Backup & Restore
+
+Automated Python scripts generate timestamped, compressed custom-format dumps (`-Fc`):
+
 ```bash
-docker compose exec -T postgres pg_dump -U procureops -d procureops_db -F c -b -v -f /tmp/backup.dump
-docker compose cp postgres:/tmp/backup.dump ./procureops_backup_$(date +%Y%m%d_%H%M%S).dump
+# Generate a database backup
+python scripts/backup_db.py --db procureops_db --out-dir backups
+
+# Restore from a backup file
+./scripts/restore_db.sh backups/procureops_backup_procureops_db_20261022_120000.dump
 ```
-
-Restore:
-```bash
-docker compose cp ./procureops_backup.dump postgres:/tmp/backup.dump
-docker compose exec postgres pg_restore -U procureops -d procureops_db -v -c /tmp/backup.dump
-```
-
-### 4. Health Probes & Monitoring
-- **Liveness Probe**: `GET /health/live` (Returns HTTP 200 as long as the process is alive).
-- **Readiness Probe**: `GET /health/ready` (Returns HTTP 200 when PostgreSQL, Redis, and Qdrant are operational; returns HTTP 503 if degraded).
-- **Full Health Status**: `GET /health` (Returns detailed breakdown of all subsystem statuses).
-- **Structured Logs**: In production with `LOG_FORMAT=json`, logs are emitted as JSON lines with correlation ID, HTTP route, duration in ms, and status code for integration with Datadog, ELK, or CloudWatch.
-
-### 5. Document Intelligence & Multi-Format Ingestion
-ProcureOps AI processes supplier quotes across multiple formats into structured, mathematically validated records:
-- **Digital PDF**: Extracts text and tabular line items via `pdfplumber`.
-- **Scanned PDF & Images (PNG/JPG)**: Automatically triggers fallback to Gemini Multimodal Vision OCR (`types.Part.from_bytes`) when text density is insufficient (< 50 characters) or when processing raw images.
-- **Excel Workbooks (`.xlsx`)**: Structured worksheet parsing via `openpyxl` with `data_only=True` (resolving formulas to calculated values) and markdown table formatting. Legacy binary `.xls` files are rejected with guidance to upload `.xlsx` or `.pdf`.
-- **Arithmetic Discrepancy Detection**: Computes item line math (`qty * unit_price`), subtotal comparisons, and grand total formula checks. Discrepancies are flagged in `Quote.notes` without dropping valid data.
-- **Idempotent Reprocessing**: Failed or updated documents can be reprocessed via `POST /api/v1/rfqs/{rfq_id}/quote-documents/{document_id}/reprocess` without duplicate quote creation.
-
-### 6. Reliable Email Integration & Transactional Outbox (Phase 9)
-Supplier invitations and purchase order notifications are delivered using a database-backed transactional outbox:
-- **Provider Abstraction**: Abstract `EmailProvider` with `SMTPEmailProvider`, `MockEmailProvider`, and `ConsoleEmailProvider`.
-- **Persistent Outbox Table (`email_deliveries`)**: Tracks state transitions (`queued` -> `sending` -> `sent` / `failed` -> `delivered`).
-- **Delivery Guarantees**: SMTP socket acceptance is recorded strictly as `sent`. `delivered` status requires explicit provider delivery signals / webhooks.
-- **Idempotency & Concurrency**: Enforced at the database level using a unique index on `idempotency_key` and atomic `SELECT ... FOR UPDATE SKIP LOCKED` during worker dispatch.
-- **Transient Backoff Retries**: Transient socket/server errors trigger bounded exponential backoff (`EMAIL_RETRY_BACKOFF_SECONDS * 2^(attempts-1)`), up to `EMAIL_MAX_RETRIES` (default 3). Permanent recipient or auth rejections fail fast without retrying.
-- **Outbox Worker CLI & Daemon**:
-  ```bash
-  # Run continuous worker loop (polling every 5 seconds)
-  docker compose exec backend python -m app.services.email.worker
-
-  # Run a single batch pass (for cron or CI)
-  docker compose exec backend python -m app.services.email.worker --once
-  ```
-- **Local Mailcatcher Testing**:
-  To capture emails locally without sending external mail, run a lightweight SMTP receiver:
-  ```bash
-  # Python built-in debugging server on port 1025
-  python -m smtpd -c DebuggingServer -n localhost:1025
-  ```
-
-### 7. AI Workflow & Agent Orchestration (Phase 10)
-The RFQ analysis workflow is structured into 6 sequential, observable, and isolated stages:
-1. **Stage 1 — Extraction & Input Validation (Deterministic)**: Validates minimum quote requirements (>= 2 quotes), currency consistency, and financial completeness. Rejects invalid inputs before any AI service invocation.
-2. **Stage 2 — Deterministic TCO & Hard-Rule Evaluation (Deterministic)**: Pure Python calculation of total cost of ownership (subtotal + VAT + shipping - discount + other costs) and evaluation of non-negotiable delivery, warranty, and budget rules.
-3. **Stage 3 — Policy Compliance Analysis (Qdrant RAG + Citation Grounding)**: Dense vector similarity search against organizational policies with a minimum score threshold (0.65). If no matching policies meet the threshold, marks `insufficient_evidence` without hallucination.
-4. **Stage 4 — Supplier Recommendation (LLM Synthesis)**: Synthesis of financial, operational, and compliance data into a structured schema (`AgentRecommendationSchema`) with trade-off analysis, risk factors, and cited justification.
-5. **Stage 5 — Independent Verification Layer (Deterministic & Grounding Engine)**: Evaluates hard-rule violations, TCO consistency, and citation accuracy. Assigns discrete verification states:
-   - `passed`: All deterministic checks and citations validated.
-   - `failed` / `overridden`: Hard-rule or TCO violation detected. System revokes recommendation (`recommended_quote_id = None`).
-   - `inconclusive`: Citations refer to ungrounded or unsupported sources.
-6. **Stage 6 — Human Review & Approval Gate (Human-in-the-Loop)**: Gated by verification outcome. Standard `approved` requests for analyses that failed verification return HTTP 400. Overriding a failed recommendation requires an explicit `exception_approved` action with `acknowledged_policy_violation = True` and manager justification.
 
 ---
 
-## Core Principle
+## Running the Automated Test Suite
 
-> **LLMs interpret and orchestrate. Deterministic systems calculate and verify.**
+### Backend Tests
+Execute unit and integration tests inside the running backend container:
 
-The LLM never produces final financial calculations. The system never blindly trusts the LLM's compliance claims. Every recommendation is verified by business rules and grounded in traceable evidence.
+```bash
+# Run the complete test suite
+docker compose exec backend pytest
+
+# Run workflow orchestration and email outbox tests
+docker compose exec backend pytest tests/test_workflow_orchestration.py tests/test_email_integration.py
+
+# Run rate limiting and order lifecycle tests
+docker compose exec backend pytest tests/test_auth_rate_limit.py tests/test_order_lifecycle.py
+
+# Run localization regression tests
+docker compose exec backend pytest tests/test_p2_3_localization_fixes.py tests/test_p2_4_rule_checks_localization.py
+```
+
+### Frontend Tests & Type Checking
+
+```bash
+# Verify TypeScript compilation (zero errors)
+npm --prefix frontend run type-check
+
+# Verify 100% dictionary key parity between English and Turkish
+npm --prefix frontend run check-i18n
+```
+
+---
+
+## Transactional Outbox Background Worker
+
+In development, emails can be inspected in the terminal or captured via a local SMTP receiver. To start the background worker process:
+
+```bash
+# Run continuous background worker loop
+docker compose exec backend python -m app.services.email.worker
+
+# Run a single batch pass (for CI/Cron)
+docker compose exec backend python -m app.services.email.worker --once
+```
+
+---
+
+## Security Architecture & Known Boundaries
+
+- **Fail-Closed Configuration:** If `ENVIRONMENT=production` is specified, the application refuses to start if default development secret keys (`JWT_SECRET_KEY`) or placeholder database credentials are detected.
+- **Port Exposure Policy:** In production (`docker-compose.prod.yml`), database (5432), cache (6379), and vector store (6333) ports have zero host exposure. Backend and frontend listen strictly on the host loopback (`127.0.0.1`), terminating behind an authorized reverse proxy (Nginx, Caddy, Cloudflare Tunnel).
+- **Rate Limiting:** Authentication routes (`/login`, `/register`) enforce sliding-window rate limiting (10 requests per 60 seconds per client IP) backed by Redis atomic pipelines. If Redis is temporarily unreachable, an in-memory sliding window serves as fallback rather than failing open.
+- **Proxy Spoofing Prevention:** The system ignores arbitrary `X-Forwarded-For` headers unless the direct socket peer IP matches an entry in `TRUSTED_PROXIES`.
+- **RAG Grounding Boundary:** While Qdrant similarity search and dual citation verification significantly reduce hallucination, LLMs remain probabilistic. Production workflows mandate human review before committing financial funds or binding contracts.
+
+---
+
+## Project Status
+
+| Area | Implementation Status |
+|---|---|
+| **Multi-Quote Ingestion & TCO** | Implemented (Decimal arithmetic, VAT, shipping, discounts) |
+| **Deterministic Hard-Rule Engine** | Implemented (Delivery, warranty, budget, certifications) |
+| **Multi-Currency FX Engine** | Implemented (Direct, inverse, cross rates with audit evidence) |
+| **Hybrid Policy RAG** | Implemented (Dense vector search in Qdrant with thresholding) |
+| **6-Stage Analysis Pipeline** | Implemented (Validation, TCO, RAG, LLM synthesis, verification, review) |
+| **Transactional Outbox & Worker** | Implemented (Idempotent worker, exponential backoff, atomic dispatch) |
+| **Supplier Quote Portal** | Implemented (Tokenized authentication, magic links, tenant isolation) |
+| **RBAC & Exception Approval** | Implemented (6 roles, separation of duties, violation overrides) |
+| **Bilingual Localization (TR/EN)** | Implemented (Full UI parity, locale-aware prompt synthesis) |
+| **Automated Test Coverage** | Implemented (60+ backend test cases, type checks, i18n parity check) |
+| **ERP / SAP Connectors** | Planned (Future roadmap integration via webhook architecture) |
+
+---
+
+## License
+
+This project is released under the [MIT License](LICENSE).

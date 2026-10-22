@@ -361,6 +361,9 @@
     "non_compliant": "Non-Compliant"
   },
   "rfq_detail": {
+    "loading_details": "Loading RFQ details...",
+    "requirements_terms": "RFQ Requirements & Terms",
+    "not_specified": "Not specified",
     "back_to_quotes": "← Return to Quotes & RFQs",
     "rfq_summary": "RFQ Overview",
     "target_budget": "Target Budget",
@@ -429,9 +432,22 @@
       "analyze_tooltip_start": "Start AI analysis comparing all quotes side-by-side",
       "btn_analyze_new_rules": "Analyze with New Rules",
       "btn_re_evaluate": "Re-Evaluate",
-      "btn_start_multi_analysis": "Start Multi-Quote Analysis"
+      "btn_start_multi_analysis": "Start Multi-Quote Analysis",
+      "btn_review_and_approve": "Review & Decide"
     },
     "quotes_section": {
+      "submitted_quotes": "Submitted Quotes ({count})",
+      "click_view_details_hint": "Click \"View Details\" to inspect any quote below",
+      "extracted_doc_label": "Doc: {name}",
+      "status_extracted": "Extracted",
+      "btn_viewing": "Viewing",
+      "btn_view_details": "View Details",
+      "quote_details_title": "Quote Details: {supplier}",
+      "no_quote_available": "No Quote Available",
+      "no_line_items": "No line items extracted.",
+      "no_quotes_added": "No quotes have been added to this RFQ yet.",
+      "deterministic_math_applied": "Deterministic math applied.",
+      "missing_data": "[Missing Data]",
       "pending_comparison_title": "Multi-Quote Comparison Pending (1 / 2 Quotes)",
       "pending_comparison_desc": "To compare suppliers side-by-side and run AI evaluation, add at least one more quote.",
       "btn_upload_second_quote": "+ Upload Second Quote",
@@ -460,6 +476,7 @@
       "label_created_at": "Created:",
       "label_final_amount": "Finalized Amount:",
       "label_cancellation_reason": "Cancellation Reason ({by}):",
+      "label_actual_delivery": "Actual Delivery",
       "reason_unspecified": "No reason specified",
       "quality_records_title": "Quality & Return Records ({count})",
       "btn_hide": "Hide",
@@ -479,6 +496,16 @@
       "attached_preview": "Attached: PO-{id}.pdf"
     },
     "invitations_section": {
+      "title_with_count": "Supplier Invitations & Email Outbox ({count})",
+      "subtitle": "Durable background email deliveries sent to suppliers via transactional outbox.",
+      "table_recipient_supplier": "Recipient / Supplier",
+      "badge_queued": "Queued",
+      "badge_sending": "Sending...",
+      "badge_sent": "Sent",
+      "badge_delivered": "Delivered",
+      "badge_failed": "Failed",
+      "btn_retry": "Retry",
+      "quote_submitted_date": "Quote submitted on {date}",
       "btn_send_new_invite": "Send New Invitation",
       "empty_invitations": "No supplier invitations have been sent for this RFQ yet.",
       "badge_invite_revoked": "Revoked",
@@ -500,6 +527,18 @@
       "invite_queued_success": "Invitation queued: {email} ({status})"
     },
     "modals": {
+      "btn_back_to_list": "Back to list",
+      "company_name_label": "Company Name *",
+      "btn_save_supplier": "Save Supplier",
+      "select_supplier_label": "Supplier *",
+      "btn_add_new_supplier": "Add New Supplier",
+      "select_supplier_placeholder": "Select a supplier...",
+      "quote_doc_label": "Quote Document (PDF, Excel, Image) *",
+      "quote_doc_types_hint": "PDF, Excel (.xlsx), PNG, JPG up to 50MB",
+      "btn_upload_quote": "Upload Quote",
+      "btn_uploading_quote": "Uploading...",
+      "min_chars_warning": "At least 3 characters required.",
+      "deliver_po_actual_date_label": "Actual Delivery Date",
       "cancel_rfq_title": "Cancel RFQ Request",
       "cancel_rfq_desc": "Workflow status will be set to 'cancelled'.",
       "cancel_rfq_reason_label": "Cancellation Reason *",
@@ -861,6 +900,10 @@
     "evidence": {
       "title": "AI Decision Rationale & Citations",
       "supplier_analysis": "Supplier Analysis & Evidence",
+      "source_type_policy": "Policy Clause",
+      "source_type_quote": "Quote Data",
+      "source_type_supplier_history": "Supplier History",
+      "source_type_calculation": "Calculation",
       "reasoning_summary": "Decision Rationale Summary",
       "key_strengths": "Key Advantages",
       "risks_flags": "Identified Risk Flags",
@@ -923,7 +966,38 @@
       "actual_value_label": "Actual: ",
       "required_value_label": "Required: ",
       "fx_evidence_badge": "FX RATE EVIDENCE",
-      "fx_evidence_formula_prefix": "Formula: "
+      "fx_evidence_formula_prefix": "Formula: ",
+      "rule_titles": {
+        "max_delivery_days": "Maximum Delivery Time Check",
+        "min_warranty_months": "Minimum Warranty Period Check",
+        "max_tco_budget": "Maximum Budget Check",
+        "require_payment_terms": "Required Payment Terms Check",
+        "cost_completeness": "Cost Completeness Check",
+        "extraction_confidence": "Document Extraction Confidence Score Check"
+      },
+      "rule_results": {
+        "pass": "PASS",
+        "fail": "FAIL",
+        "warning": "WARNING"
+      },
+      "rule_notes": {
+        "compliant": "Compliant.",
+        "delivery_not_specified": "Delivery time not specified.",
+        "delivery_exceeds": "Delivery time exceeds limit.",
+        "warranty_not_specified": "Warranty period not specified.",
+        "warranty_insufficient": "Warranty period insufficient.",
+        "currency_not_specified": "Currency not specified: Cannot compare.",
+        "exceeds_budget": "Exceeds budget.",
+        "payment_not_specified": "Payment terms not specified.",
+        "unacceptable_payment": "Unacceptable payment terms.",
+        "cost_items_complete": "Cost items complete.",
+        "confidence_sufficient": "Confidence score sufficient."
+      },
+      "rule_values": {
+        "complete": "Complete",
+        "missing_prefix": "Missing: ",
+        "none": "None"
+      }
     },
     "review": {
       "title": "Human-in-the-Loop Decision Review",

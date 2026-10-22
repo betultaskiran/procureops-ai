@@ -151,7 +151,8 @@ class AgentService:
             rag_context = await self.rag.retrieve_context(
                 organization_id=effective_org_id,
                 query=rag_query,
-                top_k=3
+                top_k=3,
+                locale=locale
             )
 
         # 3.5 SQL'den Tedarikçi Geçmişini (Supplier Memory) çek (Phase 8)
@@ -207,7 +208,12 @@ class AgentService:
 
         # 6. Recommendation Kaydını Oluştur ve Veritabanına Yaz
         trade_off_header = "**Trade-off Analysis:**" if locale == "en" else "**Trade-off Analizi:**"
-        combined_reasoning = f"{agent_output.justification}\n\n{trade_off_header}\n{agent_output.trade_off_analysis}"
+        clean_trade_off = agent_output.trade_off_analysis.strip()
+        for prefix in ["**Trade-off Analysis:**", "**Trade-off Analizi:**", "Trade-off Analysis:", "Trade-off Analizi:"]:
+            if clean_trade_off.startswith(prefix):
+                clean_trade_off = clean_trade_off[len(prefix):].strip()
+                break
+        combined_reasoning = f"{agent_output.justification}\n\n{trade_off_header}\n{clean_trade_off}"
         
         human_review_text = (
             ("Yes" if agent_output.is_human_review_required else "No")
@@ -248,7 +254,7 @@ class AgentService:
                 "You are a Senior Procurement Specialist and AI Agent. "
                 "Review the data below and recommend the most suitable supplier quote for the company.\n\n"
                 "IMPORTANT RULE 1: When writing your analysis, NEVER use technical IDs such as 'quote_id' or UUIDs. "
-                "Always refer to suppliers naturally using their 'supplier_name' (e.g., 'DEF New\'s quote...').\n"
+                "Always refer to suppliers naturally using their 'supplier_name' (e.g., 'DEF New\\'s quote...').\n"
                 "IMPORTANT RULE 2: You are strictly an advisory consultant. Never use definitive assertions such as 'This quote is approved' or 'Purchased'. "
                 "Always use recommendation phrasing such as 'I recommend this quote' or 'It is advised to evaluate'. Final decisions are made by human approvers.\n"
                 "IMPORTANT RULE 3 (EVIDENCE INTEGRITY & VERBATIM CITATIONS): When citing information from the 'CORPORATE MEMORY (RAG CONTEXT)' section "
@@ -289,6 +295,7 @@ class AgentService:
             "ÖNEMLİ KURAL 4 (GÜVENLİK VE EKSİK VERİ): Eğer seçtiğin teklifin 'has_incomplete_financial_data' değeri true ise, "
             "veya teklifte uyarılar ('warnings') varsa, ya da 'extraction_confidence' 0.70'in altındaysa, "
             "kesinlikle 'is_human_review_required' alanını true olarak işaretle ve risk faktörlerinde bu eksikliği veya uyarıyı açıkça belirt.\n\n"
+            "ÖNEMLİ KURAL 5 (DİL): Gerekçe, ödünleşim (trade-off) analizi ve risk faktörleri dahil tüm analiz açıklamalarını Türkçe olarak yaz. Ancak resmî politika başlıklarını, madde numaralarını (Örn: 'Madde 2.1') ve kaynak atıflarını orijinal hâliyle koru.\n\n"
         )
         
         prompt += "--- KURUMSAL HAFIZA (RAG CONTEXT) ---\n"

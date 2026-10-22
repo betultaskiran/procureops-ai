@@ -26,6 +26,29 @@ if TYPE_CHECKING:
 logger = logging.getLogger("app.services.deterministic.orchestrator")
 
 
+def localize_fx_note(note: str | None, locale: str = "tr") -> str | None:
+    """
+    Localizes human-readable explanatory tokens in FX calculation notes.
+    Preserves all currency codes, numbers, rates, formulas, dates, provider identifiers,
+    and conversion path indicators (cross, inverse, direct).
+    """
+    if not note or locale != "en":
+        return note
+
+    res = note
+    # Conversions & paths
+    res = res.replace("Doğrudan Kur:", "Direct Rate:")
+    res = res.replace("Ters Kur:", "Inverse Rate:")
+    res = res.replace("Çapraz Kur:", "Cross Rate:")
+    res = res.replace("Aynı Para Birimi:", "Same Currency:")
+    # Common labels
+    res = res.replace("Kur: ", "Rate: ")
+    res = res.replace("Ortak Tarih: ", "Common Date: ")
+    res = res.replace("Tarih: ", "Date: ")
+    res = res.replace("Döviz kuru temin edilemedi:", "FX rate unavailable:")
+    return res
+
+
 class DeterministicEngine:
     """
     Bir RFQ'ya ait tüm teklifleri alır, TCO hesaplar ve şirket kurallarına
@@ -43,7 +66,8 @@ class DeterministicEngine:
     async def run_analysis(
         self, 
         rfq_id: uuid.UUID, 
-        rules: PolicyRules
+        rules: PolicyRules,
+        locale: str = "tr",
     ) -> Analysis:
         """
         1. Yeni bir Analysis kaydı oluşturur.
@@ -130,7 +154,11 @@ class DeterministicEngine:
                 tco_result.exchange_rate_source = "IDENTITY"
                 tco_result.exchange_rate_type = "ForexSelling"
                 tco_result.exchange_rate_date = today_date
-                same_note = f"[Aynı Para Birimi: {quote_curr} = {target_currency} (Kur: 1.0)]"
+                same_note = (
+                    f"[Same Currency: {quote_curr} = {target_currency} (Rate: 1.0)]"
+                    if locale == "en"
+                    else f"[Aynı Para Birimi: {quote_curr} = {target_currency} (Kur: 1.0)]"
+                )
                 tco_result.calculation_notes = (
                     f"{tco_result.calculation_notes} | {same_note}"
                     if tco_result.calculation_notes
@@ -151,7 +179,12 @@ class DeterministicEngine:
                     tco_result.exchange_rate_date = rate_dto.rate_date
                     tco_result.exchange_rate_source = rate_dto.source
                     tco_result.exchange_rate_type = rate_dto.rate_type
-                    fx_note = rate_dto.calculation_notes or f"[{rate_dto.conversion_path} Kur: {quote_curr}/{target_currency} = {rate_dto.rate}]"
+                    raw_fx_note = rate_dto.calculation_notes or f"[{rate_dto.conversion_path} Kur: {quote_curr}/{target_currency} = {rate_dto.rate}]"
+                    fx_note = (
+                        localize_fx_note(raw_fx_note, locale=locale)
+                        if locale == "en"
+                        else raw_fx_note
+                    )
                     tco_result.calculation_notes = (
                         f"{tco_result.calculation_notes} | {fx_note}"
                         if tco_result.calculation_notes
@@ -166,15 +199,23 @@ class DeterministicEngine:
                         analysis.status = AnalysisStatus.FAILED
                         await self.db.commit()
                         curr_str = ", ".join(sorted(currencies))
-                        raise ValueError(
-                            f"Teklifler farklı para birimleri içermektedir ({curr_str}). "
+                        fail_msg = (
+                            f"Quotes contain different currencies ({curr_str}). "
+                            "Direct numerical comparison is not permitted without verified FX rates."
+                            if locale == "en"
+                            else f"Teklifler farklı para birimleri içermektedir ({curr_str}). "
                             "Doğrulanmış döviz kuru olmadan doğrudan sayısal karşılaştırmaya izin verilmez."
                         )
+                        raise ValueError(fail_msg)
                     else:
                         # Tek para birimli ancak bütçeden farklı teklif: TCO çevrimi None bırakılır, Compliance fail-closed kararı verir
                         tco_result.converted_total_tco = None
                         tco_result.target_currency = target_currency
-                        fail_note = f"[Döviz kuru temin edilemedi: {quote_curr} -> {target_currency} (fail-closed)]"
+                        fail_note = (
+                            f"[FX rate unavailable: {quote_curr} -> {target_currency} (fail-closed)]"
+                            if locale == "en"
+                            else f"[Döviz kuru temin edilemedi: {quote_curr} -> {target_currency} (fail-closed)]"
+                        )
                         tco_result.calculation_notes = (
                             f"{tco_result.calculation_notes} | {fail_note}"
                             if tco_result.calculation_notes
@@ -192,8 +233,21 @@ class DeterministicEngine:
             if quote_curr != target_currency and tco_result.exchange_rate is not None:
                 from app.models.analysis import EvidenceItem
                 source_reference = f"{tco_result.exchange_rate_source or 'TCMB'} ({tco_result.exchange_rate_date or today_date}, {tco_result.exchange_rate_type or 'ForexSelling'})"
-                claim = f"Döviz Kuru Çevrimi: {quote_curr} -> {target_currency} (Teklif #{str(quote.id)[:8]})"
-                content_text = tco_result.calculation_notes or f"Kur: {tco_result.exchange_rate}. TCO: {tco_result.total_tco} {quote_curr} -> {tco_result.converted_total_tco} {target_currency}"
+                claim = (
+                    f"FX Conversion: {quote_curr} -> {target_currency} (Quote #{str(quote.id)[:8]})"
+                    if locale == "en"
+                    else f"Döviz Kuru Çevrimi: {quote_curr} -> {target_currency} (Teklif #{str(quote.id)[:8]})"
+                )
+                fallback_content = (
+                    f"Rate: {tco_result.exchange_rate}. TCO: {tco_result.total_tco} {quote_curr} -> {tco_result.converted_total_tco} {target_currency}"
+                    if locale == "en"
+                    else f"Kur: {tco_result.exchange_rate}. TCO: {tco_result.total_tco} {quote_curr} -> {tco_result.converted_total_tco} {target_currency}"
+                )
+                content_text = (
+                    localize_fx_note(tco_result.calculation_notes, locale=locale)
+                    if locale == "en"
+                    else (tco_result.calculation_notes or fallback_content)
+                ) or fallback_content
                 fx_ev = EvidenceItem(
                     analysis_id=analysis.id,
                     source_type="fx_rate",
@@ -208,7 +262,8 @@ class DeterministicEngine:
                 quote=quote,
                 tco_result=tco_result,
                 rules=rules,
-                analysis_id=analysis.id
+                analysis_id=analysis.id,
+                locale=locale,
             )
             
             is_quote_compliant = True

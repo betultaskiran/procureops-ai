@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 import { Quote, RFQ, AnalysisResponse } from "@/lib/api/types";
 import { useTranslation } from "@/lib/i18n";
-import { formatCurrency as fmtCurrency, formatPercent } from "@/lib/i18n/formatters";
+import { formatCurrency as fmtCurrency, formatPercent, formatRuleTitle } from "@/lib/i18n/formatters";
 
 interface ComparisonMatrixProps {
   quotes: Quote[];
@@ -77,7 +77,7 @@ export const ComparisonMatrix: React.FC<ComparisonMatrixProps> = ({
       return {
         status: "fail",
         label: t("analysis.matrix.compliance_fail_label"),
-        subtext: failChecks.length > 0 ? failChecks.map((c) => c.rule_description).join(", ") : t("analysis.matrix.compliance_fail_subtext"),
+        subtext: failChecks.length > 0 ? failChecks.map((c) => formatRuleTitle(c.rule_name, c.rule_description, locale)).join(", ") : t("analysis.matrix.compliance_fail_subtext"),
         bg: "bg-red-500/10",
         border: "border-red-500/30",
         text: "text-red-400",

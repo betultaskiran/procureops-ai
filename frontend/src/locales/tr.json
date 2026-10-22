@@ -361,6 +361,9 @@
     "non_compliant": "Uyumsuz"
   },
   "rfq_detail": {
+    "loading_details": "Talep detayları yükleniyor...",
+    "requirements_terms": "Talep Şartları & Koşulları",
+    "not_specified": "Belirtilmemiş",
     "back_to_quotes": "← Quotes & RFQs Sayfasına Dön",
     "rfq_summary": "Talep Özeti",
     "target_budget": "Hedef Bütçe",
@@ -429,9 +432,22 @@
       "analyze_tooltip_start": "Tüm teklifleri yan yana kıyaslayan yapay zeka analizini başlat",
       "btn_analyze_new_rules": "Yeni Şartlarla Analiz Et",
       "btn_re_evaluate": "Yeniden Değerlendir",
-      "btn_start_multi_analysis": "Çoklu Analizi Başlat"
+      "btn_start_multi_analysis": "Çoklu Analizi Başlat",
+      "btn_review_and_approve": "Karar Ver & Onayla"
     },
     "quotes_section": {
+      "submitted_quotes": "İletilen Teklifler ({count})",
+      "click_view_details_hint": "Aşağıdaki herhangi bir teklifi incelemek için \"Detayları Gör\"e tıklayın",
+      "extracted_doc_label": "Belgeden Okunan: {name}",
+      "status_extracted": "Çıkarıldı",
+      "btn_viewing": "Görüntüleniyor",
+      "btn_view_details": "Detayları Gör",
+      "quote_details_title": "Teklif Detayları: {supplier}",
+      "no_quote_available": "Teklif Bulunamadı",
+      "no_line_items": "Ayrıştırılmış kalem bulunamadı.",
+      "no_quotes_added": "Bu RFQ için henüz teklif eklenmedi.",
+      "deterministic_math_applied": "Deterministik matematik uygulandı.",
+      "missing_data": "[Eksik Veri]",
       "pending_comparison_title": "Çoklu Karşılaştırma Beklemede (1 / 2 Teklif)",
       "pending_comparison_desc": "Tedarikçileri yan yana kıyaslamak ve yapay zeka analizini çalıştırmak için en az bir teklif daha ekleyin.",
       "btn_upload_second_quote": "+ İkinci Teklifi Yükle",
@@ -460,6 +476,7 @@
       "label_created_at": "Oluşturulma:",
       "label_final_amount": "Kesinleşen Tutar:",
       "label_cancellation_reason": "İptal Gerekçesi ({by}):",
+      "label_actual_delivery": "Fiilî Teslimat",
       "reason_unspecified": "Gerekçe belirtilmedi",
       "quality_records_title": "Kalite & İade Kayıtları ({count})",
       "btn_hide": "Gizle",
@@ -479,6 +496,16 @@
       "attached_preview": "Ekli: PO-{id}.pdf"
     },
     "invitations_section": {
+      "title_with_count": "Tedarikçi Davetleri & E-posta Giden Kutusu ({count})",
+      "subtitle": "İşlemsel giden kutusu aracılığıyla tedarikçilere gönderilen dayanıklı arka plan e-posta teslimatları.",
+      "table_recipient_supplier": "Alıcı / Tedarikçi",
+      "badge_queued": "Kuyrukta",
+      "badge_sending": "Gönderiliyor...",
+      "badge_sent": "Gönderildi",
+      "badge_delivered": "Teslim Edildi",
+      "badge_failed": "Başarısız",
+      "btn_retry": "Tekrar Dene",
+      "quote_submitted_date": "{date} tarihinde teklif iletildi",
       "btn_send_new_invite": "Yeni Davet Gönder",
       "empty_invitations": "Henüz bu RFQ için tedarikçilere davet e-postası gönderilmedi.",
       "badge_invite_revoked": "Davet İptal",
@@ -500,6 +527,18 @@
       "invite_queued_success": "Davet kuyruğa eklendi: {email} ({status})"
     },
     "modals": {
+      "btn_back_to_list": "Listeye dön",
+      "company_name_label": "Şirket Adı *",
+      "btn_save_supplier": "Tedarikçiyi Kaydet",
+      "select_supplier_label": "Tedarikçi *",
+      "btn_add_new_supplier": "Yeni Tedarikçi Ekle",
+      "select_supplier_placeholder": "Bir tedarikçi seçin...",
+      "quote_doc_label": "Teklif Belgesi (PDF, Excel, Görsel) *",
+      "quote_doc_types_hint": "PDF, Excel (.xlsx), PNG, JPG (maksimum 50MB)",
+      "btn_upload_quote": "Teklif Yükle",
+      "btn_uploading_quote": "Yükleniyor...",
+      "min_chars_warning": "En az 3 karakter gereklidir.",
+      "deliver_po_actual_date_label": "Fiilî Teslim Tarihi",
       "cancel_rfq_title": "RFQ Talebini İptal Et",
       "cancel_rfq_desc": "İş akışı durumu 'cancelled' olarak değiştirilecektir.",
       "cancel_rfq_reason_label": "İptal Gerekçesi *",
@@ -861,6 +900,10 @@
     "evidence": {
       "title": "AI Karar Gerekçesi ve Kanıtlar",
       "supplier_analysis": "Tedarikçi Analizi ve Kanıtlar",
+      "source_type_policy": "Politika Maddesi",
+      "source_type_quote": "Teklif Verisi",
+      "source_type_supplier_history": "Tedarikçi Geçmişi",
+      "source_type_calculation": "Hesaplama",
       "reasoning_summary": "Karar Gerekçesi Özeti",
       "key_strengths": "Öne Çıkan Avantajlar",
       "risks_flags": "Tespit Edilen Riskler",
@@ -923,7 +966,38 @@
       "actual_value_label": "Gerçekleşen: ",
       "required_value_label": "Beklenen Kural: ",
       "fx_evidence_badge": "DÖVİZ KURU KANITI",
-      "fx_evidence_formula_prefix": "Formül: "
+      "fx_evidence_formula_prefix": "Formül: ",
+      "rule_titles": {
+        "max_delivery_days": "Maksimum Teslimat Süresi Kontrolü",
+        "min_warranty_months": "Minimum Garanti Süresi Kontrolü",
+        "max_tco_budget": "Maksimum Bütçe Kontrolü",
+        "require_payment_terms": "Zorunlu Ödeme Koşulu Kontrolü",
+        "cost_completeness": "Maliyet Verisi Eksiksizlik Kontrolü",
+        "extraction_confidence": "Doküman Veri Çıkarma Güven Skoru Kontrolü"
+      },
+      "rule_results": {
+        "pass": "UYGUN",
+        "fail": "UYGUN DEĞİL",
+        "warning": "UYARI"
+      },
+      "rule_notes": {
+        "compliant": "Uygun.",
+        "delivery_not_specified": "Teslimat süresi belirtilmemiş.",
+        "delivery_exceeds": "Teslimat süresi sınırı aşıyor.",
+        "warranty_not_specified": "Garanti süresi belirtilmemiş.",
+        "warranty_insufficient": "Garanti süresi yetersiz.",
+        "currency_not_specified": "Para birimi belirtilmemiş: Karşılaştırma yapılamıyor.",
+        "exceeds_budget": "Bütçeyi aşıyor.",
+        "payment_not_specified": "Ödeme koşulu belirtilmemiş.",
+        "unacceptable_payment": "Kabul edilemez ödeme koşulu.",
+        "cost_items_complete": "Maliyet kalemleri eksiksiz.",
+        "confidence_sufficient": "Güven skoru yeterli."
+      },
+      "rule_values": {
+        "complete": "Eksiksiz",
+        "missing_prefix": "Eksik: ",
+        "none": "Belirtilmedi"
+      }
     },
     "review": {
       "title": "İnsan Denetimli Karar İncelemesi",

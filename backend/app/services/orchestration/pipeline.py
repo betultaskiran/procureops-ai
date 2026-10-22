@@ -157,7 +157,12 @@ class AnalysisPipelineOrchestrator:
                     "eligible_count": len(eligible_quotes),
                     "eliminated_count": len(eliminated_quotes),
                     "stage_summaries": [
-                        {"stage": sr.stage.value, "status": sr.status.value, "duration_ms": sr.duration_ms}
+                        {
+                            "stage": sr.stage.value,
+                            "status": sr.status.value,
+                            "duration_ms": sr.duration_ms,
+                            "summary": sr.summary,
+                        }
                         for sr in stage_results
                     ]
                 }

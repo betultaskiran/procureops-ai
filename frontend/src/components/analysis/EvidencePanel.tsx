@@ -22,12 +22,35 @@ import {
 } from "lucide-react";
 import { AnalysisResponse, Quote } from "@/lib/api/types";
 import { useTranslation } from "@/lib/i18n";
-import { formatCurrency as fmtCurrency } from "@/lib/i18n/formatters";
+import { 
+  formatCurrency as fmtCurrency,
+  formatRuleTitle,
+  formatRuleNotes,
+  formatRuleValue,
+  formatRuleResult,
+} from "@/lib/i18n/formatters";
 
 interface EvidencePanelProps {
   analysis: AnalysisResponse;
   quotes: Quote[];
   onOpenReviewModal?: (quoteId?: string) => void;
+}
+
+function parseRisks(risksRaw: string | null | undefined): string[] {
+  if (!risksRaw) return [];
+  const trimmed = risksRaw.trim();
+  if (!trimmed) return [];
+  if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) {
+        return parsed.map((item) => String(item).trim()).filter(Boolean);
+      }
+    } catch {
+      // Fallback to single string
+    }
+  }
+  return [trimmed];
 }
 
 export const EvidencePanel: React.FC<EvidencePanelProps> = ({
@@ -40,9 +63,25 @@ export const EvidencePanel: React.FC<EvidencePanelProps> = ({
   const [selectedEvidenceIdx, setSelectedEvidenceIdx] = useState<number | null>(null);
 
   const recommendation = analysis.recommendation;
+  const parsedRisks = parseRisks(recommendation?.risks);
   const recommendedQuote = quotes.find(
     (q) => q.id === recommendation?.recommended_quote_id
   );
+
+  const formatSourceType = (type: string) => {
+    switch (type?.toLowerCase()) {
+      case "policy":
+        return t("analysis.evidence.source_type_policy");
+      case "quote":
+        return t("analysis.evidence.source_type_quote");
+      case "supplier_history":
+        return t("analysis.evidence.source_type_supplier_history");
+      case "calculation":
+        return t("analysis.evidence.source_type_calculation");
+      default:
+        return type;
+    }
+  };
 
   const formatVerificationStatus = (status?: string) => {
     switch (status?.toLowerCase()) {
@@ -358,15 +397,17 @@ export const EvidencePanel: React.FC<EvidencePanelProps> = ({
 
         {/* Risks & Verification Notes Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-5">
-          {recommendation?.risks && (
+          {parsedRisks.length > 0 && (
             <div className="p-4 rounded-lg bg-amber-500/5 border border-amber-500/20">
-              <h4 className="text-xs font-semibold text-amber-400 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
+              <h4 className="text-xs font-semibold text-amber-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
                 <AlertTriangle size={13} />
                 {t("analysis.evidence.risks_title")}
               </h4>
-              <p className="text-xs text-text-muted leading-relaxed">
-                {recommendation.risks}
-              </p>
+              <ul className="space-y-1.5 text-xs text-text-muted leading-relaxed list-disc list-inside">
+                {parsedRisks.map((risk, rIdx) => (
+                  <li key={rIdx}>{risk}</li>
+                ))}
+              </ul>
             </div>
           )}
 
@@ -428,7 +469,7 @@ export const EvidencePanel: React.FC<EvidencePanelProps> = ({
                         }`}
                       >
                         {isFx && <TrendingUp size={11} className="text-blue-400" />}
-                        {isFx ? t("analysis.evidence.fx_evidence_badge") : item.source_type}
+                        {isFx ? t("analysis.evidence.fx_evidence_badge") : formatSourceType(item.source_type)}
                       </span>
                       <span className="text-[11px] font-mono text-text-muted">
                         {item.source_reference}
@@ -525,7 +566,7 @@ export const EvidencePanel: React.FC<EvidencePanelProps> = ({
                           <div className="flex-1">
                             <div className="flex items-center justify-between gap-2">
                               <span className="font-semibold text-text-primary">
-                                {check.rule_description || check.rule_name}
+                                {formatRuleTitle(check.rule_name, check.rule_description, locale)}
                               </span>
                               <span
                                 className={`font-mono text-[10px] uppercase font-bold px-1.5 py-0.5 rounded ${
@@ -536,14 +577,14 @@ export const EvidencePanel: React.FC<EvidencePanelProps> = ({
                                     : "bg-amber-500/10 text-amber-400"
                                 }`}
                               >
-                                {check.result.toUpperCase()}
+                                {formatRuleResult(check.result, locale)}
                               </span>
                             </div>
 
-                            <p className="text-text-muted mt-0.5">{check.notes}</p>
+                            <p className="text-text-muted mt-0.5">{formatRuleNotes(check.notes, locale)}</p>
                             
                             <div className="mt-1 flex items-center gap-3 text-[11px] text-text-muted font-mono">
-                              <span>{t("analysis.evidence.actual_value_label")}<strong className="text-text-primary">{check.actual_value}</strong></span>
+                              <span>{t("analysis.evidence.actual_value_label")}<strong className="text-text-primary">{formatRuleValue(check.actual_value, locale)}</strong></span>
                               <span>•</span>
                               <span>{t("analysis.evidence.required_value_label")}<strong className="text-text-primary">{check.required_value}</strong></span>
                             </div>

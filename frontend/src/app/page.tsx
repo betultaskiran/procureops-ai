@@ -4,6 +4,7 @@ import React from "react";
 import Link from "next/link";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { LanguageToggle } from "@/components/language-toggle";
+import { ProcureOpsLogo } from "@/components/brand/ProcureOpsLogo";
 import { useTranslation } from "@/lib/i18n/I18nContext";
 import { 
   FileText, 
@@ -38,11 +39,14 @@ export default function LandingPage() {
       {/* ── Navbar ──────────────────────────────────────────────────────── */}
       <header className="border-b border-border px-8 py-4 sticky top-0 bg-bg/90 backdrop-blur-md z-50">
         <div className="mx-auto max-w-7xl flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="h-8 w-8 rounded bg-primary flex items-center justify-center text-white font-bold text-lg shadow-sm">
-              P
-            </div>
-            <span className="font-semibold tracking-tight text-xl">ProcureOps</span>
+          <div className="flex items-center gap-2.5">
+            <ProcureOpsLogo size={36} />
+            <span className="font-bold tracking-tight text-xl text-text-primary">
+              ProcureOps
+            </span>
+            <span className="bg-gradient-to-r from-cyan-500 to-emerald-500 text-white font-bold text-xs px-2 py-0.5 rounded-md tracking-wider uppercase shadow-sm shadow-cyan-500/25">
+              AI
+            </span>
           </div>
           
           <div className="hidden md:flex items-center gap-8 text-sm font-medium text-text-muted">

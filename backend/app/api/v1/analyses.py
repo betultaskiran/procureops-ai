@@ -306,7 +306,7 @@ async def run_analysis(
     from app.services.deterministic.orchestrator import DeterministicEngine
     det_engine = DeterministicEngine(db=db)
     try:
-        analysis = await det_engine.run_analysis(rfq_id=rfq_id, rules=effective_rules)
+        analysis = await det_engine.run_analysis(rfq_id=rfq_id, rules=effective_rules, locale=locale)
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -471,7 +471,12 @@ async def run_analysis(
                 "quote_count": len(analysis.tco_results),
                 "rules": effective_rules.model_dump(),
                 "stage_summaries": [
-                    {"stage": sr.stage.value, "status": sr.status.value, "duration_ms": sr.duration_ms}
+                    {
+                        "stage": sr.stage.value,
+                        "status": sr.status.value,
+                        "duration_ms": sr.duration_ms,
+                        "summary": sr.summary,
+                    }
                     for sr in stage_results
                 ],
                 "verification_outcome": verified_recommendation.verification_status,
@@ -864,63 +869,112 @@ async def get_latest_analysis(
         select(AuditEvent.payload).where(
             AuditEvent.entity_id == analysis.id,
             AuditEvent.event_type.in_(["analysis_completed", "analysis_pipeline_completed"])
-        ).limit(1)
+        )
+        .order_by(AuditEvent.created_at.desc())
+        .limit(1)
     )
     audit_payload = audit_res.scalar_one_or_none()
     persisted_locale = audit_payload.get("locale", "tr") if (audit_payload and isinstance(audit_payload, dict)) else "tr"
     resp.locale = persisted_locale
     if audit_payload and isinstance(audit_payload, dict) and "stage_summaries" in audit_payload:
         for s in audit_payload["stage_summaries"]:
+            default_summary = (
+                f"Stage: {s.get('stage')}" if persisted_locale == "en" else f"Aşama: {s.get('stage')}"
+            )
             stage_results_list.append(StageResultResponse(
                 stage=s.get("stage", StageName.DETERMINISTIC_EVALUATION),
                 status=s.get("status", StageStatus.COMPLETED),
                 started_at=analysis.created_at,
                 completed_at=analysis.updated_at or analysis.created_at,
                 duration_ms=s.get("duration_ms", 0.0),
-                summary=f"Aşama: {s.get('stage')}",
+                summary=s.get("summary") or default_summary,
             ))
     elif analysis.status == "completed":
-        stage_results_list = [
-            StageResultResponse(
-                stage=StageName.EXTRACTION_VALIDATION,
-                status=StageStatus.COMPLETED,
-                started_at=analysis.created_at,
-                completed_at=analysis.created_at,
-                duration_ms=10.0,
-                summary=f"{len(analysis.tco_results)} teklif ve doküman doğrulandı.",
-            ),
-            StageResultResponse(
-                stage=StageName.DETERMINISTIC_EVALUATION,
-                status=StageStatus.COMPLETED,
-                started_at=analysis.created_at,
-                completed_at=analysis.created_at,
-                duration_ms=25.0,
-                summary=f"TCO ve kural kontrolleri tamamlandı ({len(analysis.compliance_checks)} kural denetlendi).",
-            ),
-            StageResultResponse(
-                stage=StageName.POLICY_COMPLIANCE,
-                status=StageStatus.COMPLETED if analysis.evidence_items else StageStatus.INCONCLUSIVE,
-                started_at=analysis.created_at,
-                completed_at=analysis.created_at,
-                duration_ms=45.0,
-                summary=f"Kurumsal politika analizi tamamlandı ({len(analysis.evidence_items)} kanıt).",
-            ),
-            StageResultResponse(
-                stage=StageName.SUPPLIER_RECOMMENDATION,
-                status=StageStatus.COMPLETED if analysis.recommendation else StageStatus.SKIPPED,
-                started_at=analysis.created_at,
-                completed_at=analysis.created_at,
-                duration_ms=120.0,
-                summary="Tedarikçi önerisi ve trade-off analizi tamamlandı.",
-            ),
-            StageResultResponse(
-                stage=StageName.INDEPENDENT_VERIFICATION,
-                status=StageStatus.COMPLETED if analysis.recommendation and analysis.recommendation.verification_status in ["verified", "passed"] else StageStatus.FAILED if analysis.recommendation and analysis.recommendation.verification_status in ["failed", "overridden"] else StageStatus.INCONCLUSIVE,
-                started_at=analysis.created_at,
-                completed_at=analysis.created_at,
-                duration_ms=15.0,
-                summary=f"Bağımsız doğrulama: {analysis.recommendation.verification_status if analysis.recommendation else 'N/A'}.",
-            ),
-        ]
+        if persisted_locale == "en":
+            stage_results_list = [
+                StageResultResponse(
+                    stage=StageName.EXTRACTION_VALIDATION,
+                    status=StageStatus.COMPLETED,
+                    started_at=analysis.created_at,
+                    completed_at=analysis.created_at,
+                    duration_ms=10.0,
+                    summary=f"{len(analysis.tco_results)} quotes and documents validated.",
+                ),
+                StageResultResponse(
+                    stage=StageName.DETERMINISTIC_EVALUATION,
+                    status=StageStatus.COMPLETED,
+                    started_at=analysis.created_at,
+                    completed_at=analysis.created_at,
+                    duration_ms=25.0,
+                    summary=f"TCO and rule checks completed ({len(analysis.compliance_checks)} rules inspected).",
+                ),
+                StageResultResponse(
+                    stage=StageName.POLICY_COMPLIANCE,
+                    status=StageStatus.COMPLETED if analysis.evidence_items else StageStatus.INCONCLUSIVE,
+                    started_at=analysis.created_at,
+                    completed_at=analysis.created_at,
+                    duration_ms=45.0,
+                    summary=f"Corporate policy compliance analyzed ({len(analysis.evidence_items)} citations).",
+                ),
+                StageResultResponse(
+                    stage=StageName.SUPPLIER_RECOMMENDATION,
+                    status=StageStatus.COMPLETED if analysis.recommendation else StageStatus.SKIPPED,
+                    started_at=analysis.created_at,
+                    completed_at=analysis.created_at,
+                    duration_ms=120.0,
+                    summary="Supplier recommendation and trade-off analysis generated.",
+                ),
+                StageResultResponse(
+                    stage=StageName.INDEPENDENT_VERIFICATION,
+                    status=StageStatus.COMPLETED if analysis.recommendation and analysis.recommendation.verification_status in ["verified", "passed"] else StageStatus.FAILED if analysis.recommendation and analysis.recommendation.verification_status in ["failed", "overridden"] else StageStatus.INCONCLUSIVE,
+                    started_at=analysis.created_at,
+                    completed_at=analysis.created_at,
+                    duration_ms=15.0,
+                    summary=f"Independent verification: {analysis.recommendation.verification_status if analysis.recommendation else 'N/A'}.",
+                ),
+            ]
+        else:
+            stage_results_list = [
+                StageResultResponse(
+                    stage=StageName.EXTRACTION_VALIDATION,
+                    status=StageStatus.COMPLETED,
+                    started_at=analysis.created_at,
+                    completed_at=analysis.created_at,
+                    duration_ms=10.0,
+                    summary=f"{len(analysis.tco_results)} teklif ve doküman doğrulandı.",
+                ),
+                StageResultResponse(
+                    stage=StageName.DETERMINISTIC_EVALUATION,
+                    status=StageStatus.COMPLETED,
+                    started_at=analysis.created_at,
+                    completed_at=analysis.created_at,
+                    duration_ms=25.0,
+                    summary=f"TCO ve kural kontrolleri tamamlandı ({len(analysis.compliance_checks)} kural denetlendi).",
+                ),
+                StageResultResponse(
+                    stage=StageName.POLICY_COMPLIANCE,
+                    status=StageStatus.COMPLETED if analysis.evidence_items else StageStatus.INCONCLUSIVE,
+                    started_at=analysis.created_at,
+                    completed_at=analysis.created_at,
+                    duration_ms=45.0,
+                    summary=f"Kurumsal politika analizi tamamlandı ({len(analysis.evidence_items)} kanıt).",
+                ),
+                StageResultResponse(
+                    stage=StageName.SUPPLIER_RECOMMENDATION,
+                    status=StageStatus.COMPLETED if analysis.recommendation else StageStatus.SKIPPED,
+                    started_at=analysis.created_at,
+                    completed_at=analysis.created_at,
+                    duration_ms=120.0,
+                    summary="Tedarikçi önerisi ve trade-off analizi tamamlandı.",
+                ),
+                StageResultResponse(
+                    stage=StageName.INDEPENDENT_VERIFICATION,
+                    status=StageStatus.COMPLETED if analysis.recommendation and analysis.recommendation.verification_status in ["verified", "passed"] else StageStatus.FAILED if analysis.recommendation and analysis.recommendation.verification_status in ["failed", "overridden"] else StageStatus.INCONCLUSIVE,
+                    started_at=analysis.created_at,
+                    completed_at=analysis.created_at,
+                    duration_ms=15.0,
+                    summary=f"Bağımsız doğrulama: {analysis.recommendation.verification_status if analysis.recommendation else 'N/A'}.",
+                ),
+            ]
     resp.stage_results = stage_results_list
     return resp

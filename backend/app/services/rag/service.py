@@ -529,28 +529,38 @@ class RAGService:
 
         return clean_final_hits[:top_k]
 
-    def format_context_from_payloads(self, results: List[Dict[str, Any]]) -> str:
+    def format_context_from_payloads(
+        self, 
+        results: List[Dict[str, Any]], 
+        locale: str = "tr"
+    ) -> str:
         """
         Verilen arama sonuçları listesinden zengin ve okunabilir LLM bağlamı üretir.
         Sonuç yoksa modelin halüsinasyon görmesini engelleyecek açık negatif ifade döner.
         """
         if not results:
+            if locale == "en":
+                return "No relevant corporate policy provisions or rules were found in the documents. Please clearly state that this rule does not exist in policies without making assumptions."
             return "İlgili kurumsal politika belgelerinde bu konuyla ilgili herhangi bir hüküm veya kural bulunamadı. Lütfen varsayımda bulunmadan bu kuralın politikalarda yer almadığını açıkça belirtiniz."
 
         context_parts = []
         for i, payload in enumerate(results, 1):
-            source_doc = payload.get("title") or payload.get("source") or "Bilinmeyen Belge"
+            source_doc = payload.get("title") or payload.get("source") or ("Unknown Document" if locale == "en" else "Bilinmeyen Belge")
             sec_title = payload.get("section_title")
             page_num = payload.get("page_number")
             doc_type = payload.get("document_type")
 
-            header_parts = [f"Kaynak {i}: {source_doc}"]
+            source_label = f"Source {i}" if locale == "en" else f"Kaynak {i}"
+            header_parts = [f"{source_label}: {source_doc}"]
             if doc_type:
-                header_parts.append(f"Tür: {doc_type}")
+                type_label = "Type" if locale == "en" else "Tür"
+                header_parts.append(f"{type_label}: {doc_type}")
             if sec_title:
-                header_parts.append(f"Madde: {sec_title}")
+                sec_label = "Section" if locale == "en" else "Madde"
+                header_parts.append(f"{sec_label}: {sec_title}")
             if page_num:
-                header_parts.append(f"Sayfa: {page_num}")
+                page_label = "Page" if locale == "en" else "Sayfa"
+                header_parts.append(f"{page_label}: {page_num}")
 
             header_str = " | ".join(header_parts)
             clean_text = self.normalize_retrieved_text(payload.get("text", ""), sec_title)
@@ -562,7 +572,8 @@ class RAGService:
         self, 
         organization_id: str, 
         query: str, 
-        top_k: int = 3
+        top_k: int = 3,
+        locale: str = "tr"
     ) -> str:
         """
         Sorulan soruya en yakın adayları bulup adaptif filtreleme uygulayarak
@@ -575,7 +586,7 @@ class RAGService:
                 limit=max(top_k * 3, 10)
             )
             filtered = self.filter_and_rank_hits(results, top_k=top_k, query=query)
-            return self.format_context_from_payloads(filtered)
+            return self.format_context_from_payloads(filtered, locale=locale)
         except Exception as exc:
             import logging
             logging.getLogger("app.rag").warning(
