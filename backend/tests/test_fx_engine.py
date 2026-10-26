@@ -276,3 +276,96 @@ async def test_mock_provider_behavior():
     # Query latest (None)
     latest_rates = await mock.fetch_rates(None)
     assert len(latest_rates) == 2
+
+
+# ── Test 11: Freshness Policy Verification (Weekends & Weekdays) ─────────────
+
+def test_is_rate_fresh_policy():
+    """11. Validates is_rate_fresh behavior across calendar and business day intervals."""
+    from app.services.fx.policy import is_rate_fresh
+
+    # Scenario A: Same calendar day is fresh
+    assert is_rate_fresh(requested_date=date(2026, 10, 23), rate_date=date(2026, 10, 23)) is True
+
+    # Scenario B: 1 calendar day lag on weekday (Thursday rate requested on Friday)
+    assert is_rate_fresh(requested_date=date(2026, 10, 23), rate_date=date(2026, 10, 22)) is True
+
+    # Scenario C: Friday rate requested on Monday (TCMB weekend publishing cycle)
+    # 2026-10-23 is Friday, 2026-10-26 is Monday. Calendar diff: 3 days, business days lag: 1.
+    assert is_rate_fresh(requested_date=date(2026, 10, 26), rate_date=date(2026, 10, 23)) is True
+
+    # Scenario D: Friday rate requested over weekend (Saturday & Sunday)
+    assert is_rate_fresh(requested_date=date(2026, 10, 24), rate_date=date(2026, 10, 23)) is True
+    assert is_rate_fresh(requested_date=date(2026, 10, 25), rate_date=date(2026, 10, 23)) is True
+
+    # Scenario E: Mid-week stale gap (Friday rate requested on Thursday next week, 4 business days elapsed)
+    assert is_rate_fresh(requested_date=date(2026, 10, 29), rate_date=date(2026, 10, 23)) is False
+
+    # Scenario F: Older than max_lookback_days (e.g. 7 calendar days)
+    assert is_rate_fresh(requested_date=date(2026, 10, 30), rate_date=date(2026, 10, 23), max_lookback_days=5) is False
+
+    # Scenario G: Future rate date is rejected
+    assert is_rate_fresh(requested_date=date(2026, 10, 20), rate_date=date(2026, 10, 23)) is False
+
+
+# ── Test 12: TCMB Provider Timeout Handling ──────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_tcmb_provider_network_timeout(monkeypatch):
+    """12. Validates that httpx.TimeoutException is caught and raised as FXProviderError."""
+    import httpx
+    from app.services.fx.tcmb_provider import TCMBExchangeRateProvider
+    from app.services.fx.exceptions import FXProviderError
+
+    async def mock_get(*args, **kwargs):
+        raise httpx.ConnectTimeout("Connection handshake timed out")
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", mock_get)
+
+    provider = TCMBExchangeRateProvider(max_retries=1)
+    with pytest.raises(FXProviderError, match="TCMB network communication error"):
+        await provider.fetch_rates(target_date=date(2026, 10, 23))
+
+
+# ── Test 13: Malformed XML Response Handling ─────────────────────────────────
+
+def test_tcmb_provider_malformed_xml():
+    """13. Validates that corrupt/malformed XML raises FXInvalidDataError."""
+    corrupt_xml = b"<?xml version='1.0'?><Tarih_Date Tarih='20.10.2026'><UnclosedTag>"
+    with pytest.raises(FXInvalidDataError, match="Malformed TCMB XML response"):
+        parse_tcmb_xml(corrupt_xml)
+
+    empty_xml = b""
+    with pytest.raises(FXInvalidDataError, match="empty"):
+        parse_tcmb_xml(empty_xml)
+
+    missing_date_xml = b"<?xml version='1.0'?><Tarih_Date Bulten_No='123'></Tarih_Date>"
+    with pytest.raises(FXInvalidDataError, match="missing 'Tarih'"):
+        parse_tcmb_xml(missing_date_xml)
+
+
+# ── Test 14: Weekend Date Request Rejection ───────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_tcmb_provider_weekend_date_rejection():
+    """14. Validates that requesting a past weekend date directly raises FXRateNotFoundError without network calls."""
+    from app.services.fx.tcmb_provider import TCMBExchangeRateProvider
+
+    provider = TCMBExchangeRateProvider()
+    # 2026-10-25 is Sunday
+    with pytest.raises(FXRateNotFoundError, match="weekends"):
+        await provider.fetch_rates(target_date=date(2026, 10, 25))
+
+
+# ── Test 15: Strict TLS 1.2 Configuration Verification ───────────────────────
+
+def test_tcmb_ssl_context_strict_verification():
+    """15. Validates that create_tcmb_ssl_context enforces TLS 1.2 with strict certificate verification."""
+    import ssl
+    from app.services.fx.tcmb_provider import create_tcmb_ssl_context
+
+    ctx = create_tcmb_ssl_context()
+    assert ctx.maximum_version == ssl.TLSVersion.TLSv1_2
+    assert ctx.verify_mode == ssl.CERT_REQUIRED
+    assert ctx.check_hostname is True
+

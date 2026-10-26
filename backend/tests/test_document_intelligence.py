@@ -24,6 +24,7 @@ import os
 import uuid
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import openpyxl
@@ -141,14 +142,24 @@ def make_sample_xlsx_bytes() -> bytes:
 
 class MockLLMProvider(LLMProvider):
     """Mock LLM Provider for unit testing."""
-    def __init__(self, return_schema: QuoteExtractionSchema | None = None, should_fail: bool = False):
+    def __init__(
+        self,
+        return_schema: QuoteExtractionSchema | None = None,
+        should_fail: bool = False,
+        usage_metadata: Any = None,
+    ):
         self.return_schema = return_schema
         self.should_fail = should_fail
         self.last_prompt = None
+        self._usage_metadata = usage_metadata
 
     @property
     def model_name(self) -> str:
         return "mock-gemini-flash"
+
+    @property
+    def last_usage_metadata(self) -> Any:
+        return self._usage_metadata
 
     async def extract_structured(self, prompt, schema, system_prompt=None, config=None):
         self.last_prompt = prompt
@@ -708,3 +719,85 @@ async def test_failed_or_processing_document_blocks_analysis(tmp_path):
             await engine.run_analysis(rfq_id=rfq.id, rules=rules)
 
         assert "henüz tamamlanmadı" in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_quote_extraction_telemetry_logging(caplog, tmp_path):
+    """Verifies that QuoteExtractor records pdf_duration_ms, gemini_duration_ms, and tokens in telemetry."""
+    import logging
+    from app.core.logging import set_correlation_id
+
+    test_corr_id = f"test-corr-{uuid.uuid4().hex[:8]}"
+    set_correlation_id(test_corr_id)
+
+    pdf_bytes = make_digital_pdf_bytes("Acme Corp Unit Price 1000 Total 1000 TRY")
+    pdf_file = tmp_path / "telemetry_test.pdf"
+    pdf_file.write_bytes(pdf_bytes)
+
+    class DummyUsage:
+        prompt_token_count = 512
+        candidates_token_count = 128
+
+    mock_schema = QuoteExtractionSchema(
+        supplier_name="Acme Corp",
+        currency="TRY",
+        subtotal=1000.0,
+        total_price=1000.0,
+        extraction_confidence=1.0,
+        items=[
+            QuoteItemExtractionSchema(
+                line_number=1,
+                description="Test Item",
+                quantity=1.0,
+                unit="pcs",
+                unit_price=1000.0,
+                total_price=1000.0,
+            )
+        ],
+    )
+
+    mock_provider = MockLLMProvider(return_schema=mock_schema, usage_metadata=DummyUsage())
+    extractor = QuoteExtractor(provider=mock_provider)
+
+    auth = await create_test_auth_context(role=UserRole.ADMIN)
+    async with AsyncSessionLocal() as session:
+        rfq = RFQ(organization_id=auth.organization.id, title="Telemetry RFQ", status="collecting_quotes")
+        session.add(rfq)
+        await session.flush()
+
+        supplier = Supplier(
+            organization_id=auth.organization.id,
+            name="Telemetry Supplier",
+            email=f"tel_{uuid.uuid4().hex[:6]}@supplier.com",
+        )
+        session.add(supplier)
+        await session.flush()
+
+        doc = QuoteDocument(
+            rfq_id=rfq.id,
+            supplier_id=supplier.id,
+            file_name=pdf_file.name,
+            file_path=str(pdf_file),
+            file_type=FileType.PDF,
+            parse_status=ParseStatus.PENDING,
+        )
+        session.add(doc)
+        await session.commit()
+
+        with caplog.at_level(logging.INFO, logger="app.services.extraction"):
+            quote = await extractor.extract(quote_document=doc, db=session)
+            assert quote is not None
+
+        # Verify telemetry log
+        telemetry_logs = [r for r in caplog.records if "Quote extraction telemetry" in r.message]
+        assert len(telemetry_logs) >= 1
+        record = telemetry_logs[0]
+        assert f"correlation_id={test_corr_id}" in record.message
+        assert f"rfq_id={rfq.id}" in record.message
+        assert f"doc_id={doc.id}" in record.message
+        assert "file_type=.pdf" in record.message
+        assert "pdf_duration_ms=" in record.message
+        assert "gemini_duration_ms=" in record.message
+        assert "prompt_tokens=512" in record.message
+        assert "output_tokens=128" in record.message
+

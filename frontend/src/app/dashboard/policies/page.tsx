@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { 
   ShieldCheck, 
   Upload, 
@@ -93,6 +93,29 @@ export default function PoliciesPage() {
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const policyFileInputRef = useRef<HTMLInputElement>(null);
+
+  const resetUploadModal = () => {
+    setIsUploadOpen(false);
+    setUploadTitle("");
+    setUploadDocType("procurement_policy");
+    setUploadFile(null);
+    setUploadError(null);
+    if (policyFileInputRef.current) {
+      policyFileInputRef.current.value = "";
+    }
+  };
+
+  const openUploadModal = () => {
+    setUploadTitle("");
+    setUploadDocType("procurement_policy");
+    setUploadFile(null);
+    setUploadError(null);
+    if (policyFileInputRef.current) {
+      policyFileInputRef.current.value = "";
+    }
+    setIsUploadOpen(true);
+  };
 
   // RAG Search test state
   const [searchQuery, setSearchQuery] = useState("");
@@ -160,9 +183,7 @@ export default function PoliciesPage() {
       await policiesApi.uploadPolicy(formData);
 
       // Reset form & reload
-      setUploadTitle("");
-      setUploadFile(null);
-      setIsUploadOpen(false);
+      resetUploadModal();
       await loadPolicies();
     } catch (err: any) {
       setUploadError(err.message || "Failed to upload document.");
@@ -231,7 +252,7 @@ export default function PoliciesPage() {
           </button>
 
           <button
-            onClick={() => setIsUploadOpen(true)}
+            onClick={openUploadModal}
             className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary-hover text-white rounded-md text-sm font-medium transition-colors shadow-sm"
           >
             <Upload size={16} />
@@ -288,7 +309,7 @@ export default function PoliciesPage() {
               {t("policies_page.empty_policies_desc")}
             </p>
             <button
-              onClick={() => setIsUploadOpen(true)}
+              onClick={openUploadModal}
               className="mt-2 px-3 py-1.5 bg-primary/10 hover:bg-primary/20 text-primary rounded-md text-xs font-medium transition-colors"
             >
               {t("policies_page.upload_policy_btn")}
@@ -545,12 +566,18 @@ export default function PoliciesPage() {
 
       {/* ── Upload Modal ────────────────────────────────────────────────── */}
       {isUploadOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="bg-surface border border-border rounded-lg shadow-xl w-full max-w-md p-6">
+        <div 
+          onClick={resetUploadModal}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 cursor-pointer"
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()}
+            className="bg-surface border border-border rounded-lg shadow-xl w-full max-w-md p-6 cursor-default"
+          >
             <div className="flex items-center justify-between mb-4 border-b border-border pb-3">
               <h3 className="font-semibold text-text-primary text-lg">{t("policies_page.modal_upload_title")}</h3>
               <button 
-                onClick={() => setIsUploadOpen(false)}
+                onClick={resetUploadModal}
                 className="text-text-muted hover:text-text-primary text-xl font-bold leading-none"
               >
                 &times;
@@ -601,6 +628,7 @@ export default function PoliciesPage() {
                   {t("policies_page.modal_file_label")} *
                 </label>
                 <input
+                  ref={policyFileInputRef}
                   type="file"
                   accept=".pdf,.txt,.md"
                   onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
@@ -615,7 +643,7 @@ export default function PoliciesPage() {
               <div className="flex items-center justify-end gap-3 mt-4 pt-3 border-t border-border">
                 <button
                   type="button"
-                  onClick={() => setIsUploadOpen(false)}
+                  onClick={resetUploadModal}
                   className="px-4 py-2 border border-border text-text-secondary hover:text-text-primary rounded-md text-sm font-medium transition-colors"
                 >
                   {t("policies_page.modal_cancel_btn")}

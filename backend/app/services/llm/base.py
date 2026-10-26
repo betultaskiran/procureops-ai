@@ -118,6 +118,11 @@ class LLMProvider(ABC):
         """Kullanılan model adı. Log ve audit için."""
         ...
 
+    @property
+    def last_usage_metadata(self) -> Any:
+        """Son model çağrısının usage_metadata bilgisi (varsa)."""
+        return None
+
 
 class LLMExtractionError(Exception):
     """

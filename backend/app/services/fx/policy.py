@@ -64,6 +64,60 @@ def resolve_candidate_dates(
     return candidates
 
 
+def count_business_days_between(start_date: date, end_date: date) -> int:
+    """
+    start_date (hariç) ile end_date (dahil) arasındaki resmi iş günü (Pazartesi-Cuma)
+    sayısını hesaplar.
+    """
+    if start_date >= end_date:
+        return 0
+    business_days = 0
+    cur = start_date + timedelta(days=1)
+    while cur <= end_date:
+        if cur.weekday() < 5:  # 0=Pazartesi, ..., 4=Cuma
+            business_days += 1
+        cur += timedelta(days=1)
+    return business_days
+
+
+def is_rate_fresh(
+    requested_date: date,
+    rate_date: date,
+    max_lookback_days: int = 5,
+    max_business_days_lag: int = 2,
+) -> bool:
+    """
+    Döviz kuru tazelik politikasını doğrular.
+
+    TCMB YAYIN DÖNGÜSÜ & KURALLAR:
+    1. Gelecek Tarih Koruması: rate_date > requested_date kesinlikle kabul edilemez.
+    2. Aynı Gün: calendar_days == 0 -> Tazedir.
+    3. Takvim Farkı Sınırı: calendar_days > max_lookback_days (varsayılan: 5 gün) ise
+       kur bayat kabul edilir (fail-closed).
+    4. Hafta Sonu Uyumluluğu:
+       - TCMB hafta sonları (Cumartesi, Pazar) bülten yayımlamaz.
+       - Cuma günü yayımlanan bülten; Cumartesi, Pazar ve Pazartesi günü yeni bülten
+         yayımlanana kadar resmi ve tazedir.
+    5. İş Günü Gecikmesi Sınırı:
+       - rate_date ile requested_date arasındaki iş günü gecikmesi en fazla
+         max_business_days_lag (varsayılan: 2 iş günü) olabilir.
+       - Örneğin, normal bir Çarşamba gününde önceki Cuma'nın kuru (arada Pazartesi ve Salı
+         iş günleri bulunup 2 iş günü eşiği aşıldığında) bayat kabul edilir.
+    """
+    if rate_date > requested_date:
+        return False
+
+    calendar_days = (requested_date - rate_date).days
+    if calendar_days == 0:
+        return True
+
+    if calendar_days > max_lookback_days:
+        return False
+
+    business_days_lag = count_business_days_between(rate_date, requested_date)
+    return business_days_lag <= max_business_days_lag
+
+
 def calculate_conversion(
     amount: Decimal | str | int | float,
     rate: Decimal | str | int | float,
@@ -86,3 +140,4 @@ def calculate_conversion(
         raise FXInvalidDataError(f"Exchange rate must be strictly positive (got: {dec_rate}).")
 
     return dec_amount * dec_rate
+

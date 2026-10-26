@@ -25,6 +25,7 @@ THINKING BUDGET:
 """
 
 import json
+from typing import Any
 
 from google import genai
 from google.genai import types
@@ -60,10 +61,15 @@ class GeminiProvider(LLMProvider):
         # client.models.* → sync API (kullanmıyoruz)
         self._client = genai.Client(api_key=api_key)
         self._model = model
+        self._last_usage_metadata = None
 
     @property
     def model_name(self) -> str:
         return self._model
+
+    @property
+    def last_usage_metadata(self) -> Any:
+        return self._last_usage_metadata
 
     def _build_config(
         self,
@@ -117,7 +123,9 @@ class GeminiProvider(LLMProvider):
                 contents=prompt,
                 config=gen_config,
             )
+            self._last_usage_metadata = getattr(response, "usage_metadata", None)
         except Exception as e:
+            self._last_usage_metadata = None
             raise LLMExtractionError(
                 f"Gemini API call failed: {e}"
             ) from e
@@ -175,7 +183,9 @@ class GeminiProvider(LLMProvider):
                 contents=prompt,
                 config=gen_config,
             )
+            self._last_usage_metadata = getattr(response, "usage_metadata", None)
         except Exception as e:
+            self._last_usage_metadata = None
             raise LLMExtractionError(f"Gemini API call failed: {e}") from e
 
         return response.text or ""

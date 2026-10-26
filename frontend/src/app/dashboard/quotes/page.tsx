@@ -83,6 +83,30 @@ export default function QuotesAndRfqsPage() {
   const [isCreating, setIsCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
+  const resetCreateModal = () => {
+    setIsCreateOpen(false);
+    setCreateTitle("");
+    setCreateDescription("");
+    setCreateBudget("");
+    setCreateMaxDeliveryDays("");
+    setCreateMinWarrantyMonths("");
+    setCreatePaymentTerms("net-30");
+    setCreateItems([{ description: "", quantity: "1", unit: "Adet" }]);
+    setCreateError(null);
+  };
+
+  const openCreateModal = () => {
+    setCreateTitle("");
+    setCreateDescription("");
+    setCreateBudget("");
+    setCreateMaxDeliveryDays("");
+    setCreateMinWarrantyMonths("");
+    setCreatePaymentTerms("net-30");
+    setCreateItems([{ description: "", quantity: "1", unit: "Adet" }]);
+    setCreateError(null);
+    setIsCreateOpen(true);
+  };
+
   // Debounce search query by 300ms
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -265,7 +289,7 @@ export default function QuotesAndRfqsPage() {
         items: validItems.length > 0 ? validItems : undefined,
       });
 
-      setIsCreateOpen(false);
+      resetCreateModal();
       setFeedback({ type: "success", message: t("quotes_page.toast_rfq_created") });
       // Redirect to newly created RFQ detail page
       router.push(`/dashboard/rfq/${newRfq.id}`);
@@ -343,7 +367,7 @@ export default function QuotesAndRfqsPage() {
         </div>
 
         <button 
-          onClick={() => { setIsCreateOpen(true); setCreateError(null); }}
+          onClick={openCreateModal}
           className="flex items-center gap-2 bg-primary hover:bg-primary-hover text-white px-4 py-2.5 rounded-lg text-sm font-medium transition-colors shadow-sm self-start sm:self-auto"
         >
           <Plus size={16} />
@@ -414,7 +438,7 @@ export default function QuotesAndRfqsPage() {
           </p>
           {!debouncedSearch && statusFilter === "all" && (
             <button
-              onClick={() => setIsCreateOpen(true)}
+              onClick={openCreateModal}
               className="mt-4 flex items-center gap-2 bg-primary hover:bg-primary-hover text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
             >
               <Plus size={16} /> {t("quotes_page.empty_create_btn")}
@@ -895,15 +919,21 @@ export default function QuotesAndRfqsPage() {
 
       {/* ── Modal: Create New RFQ ────────────────────────────────────────── */}
       {isCreateOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div className="bg-surface border border-border rounded-xl shadow-2xl max-w-xl w-full max-h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+        <div 
+          onClick={resetCreateModal}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm cursor-pointer"
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()}
+            className="bg-surface border border-border rounded-xl shadow-2xl max-w-xl w-full max-h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150 cursor-default"
+          >
             <div className="p-6 border-b border-border flex items-center justify-between">
               <div>
                 <h3 className="text-lg font-bold text-text-primary">{t("quotes_page.create_modal_title")}</h3>
                 <p className="text-xs text-text-muted mt-0.5">{t("quotes_page.create_modal_subtitle")}</p>
               </div>
               <button 
-                onClick={() => setIsCreateOpen(false)}
+                onClick={resetCreateModal}
                 className="text-text-muted hover:text-text-primary p-1 rounded-md"
               >
                 <X size={18} />
@@ -1052,7 +1082,7 @@ export default function QuotesAndRfqsPage() {
 
             <div className="px-6 py-4 border-t border-border bg-surface-elevated/40 flex justify-end gap-3">
               <button 
-                onClick={() => setIsCreateOpen(false)}
+                onClick={resetCreateModal}
                 disabled={isCreating}
                 className="px-4 py-2 text-xs font-medium text-text-muted hover:text-text-primary transition-colors disabled:opacity-50"
               >

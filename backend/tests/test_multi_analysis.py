@@ -367,18 +367,18 @@ async def test_multi_analysis_currency_mismatch_returns_400():
         session.add(rfq)
         await session.flush()
 
-        # Quote 1 in USD, Quote 2 in EUR
+        # Doğrulanmamış/desteklenmeyen kurlar (XYZ ve ABC) ile fail-closed testi
         q1 = Quote(
             rfq_id=rfq.id,
             supplier_id=sup1.id,
-            currency="USD",
+            currency="XYZ",
             subtotal=Decimal("10000.00"),
             total_price=Decimal("10000.00"),
         )
         q2 = Quote(
             rfq_id=rfq.id,
             supplier_id=sup2.id,
-            currency="EUR",
+            currency="ABC",
             subtotal=Decimal("9000.00"),
             total_price=Decimal("9000.00"),
         )
@@ -391,7 +391,8 @@ async def test_multi_analysis_currency_mismatch_returns_400():
         res = await client.post(f"/api/v1/rfqs/{rfq_id}/analyze", json={})
         assert res.status_code == 400
         assert "farklı para birimleri" in res.json()["detail"].lower()
-        assert "EUR, USD" in res.json()["detail"] or "USD, EUR" in res.json()["detail"]
+        assert "ABC, XYZ" in res.json()["detail"] or "XYZ, ABC" in res.json()["detail"]
+
 
 
 # ── Scenario 5: Fewer than 2 quotes returns 400 error ─────────────────────────

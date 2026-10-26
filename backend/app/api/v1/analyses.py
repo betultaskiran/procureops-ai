@@ -304,7 +304,9 @@ async def run_analysis(
     det_start_mono = time.monotonic()
     det_start_time = datetime.now(timezone.utc)
     from app.services.deterministic.orchestrator import DeterministicEngine
-    det_engine = DeterministicEngine(db=db)
+    from app.services.fx.service import ExchangeRateService
+    fx_service = ExchangeRateService(db=db)
+    det_engine = DeterministicEngine(db=db, fx_service=fx_service)
     try:
         analysis = await det_engine.run_analysis(rfq_id=rfq_id, rules=effective_rules, locale=locale)
     except ValueError as e:
@@ -315,6 +317,10 @@ async def run_analysis(
 
     det_duration_ms = (time.monotonic() - det_start_mono) * 1000
 
+    quote_currencies = sorted({t.currency for t in analysis.tco_results if t.currency})
+    target_currency = (effective_rules.budget_currency or "TRY").strip().upper()
+    display_currency = target_currency if len(quote_currencies) > 1 else (quote_currencies[0] if quote_currencies else "TRY")
+
     # Stage 1: Extraction & Input Validation
     stage_results.append(StageResultResponse(
         stage=StageName.EXTRACTION_VALIDATION,
@@ -323,7 +329,12 @@ async def run_analysis(
         completed_at=datetime.now(timezone.utc),
         duration_ms=round(det_duration_ms * 0.3, 2),
         summary=f"{len(analysis.tco_results)} quotes and documents successfully validated." if locale == "en" else f"{len(analysis.tco_results)} teklif ve doküman başarıyla doğrulandı.",
-        details={"quote_count": len(analysis.tco_results), "currency": analysis.tco_results[0].currency if analysis.tco_results else "TRY"},
+        details={
+            "quote_count": len(analysis.tco_results),
+            "currency": display_currency,
+            "currencies": quote_currencies,
+            "target_currency": target_currency,
+        },
     ))
 
     # Stage 2: Deterministic TCO & Hard-Rule Evaluation

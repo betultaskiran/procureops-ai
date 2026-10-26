@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { 
@@ -53,6 +53,8 @@ import { EvidencePanel } from "@/components/analysis/EvidencePanel";
 import { StaleNoticeBanner } from "@/components/analysis/StaleNoticeBanner";
 import { ReviewModal } from "@/components/analysis/ReviewModal";
 import { SupplierPerformanceDrawer } from "@/components/analysis/SupplierPerformanceDrawer";
+import { AnalysisPipelineProgress } from "@/components/analysis/AnalysisPipelineProgress";
+import { QuoteExtractionProgress } from "@/components/quotes/QuoteExtractionProgress";
 import { useTranslation } from "@/lib/i18n";
 import { formatCurrency as fmtCurrency, formatDate as fmtDate, formatNumber as fmtNumber, formatUnit } from "@/lib/i18n/formatters";
 import { getLocalizedApiError } from "@/lib/i18n/apiErrorMap";
@@ -161,6 +163,59 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
   const [newSupplierCity, setNewSupplierCity] = useState("");
   const [isSavingSupplier, setIsSavingSupplier] = useState(false);
   const [supplierCreateError, setSupplierCreateError] = useState<string | null>(null);
+  const quoteFileInputRef = useRef<HTMLInputElement>(null);
+
+  const resetUploadQuoteModal = () => {
+    setIsUploadQuoteOpen(false);
+    setUploadFile(null);
+    setUploadSupplierId("");
+    setUploadError(null);
+    setUploadWarning(null);
+    setIsCreatingSupplier(false);
+    setNewSupplierName("");
+    setNewSupplierEmail("");
+    setNewSupplierPhone("");
+    setNewSupplierCity("");
+    setSupplierCreateError(null);
+    if (quoteFileInputRef.current) {
+      quoteFileInputRef.current.value = "";
+    }
+  };
+
+  const openUploadQuoteModal = () => {
+    setUploadFile(null);
+    setUploadSupplierId("");
+    setUploadError(null);
+    setUploadWarning(null);
+    setIsCreatingSupplier(false);
+    setNewSupplierName("");
+    setNewSupplierEmail("");
+    setNewSupplierPhone("");
+    setNewSupplierCity("");
+    setSupplierCreateError(null);
+    if (quoteFileInputRef.current) {
+      quoteFileInputRef.current.value = "";
+    }
+    setIsUploadQuoteOpen(true);
+  };
+
+  const resetInviteModal = () => {
+    setIsInviteModalOpen(false);
+    setInviteSupplierId("");
+    setInviteEmail("");
+    setInviteName("");
+    setInviteCustomMessage("");
+    setInviteError(null);
+  };
+
+  const openInviteModal = () => {
+    setInviteSupplierId("");
+    setInviteEmail("");
+    setInviteName("");
+    setInviteCustomMessage("");
+    setInviteError(null);
+    setIsInviteModalOpen(true);
+  };
 
   useEffect(() => {
     rfqsApi.getSuppliers().then(setSuppliers).catch(console.error);
@@ -416,8 +471,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
       if (res.quote?.id) {
         setSelectedQuoteId(res.quote.id);
       }
-      setIsUploadQuoteOpen(false);
-      setUploadFile(null);
+      resetUploadQuoteModal();
       // Refresh analysis to reflect updated staleness
       rfqsApi.getAnalysis(rfqId).then(setAnalysis).catch(() => {});
     } catch (err: any) {
@@ -680,7 +734,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
         <div className="flex items-center gap-2.5 flex-wrap">
           {rfq.status !== 'cancelled' && (
             <button 
-              onClick={() => setIsUploadQuoteOpen(true)}
+              onClick={openUploadQuoteModal}
               className="flex items-center gap-2 bg-surface-elevated border border-border hover:bg-bg text-primary px-3.5 py-2 rounded text-xs font-medium transition-colors shadow-sm"
             >
               <Plus size={15} />
@@ -690,7 +744,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
 
           {rfq.status !== 'cancelled' && (
             <button
-              onClick={() => setIsInviteModalOpen(true)}
+              onClick={openInviteModal}
               className="flex items-center gap-2 bg-surface-elevated border border-border hover:bg-bg text-blue-600 dark:text-blue-400 px-3.5 py-2 rounded text-xs font-medium transition-colors shadow-sm"
             >
               <Mail size={15} />
@@ -839,30 +893,6 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
         </div>
       )}
 
-      {/* Analysis Error Banner */}
-      {analysisError && (
-        <div className="p-4 rounded-xl bg-red-500/10 border border-red-500/30 text-red-300 text-xs flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <ShieldAlert size={18} className="text-red-400 shrink-0" />
-            <span>{analysisError}</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={handleRunAnalysis}
-              className="px-2.5 py-1 rounded bg-red-600 hover:bg-red-500 text-white font-medium text-xs transition-colors"
-            >
-              Tekrar Dene
-            </button>
-            <button
-              onClick={() => setAnalysisError(null)}
-              className="text-xs hover:underline text-text-muted"
-            >
-              Kapat
-            </button>
-          </div>
-        </div>
-      )}
-
       {/* Stale Analysis Notice Banner */}
       {analysis && (
         <StaleNoticeBanner
@@ -929,6 +959,16 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
         )}
       </div>
 
+      {/* ── Multi-Analysis Pipeline Progress ──────────────────────────── */}
+      <AnalysisPipelineProgress
+        isAnalyzing={isAnalyzing}
+        stageResults={analysis?.stage_results}
+        verificationStatus={analysis?.recommendation?.verification_status}
+        error={analysisError}
+        onRetry={handleRunAnalysis}
+        quoteCount={quotes.length}
+      />
+
       {/* ── Multi-Analysis Comparison Matrix ──────────────────────────── */}
       {quotes.length >= 2 ? (
         <ComparisonMatrix
@@ -962,7 +1002,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
           </div>
           {rfq.status !== "cancelled" && (
             <button
-              onClick={() => setIsUploadQuoteOpen(true)}
+              onClick={openUploadQuoteModal}
               className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-primary hover:bg-primary-hover text-white transition-colors shrink-0"
             >
               {t("rfq_detail.quotes_section.btn_upload_second_quote")}
@@ -982,7 +1022,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
           </div>
           {rfq.status !== "cancelled" && (
             <button
-              onClick={() => setIsUploadQuoteOpen(true)}
+              onClick={openUploadQuoteModal}
               className="px-4 py-2 rounded-lg text-xs font-semibold bg-primary hover:bg-primary-hover text-white transition-colors inline-flex items-center gap-1.5"
             >
               <Plus size={14} />
@@ -1552,7 +1592,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
               </div>
               {rfq.status !== "cancelled" && (
                 <button
-                  onClick={() => setIsInviteModalOpen(true)}
+                  onClick={openInviteModal}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white transition-colors shrink-0"
                 >
                   <Plus size={14} />
@@ -1723,15 +1763,21 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
 
       {/* ── Phase 9: Invite Supplier Modal ───────────────────────── */}
       {isInviteModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-          <div className="bg-surface-hover border border-border rounded-lg shadow-xl w-full max-w-md overflow-hidden flex flex-col">
+        <div 
+          onClick={resetInviteModal}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm cursor-pointer"
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()}
+            className="bg-surface-hover border border-border rounded-lg shadow-xl w-full max-w-md overflow-hidden flex flex-col cursor-default"
+          >
             <div className="p-6 border-b border-border flex justify-between items-center bg-surface">
               <h3 className="text-lg font-semibold text-text-primary flex items-center gap-2">
                 <Mail size={18} className="text-blue-500" />
                 {t("rfq_detail.invitations_section.invite_modal_title")}
               </h3>
               <button
-                onClick={() => { setIsInviteModalOpen(false); setInviteError(null); }}
+                onClick={resetInviteModal}
                 className="text-text-muted hover:text-text-primary transition-colors"
               >
                 <X size={20} />
@@ -1806,7 +1852,7 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
               <div className="flex justify-end gap-2 pt-2 border-t border-border">
                 <button
                   type="button"
-                  onClick={() => { setIsInviteModalOpen(false); setInviteError(null); }}
+                  onClick={resetInviteModal}
                   className="px-3.5 py-2 text-xs font-medium text-text-muted hover:text-text-primary"
                 >{t("quotes_page.cancel_btn")}</button>
                 <button
@@ -1834,16 +1880,24 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
 
       {/* Upload Quote Modal */}
       {isUploadQuoteOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-          <div className="bg-surface-hover border border-border rounded-lg shadow-xl w-full max-w-md overflow-hidden flex flex-col">
+        <div 
+          onClick={isUploading ? undefined : resetUploadQuoteModal}
+          className={`fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm ${isUploading ? 'cursor-wait' : 'cursor-pointer'}`}
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()}
+            className="bg-surface-hover border border-border rounded-lg shadow-xl w-full max-w-md overflow-hidden flex flex-col cursor-default"
+          >
             <div className="p-6 border-b border-border flex justify-between items-center bg-surface">
               <h3 className="text-lg font-semibold text-text-primary">{t("rfq_detail.actions.upload_quote")}</h3>
-              <button 
-                onClick={() => setIsUploadQuoteOpen(false)}
-                className="text-text-muted hover:text-text-primary transition-colors"
-              >
-                <X size={20} />
-              </button>
+              {!isUploading && (
+                <button 
+                  onClick={resetUploadQuoteModal}
+                  className="text-text-muted hover:text-text-primary transition-colors"
+                >
+                  <X size={20} />
+                </button>
+              )}
             </div>
             
             <div className="p-6 flex flex-col gap-4">
@@ -1853,150 +1907,161 @@ export default function RFQDetailPage({ params }: { params: Promise<{ id: string
                 </div>
               )}
 
-              {/* Supplier Selection or Creation */}
-              {isCreatingSupplier ? (
-                <div className="flex flex-col gap-3 p-3 bg-surface rounded-lg border border-border">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-semibold text-text-primary uppercase">{t("rfq_detail.new_supplier_details")}</span>
-                    <button 
-                      type="button"
-                      onClick={() => { setIsCreatingSupplier(false); setSupplierCreateError(null); }}
-                      className="text-xs text-text-muted hover:text-text-primary"
-                    >
-                      {t("rfq_detail.modals.btn_back_to_list")}
-                    </button>
-                  </div>
+              {isUploading ? (
+                <QuoteExtractionProgress
+                  isExtracting={isUploading}
+                  fileName={uploadFile?.name}
+                />
+              ) : (
+                <>
+                  {/* Supplier Selection or Creation */}
+                  {isCreatingSupplier ? (
+                    <div className="flex flex-col gap-3 p-3 bg-surface rounded-lg border border-border">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-semibold text-text-primary uppercase">{t("rfq_detail.new_supplier_details")}</span>
+                        <button 
+                          type="button"
+                          onClick={() => { setIsCreatingSupplier(false); setSupplierCreateError(null); }}
+                          className="text-xs text-text-muted hover:text-text-primary"
+                        >
+                          {t("rfq_detail.modals.btn_back_to_list")}
+                        </button>
+                      </div>
 
-                  {supplierCreateError && (
-                    <div className="p-2 rounded bg-danger/10 border border-danger/20 text-danger text-xs font-medium">
-                      {supplierCreateError}
+                      {supplierCreateError && (
+                        <div className="p-2 rounded bg-danger/10 border border-danger/20 text-danger text-xs font-medium">
+                          {supplierCreateError}
+                        </div>
+                      )}
+
+                      <div className="flex flex-col gap-1">
+                        <label className="text-xs font-medium text-text-secondary">{t("rfq_detail.modals.company_name_label")}</label>
+                        <input 
+                          type="text"
+                          placeholder="e.g. Acme Tech Solutions"
+                          value={newSupplierName}
+                          onChange={(e) => setNewSupplierName(e.target.value)}
+                          className="px-2.5 py-1.5 text-xs bg-surface dark:bg-slate-800 border border-border rounded text-text-primary focus:outline-none focus:border-primary"
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="flex flex-col gap-1">
+                          <label className="text-xs font-medium text-text-secondary">{t("rfq_detail.email_label")}</label>
+                          <input 
+                            type="email"
+                            placeholder="contact@acme.com"
+                            value={newSupplierEmail}
+                            onChange={(e) => setNewSupplierEmail(e.target.value)}
+                            className="px-2.5 py-1.5 text-xs bg-surface dark:bg-slate-800 border border-border rounded text-text-primary focus:outline-none focus:border-primary"
+                          />
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <label className="text-xs font-medium text-text-secondary">{t("rfq_detail.phone_label")}</label>
+                          <input 
+                            type="text"
+                            placeholder="+90 555 000 0000"
+                            value={newSupplierPhone}
+                            onChange={(e) => setNewSupplierPhone(e.target.value)}
+                            className="px-2.5 py-1.5 text-xs bg-surface dark:bg-slate-800 border border-border rounded text-text-primary focus:outline-none focus:border-primary"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="flex justify-end gap-2 mt-1">
+                        <button 
+                          type="button"
+                          onClick={() => { setIsCreatingSupplier(false); setSupplierCreateError(null); }}
+                          className="px-3 py-1.5 text-xs text-text-muted hover:text-text-primary"
+                        >
+                          {t("quotes_page.cancel_btn")}
+                        </button>
+                        <button 
+                          type="button"
+                          onClick={handleCreateSupplier}
+                          disabled={isSavingSupplier || !newSupplierName.trim()}
+                          className="flex items-center gap-1.5 bg-primary hover:bg-primary-hover text-white px-3 py-1.5 rounded text-xs font-medium transition-colors disabled:opacity-50"
+                        >
+                          {isSavingSupplier && <Loader2 size={12} className="animate-spin" />}
+                          {t("rfq_detail.modals.btn_save_supplier")}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col gap-2">
+                      <div className="flex items-center justify-between">
+                        <label className="text-sm font-medium text-text-secondary">{t("rfq_detail.modals.select_supplier_label")}</label>
+                        <button 
+                          type="button"
+                          onClick={() => setIsCreatingSupplier(true)}
+                          className="text-xs text-primary hover:text-primary-hover font-medium flex items-center gap-1"
+                        >
+                          <Plus size={14} /> {t("rfq_detail.modals.btn_add_new_supplier")}
+                        </button>
+                      </div>
+                      <select 
+                        value={uploadSupplierId}
+                        onChange={(e) => setUploadSupplierId(e.target.value)}
+                        className="w-full bg-surface dark:bg-slate-800 border border-border rounded px-3 py-2 text-text-primary focus:outline-none focus:border-primary transition-colors text-sm cursor-pointer"
+                      >
+                        <option className="bg-surface text-text-primary dark:bg-slate-800 dark:text-slate-100" value="">{t("rfq_detail.modals.select_supplier_placeholder")}</option>
+                        {suppliers.map(s => (
+                          <option className="bg-surface text-text-primary dark:bg-slate-800 dark:text-slate-100" key={s.id} value={s.id}>{s.name}</option>
+                        ))}
+                      </select>
                     </div>
                   )}
 
-                  <div className="flex flex-col gap-1">
-                    <label className="text-xs font-medium text-text-secondary">{t("rfq_detail.modals.company_name_label")}</label>
-                    <input 
-                      type="text"
-                      placeholder="e.g. Acme Tech Solutions"
-                      value={newSupplierName}
-                      onChange={(e) => setNewSupplierName(e.target.value)}
-                      className="px-2.5 py-1.5 text-xs bg-surface dark:bg-slate-800 border border-border rounded text-text-primary focus:outline-none focus:border-primary"
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2">
-                    <div className="flex flex-col gap-1">
-                      <label className="text-xs font-medium text-text-secondary">{t("rfq_detail.email_label")}</label>
+                  <div className="flex flex-col gap-2">
+                    <label className="text-sm font-medium text-text-secondary">{t("rfq_detail.modals.quote_doc_label")}</label>
+                    <div className="border-2 border-dashed border-border rounded-lg p-6 flex flex-col items-center justify-center text-center group hover:border-primary/50 transition-colors relative cursor-pointer">
                       <input 
-                        type="email"
-                        placeholder="contact@acme.com"
-                        value={newSupplierEmail}
-                        onChange={(e) => setNewSupplierEmail(e.target.value)}
-                        className="px-2.5 py-1.5 text-xs bg-surface dark:bg-slate-800 border border-border rounded text-text-primary focus:outline-none focus:border-primary"
+                        ref={quoteFileInputRef}
+                        type="file" 
+                        accept=".pdf,.xlsx,.png,.jpg,.jpeg"
+                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                        onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
                       />
-                    </div>
-                    <div className="flex flex-col gap-1">
-                      <label className="text-xs font-medium text-text-secondary">{t("rfq_detail.phone_label")}</label>
-                      <input 
-                        type="text"
-                        placeholder="+90 555 000 0000"
-                        value={newSupplierPhone}
-                        onChange={(e) => setNewSupplierPhone(e.target.value)}
-                        className="px-2.5 py-1.5 text-xs bg-surface dark:bg-slate-800 border border-border rounded text-text-primary focus:outline-none focus:border-primary"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="flex justify-end gap-2 mt-1">
-                    <button 
-                      type="button"
-                      onClick={() => { setIsCreatingSupplier(false); setSupplierCreateError(null); }}
-                      className="px-3 py-1.5 text-xs text-text-muted hover:text-text-primary"
-                    >
-                      {t("quotes_page.cancel_btn")}
-                    </button>
-                    <button 
-                      type="button"
-                      onClick={handleCreateSupplier}
-                      disabled={isSavingSupplier || !newSupplierName.trim()}
-                      className="flex items-center gap-1.5 bg-primary hover:bg-primary-hover text-white px-3 py-1.5 rounded text-xs font-medium transition-colors disabled:opacity-50"
-                    >
-                      {isSavingSupplier && <Loader2 size={12} className="animate-spin" />}
-                      {t("rfq_detail.modals.btn_save_supplier")}
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="flex flex-col gap-2">
-                  <div className="flex items-center justify-between">
-                    <label className="text-sm font-medium text-text-secondary">{t("rfq_detail.modals.select_supplier_label")}</label>
-                    <button 
-                      type="button"
-                      onClick={() => setIsCreatingSupplier(true)}
-                      className="text-xs text-primary hover:text-primary-hover font-medium flex items-center gap-1"
-                    >
-                      <Plus size={14} /> {t("rfq_detail.modals.btn_add_new_supplier")}
-                    </button>
-                  </div>
-                  <select 
-                    value={uploadSupplierId}
-                    onChange={(e) => setUploadSupplierId(e.target.value)}
-                    className="w-full bg-surface dark:bg-slate-800 border border-border rounded px-3 py-2 text-text-primary focus:outline-none focus:border-primary transition-colors text-sm cursor-pointer"
-                  >
-                    <option className="bg-surface text-text-primary dark:bg-slate-800 dark:text-slate-100" value="">{t("rfq_detail.modals.select_supplier_placeholder")}</option>
-                    {suppliers.map(s => (
-                      <option className="bg-surface text-text-primary dark:bg-slate-800 dark:text-slate-100" key={s.id} value={s.id}>{s.name}</option>
-                    ))}
-                  </select>
-                </div>
-              )}
-
-              <div className="flex flex-col gap-2">
-                <label className="text-sm font-medium text-text-secondary">{t("rfq_detail.modals.quote_doc_label")}</label>
-                <div className="border-2 border-dashed border-border rounded-lg p-6 flex flex-col items-center justify-center text-center group hover:border-primary/50 transition-colors relative cursor-pointer">
-                  <input 
-                    type="file" 
-                    accept=".pdf,.xlsx,.png,.jpg,.jpeg"
-                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
-                    onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
-                  />
-                  <div className="pointer-events-none flex flex-col items-center justify-center text-center">
-                    <div className={`w-12 h-12 rounded-full flex items-center justify-center mb-4 transition-transform
-                      ${uploadFile ? 'bg-success/20 text-success' : 'bg-surface text-text-muted group-hover:scale-110 group-hover:text-primary'}`}>
-                      <UploadCloud size={24} />
-                    </div>
-                    
-                    {uploadFile ? (
-                      <div className="flex flex-col items-center">
-                        <p className="text-sm font-medium text-text-primary">{uploadFile.name}</p>
-                        <p className="text-xs text-text-muted mt-1">{t("rfq_detail.ready_to_upload")}</p>
+                      <div className="pointer-events-none flex flex-col items-center justify-center text-center">
+                        <div className={`w-12 h-12 rounded-full flex items-center justify-center mb-4 transition-transform
+                          ${uploadFile ? 'bg-success/20 text-success' : 'bg-surface text-text-muted group-hover:scale-110 group-hover:text-primary'}`}>
+                          <UploadCloud size={24} />
+                        </div>
+                        
+                        {uploadFile ? (
+                          <div className="flex flex-col items-center">
+                            <p className="text-sm font-medium text-text-primary">{uploadFile.name}</p>
+                            <p className="text-xs text-text-muted mt-1">{t("rfq_detail.ready_to_upload")}</p>
+                          </div>
+                        ) : (
+                          <>
+                            <p className="text-sm font-medium text-text-primary">{t("rfq_detail.drag_drop_upload")}</p>
+                            <p className="text-xs text-text-muted mt-1">{t("rfq_detail.modals.quote_doc_types_hint")}</p>
+                          </>
+                        )}
                       </div>
-                    ) : (
-                      <>
-                        <p className="text-sm font-medium text-text-primary">{t("rfq_detail.drag_drop_upload")}</p>
-                        <p className="text-xs text-text-muted mt-1">{t("rfq_detail.modals.quote_doc_types_hint")}</p>
-                      </>
-                    )}
+                    </div>
                   </div>
-                </div>
-              </div>
+                </>
+              )}
 
             </div>
             
             <div className="p-4 border-t border-border bg-surface flex justify-end gap-3">
               <button 
-                onClick={() => setIsUploadQuoteOpen(false)}
-                className="px-4 py-2 text-sm font-medium text-text-muted hover:text-text-primary transition-colors disabled:opacity-50"
+                onClick={resetUploadQuoteModal}
+                disabled={isUploading}
+                className="px-4 py-2 text-sm font-medium text-text-muted hover:text-text-primary transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 {t("quotes_page.cancel_btn")}
               </button>
               <button 
                 onClick={handleUploadSupplierQuote}
                 disabled={isUploading || !uploadFile || !uploadSupplierId}
-                className="flex items-center gap-2 bg-primary hover:bg-primary/90 text-white px-4 py-2 rounded text-sm font-medium transition-colors shadow-sm disabled:opacity-50"
+                className="flex items-center gap-2 bg-primary hover:bg-primary/90 text-white px-4 py-2 rounded text-sm font-medium transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {isUploading && <Loader2 size={14} className="animate-spin" />}
-                {isUploading ? t("rfq_detail.modals.btn_uploading_quote") : t("rfq_detail.modals.btn_upload_quote")}
+                {isUploading ? t("rfq_detail.quote_extraction_progress.btn_extracting") : t("rfq_detail.modals.btn_upload_quote")}
               </button>
             </div>
           </div>

@@ -17,6 +17,10 @@ XML Formatı:
   </Tarih_Date>
 """
 
+import asyncio
+import logging
+import ssl
+import time
 import xml.etree.ElementTree as ET
 from datetime import date, datetime, timezone
 from decimal import Decimal
@@ -31,6 +35,29 @@ from app.services.fx.exceptions import (
     FXRateNotFoundError,
 )
 from app.services.fx.schemas import ExchangeRateDTO
+
+logger = logging.getLogger("app.services.fx.tcmb_provider")
+
+
+def create_tcmb_ssl_context() -> ssl.SSLContext:
+    """
+    TCMB web sunucusuna bağlantı için TLS 1.2 uyumluluk SSL bağlamı oluşturur.
+
+    UYUMLULUK NOTU:
+    Bu ayar gözlemlenen ağ davranışı temelinde bir uyumluluk çözümüdür (workaround).
+    TCMB sunucusu (185.98.252.10) bazı ortamlarda TLS 1.3 handshake sırasında
+    zaman aşımına uğramakta (Client Hello paketine cevap dönülmemesi), ancak
+    TLS 1.2 ile derhal (<200ms) yanıt vermektedir. Bu durum TCMB'nin TLS 1.3'ü
+    kasıtlı olarak engellediğinin kesin kanıtı değildir.
+
+    GÜVENLİK İLKELERİ:
+    - Sertifika doğrulaması (verify_mode = CERT_REQUIRED) ve hostname doğrulaması
+      (check_hostname = True) KESİNLİKLE devrede tutulur; asla verify=False kullanılmaz.
+    - Sistem güvenilen kök sertifika deposu (default CA bundle) kullanılır.
+    """
+    ctx = ssl.create_default_context()
+    ctx.maximum_version = ssl.TLSVersion.TLSv1_2
+    return ctx
 
 
 SUPPORTED_RATE_TYPES = (
@@ -135,28 +162,43 @@ def parse_tcmb_xml(
 
 class TCMBExchangeRateProvider(BaseExchangeRateProvider):
     """
-    TCMB resmi HTTP XML servisine bağlanan provider.
+    Türkiye Cumhuriyet Merkez Bankası (TCMB) resmi günlük döviz kurları sağlayıcısı.
+
+    Yalnızca resmi TCMB XML bültenlerinden doğrulanmış kurları çeker.
+    Üretim modunda sahte veya hardcoded kurlara sessizce düşmez;
+    resmi bülten bulunamazsa fail-closed prensibiyle hata fırlatır.
     """
 
     def __init__(
         self,
         base_url: str = "https://www.tcmb.gov.tr/kurlar",
         timeout: float = 5.0,
+        max_retries: int = 2,
     ):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        self.max_retries = max_retries
 
     def _build_url(self, target_date: date | None = None) -> str:
         """İstenen tarih için TCMB XML URL'ini üretir."""
-        if target_date is None:
+        today = datetime.now(timezone.utc).date()
+        if target_date is None or target_date == today:
             return f"{self.base_url}/today.xml"
-        
+
         # Geçmiş tarih formatı: https://www.tcmb.gov.tr/kurlar/YYYYMM/DDMMYYYY.xml
         year_month = target_date.strftime("%Y%m")
         day_month_year = target_date.strftime("%d%m%Y")
         return f"{self.base_url}/{year_month}/{day_month_year}.xml"
 
     async def fetch_rates(self, target_date: date | None = None) -> List[ExchangeRateDTO]:
+        today = datetime.now(timezone.utc).date()
+
+        # Hafta sonu kontrolü: TCMB hafta sonları bülten yayımlamaz
+        if target_date is not None and target_date < today and target_date.weekday() >= 5:
+            raise FXRateNotFoundError(
+                f"TCMB does not publish exchange rate bulletins on weekends ({target_date})."
+            )
+
         url = self._build_url(target_date)
         fetched_at = datetime.now(timezone.utc)
 
@@ -165,18 +207,50 @@ class TCMBExchangeRateProvider(BaseExchangeRateProvider):
             "Accept": "application/xml, text/xml",
         }
 
-        try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                resp = await client.get(url, headers=headers)
-        except httpx.TimeoutException as exc:
-            raise FXProviderError(f"TCMB request timed out connecting to {url}: {exc}") from exc
-        except httpx.RequestError as exc:
-            raise FXProviderError(f"TCMB network communication error: {exc}") from exc
+        # TLS 1.2 uyumluluk transport'u (sertifika doğrulaması kesinlikle aktif)
+        ssl_ctx = create_tcmb_ssl_context()
+        transport = httpx.AsyncHTTPTransport(verify=ssl_ctx)
+        client_timeout = httpx.Timeout(
+            connect=self.timeout,
+            read=self.timeout * 2,
+            write=self.timeout,
+            pool=self.timeout,
+        )
 
-        if resp.status_code == 404:
-            raise FXRateNotFoundError(f"TCMB bulletin not found for date {target_date} (HTTP 404 at {url}).")
+        last_error: Exception | None = None
+        for attempt in range(1, self.max_retries + 1):
+            try:
+                async with httpx.AsyncClient(transport=transport, timeout=client_timeout) as client:
+                    resp = await client.get(url, headers=headers)
 
-        if resp.status_code != 200:
-            raise FXProviderError(f"TCMB server returned unexpected HTTP status {resp.status_code}: {resp.text[:200]}")
+                if resp.status_code == 404:
+                    raise FXRateNotFoundError(
+                        f"TCMB bulletin not found for date {target_date} (HTTP 404 at {url})."
+                    )
 
-        return parse_tcmb_xml(resp.content, fetched_at=fetched_at)
+                if resp.status_code != 200:
+                    raise FXProviderError(
+                        f"TCMB server returned unexpected HTTP status {resp.status_code}: {resp.text[:200]}"
+                    )
+
+                return parse_tcmb_xml(resp.content, fetched_at=fetched_at)
+
+            except (FXRateNotFoundError, FXInvalidDataError):
+                # 404 veya geçersiz XML veri hataları retry edilmez, doğrudan yükseltilir
+                raise
+
+            except (httpx.TimeoutException, httpx.RequestError) as exc:
+                last_error = exc
+                logger.warning(
+                    f"[TCMBProvider] Attempt {attempt}/{self.max_retries} failed for {url}: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+                if attempt < self.max_retries:
+                    await asyncio.sleep(0.5 * attempt)
+
+        # Tüm yeniden denemeler başarısız oldu: fail-closed
+        raise FXProviderError(
+            f"TCMB network communication error after {self.max_retries} attempts: {last_error}"
+        ) from last_error
+
+

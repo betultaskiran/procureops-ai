@@ -15,6 +15,8 @@ Phase 8 Yenilikleri:
      - Eksik ve sıfır değer ayrımı, tutar uyumsuzluğu uyarıları Quote.notes ve metadata'ya kaydedilir.
 """
 
+import logging
+import time
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
@@ -24,6 +26,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.logging import get_correlation_id
 from app.models.quote import Quote, QuoteItem
 from app.models.rfq import ParseStatus, QuoteDocument
 from app.services.extraction.excel_parser import (
@@ -43,6 +46,29 @@ try:
     from google.genai import types as genai_types
 except ImportError:
     genai_types = None
+
+
+logger = logging.getLogger("app.services.extraction")
+
+
+def _extract_token_counts(provider: LLMProvider) -> tuple[int | None, int | None]:
+    """Safely extracts token usage numbers from provider's last_usage_metadata."""
+    metadata = getattr(provider, "last_usage_metadata", None)
+    if metadata is None:
+        return None, None
+    prompt_tokens = getattr(metadata, "prompt_token_count", None)
+    if prompt_tokens is None:
+        prompt_tokens = getattr(metadata, "prompt_tokens", None)
+    if prompt_tokens is None and isinstance(metadata, dict):
+        prompt_tokens = metadata.get("prompt_token_count") or metadata.get("prompt_tokens")
+
+    output_tokens = getattr(metadata, "candidates_token_count", None)
+    if output_tokens is None:
+        output_tokens = getattr(metadata, "output_tokens", None)
+    if output_tokens is None and isinstance(metadata, dict):
+        output_tokens = metadata.get("candidates_token_count") or metadata.get("output_tokens")
+
+    return prompt_tokens, output_tokens
 
 
 EXTRACTION_SYSTEM_PROMPT = """
@@ -85,6 +111,10 @@ class QuoteExtractor:
         """
         QuoteDocument'ten structured Quote çıkarır.
         """
+        correlation_id = get_correlation_id()
+        pdf_duration_ms: float = 0.0
+        gemini_duration_ms: float = 0.0
+
         # ── 1. Processing durumuna al ──────────────────────────────────────────
         quote_document.parse_status = ParseStatus.PROCESSING
         quote_document.parse_error = None
@@ -105,12 +135,14 @@ class QuoteExtractor:
             if suffix == ".xlsx":
                 # Excel ayrıştırma
                 excel_text = extract_text_from_excel(file_path)
+                gemini_t0 = time.monotonic()
                 extraction_result = await self.provider.extract_structured(
                     prompt=excel_text,
                     schema=QuoteExtractionSchema,
                     system_prompt=EXTRACTION_SYSTEM_PROMPT,
                     config=EXTRACTION_CONFIG,
                 )
+                gemini_duration_ms = round((time.monotonic() - gemini_t0) * 1000, 2)
 
             elif suffix in (".png", ".jpg", ".jpeg"):
                 # Resim formatları -> Doğrudan Gemini Multimodal Vision
@@ -118,6 +150,7 @@ class QuoteExtractor:
                 mime_type = "image/png" if suffix == ".png" else "image/jpeg"
                 multimodal_content = self._create_multimodal_part(img_bytes, mime_type)
 
+                gemini_t0 = time.monotonic()
                 extraction_result = await self.provider.extract_structured(
                     prompt=[
                         multimodal_content,
@@ -127,23 +160,31 @@ class QuoteExtractor:
                     system_prompt=EXTRACTION_SYSTEM_PROMPT,
                     config=EXTRACTION_CONFIG,
                 )
+                gemini_duration_ms = round((time.monotonic() - gemini_t0) * 1000, 2)
                 self._append_extraction_note(extraction_result, "Extracted via Multimodal Vision (image)")
 
             elif suffix == ".pdf":
                 # PDF: Önce hızlı ve yerel metin katmanı ayrıştırması
+                pdf_t0 = time.monotonic()
                 try:
                     pdf_text = extract_text_from_pdf(file_path)
+                    pdf_duration_ms = round((time.monotonic() - pdf_t0) * 1000, 2)
+
+                    gemini_t0 = time.monotonic()
                     extraction_result = await self.provider.extract_structured(
                         prompt=pdf_text,
                         schema=QuoteExtractionSchema,
                         system_prompt=EXTRACTION_SYSTEM_PROMPT,
                         config=EXTRACTION_CONFIG,
                     )
+                    gemini_duration_ms = round((time.monotonic() - gemini_t0) * 1000, 2)
                 except ScannedPDFError:
                     # Metin katmanı yok/yetersiz -> Multimodal OCR Fallback
+                    pdf_duration_ms = round((time.monotonic() - pdf_t0) * 1000, 2)
                     pdf_bytes = file_path.read_bytes()
                     multimodal_part = self._create_multimodal_part(pdf_bytes, "application/pdf")
 
+                    gemini_t0 = time.monotonic()
                     extraction_result = await self.provider.extract_structured(
                         prompt=[
                             multimodal_part,
@@ -153,6 +194,7 @@ class QuoteExtractor:
                         system_prompt=EXTRACTION_SYSTEM_PROMPT,
                         config=EXTRACTION_CONFIG,
                     )
+                    gemini_duration_ms = round((time.monotonic() - gemini_t0) * 1000, 2)
                     self._append_extraction_note(
                         extraction_result, "Extracted via Gemini Multimodal OCR fallback (scanned PDF)"
                     )
@@ -160,12 +202,14 @@ class QuoteExtractor:
             elif suffix in (".txt", ".eml"):
                 # Düz metin / e-posta teklifi
                 text_content = file_path.read_text(encoding="utf-8", errors="replace")
+                gemini_t0 = time.monotonic()
                 extraction_result = await self.provider.extract_structured(
                     prompt=text_content,
                     schema=QuoteExtractionSchema,
                     system_prompt=EXTRACTION_SYSTEM_PROMPT,
                     config=EXTRACTION_CONFIG,
                 )
+                gemini_duration_ms = round((time.monotonic() - gemini_t0) * 1000, 2)
 
             else:
                 await self._mark_failed(
@@ -174,6 +218,20 @@ class QuoteExtractor:
                     db,
                 )
                 return None
+
+            prompt_tokens, output_tokens = _extract_token_counts(self.provider)
+            logger.info(
+                "Quote extraction telemetry: correlation_id=%s rfq_id=%s doc_id=%s file_type=%s "
+                "pdf_duration_ms=%.2f gemini_duration_ms=%.2f prompt_tokens=%s output_tokens=%s",
+                correlation_id or "-",
+                quote_document.rfq_id,
+                quote_document.id,
+                suffix,
+                pdf_duration_ms,
+                gemini_duration_ms,
+                prompt_tokens if prompt_tokens is not None else "-",
+                output_tokens if output_tokens is not None else "-",
+            )
 
             # ── 3. Quote ve QuoteItems oluştur (Idempotent: eskileri temizle) ────
             quote = await self._create_quote(
@@ -190,19 +248,48 @@ class QuoteExtractor:
             return quote
 
         except EmptyExcelError as e:
+            logger.warning(
+                "Quote extraction failed (EmptyExcel): correlation_id=%s rfq_id=%s doc_id=%s",
+                correlation_id or "-",
+                quote_document.rfq_id,
+                quote_document.id,
+            )
             await self._mark_failed(quote_document, f"Excel error: {e}", db)
             return None
 
         except ExcelParseError as e:
+            logger.warning(
+                "Quote extraction failed (ExcelParseError): correlation_id=%s rfq_id=%s doc_id=%s",
+                correlation_id or "-",
+                quote_document.rfq_id,
+                quote_document.id,
+            )
             await self._mark_failed(quote_document, f"Excel parse error: {e}", db)
             return None
 
         except PDFParseError as e:
+            logger.warning(
+                "Quote extraction failed (PDFParseError): correlation_id=%s rfq_id=%s doc_id=%s pdf_duration_ms=%.2f",
+                correlation_id or "-",
+                quote_document.rfq_id,
+                quote_document.id,
+                pdf_duration_ms,
+            )
             await self._mark_failed(quote_document, f"PDF parse error: {e}", db)
             return None
 
         except LLMExtractionError as e:
             raw = e.raw_response or ""
+            logger.error(
+                "Quote extraction failed (LLMExtractionError): correlation_id=%s rfq_id=%s doc_id=%s "
+                "pdf_duration_ms=%.2f gemini_duration_ms=%.2f error=%s",
+                correlation_id or "-",
+                quote_document.rfq_id,
+                quote_document.id,
+                pdf_duration_ms,
+                gemini_duration_ms,
+                type(e).__name__,
+            )
             await self._mark_failed(
                 quote_document,
                 f"LLM extraction failed: {e}. Raw: {raw[:200]}",
@@ -211,6 +298,13 @@ class QuoteExtractor:
             return None
 
         except Exception as e:
+            logger.error(
+                "Quote extraction unexpected error: correlation_id=%s rfq_id=%s doc_id=%s error_type=%s",
+                correlation_id or "-",
+                quote_document.rfq_id,
+                quote_document.id,
+                type(e).__name__,
+            )
             await self._mark_failed(
                 quote_document, f"Unexpected error during extraction: {type(e).__name__}: {e}", db
             )

@@ -67,6 +67,9 @@ async def cleanup_database_and_rates():
         await session.commit()
 
 
+CURRENT_TEST_DATE = datetime.now(timezone.utc).date()
+
+
 class DeterministicMockFXProvider(BaseExchangeRateProvider):
     """
     Deterministik test sağlayıcısı.
@@ -88,9 +91,11 @@ class DeterministicMockFXProvider(BaseExchangeRateProvider):
         source: str,
         target: str = "TRY",
         rate: Decimal = Decimal("40.000000"),
-        rate_date: date = date(2026, 10, 20),
+        rate_date: date | None = None,
         rate_type: str = "ForexSelling",
     ):
+        if rate_date is None:
+            rate_date = CURRENT_TEST_DATE
         self.rates.append(
             ExchangeRateDTO(
                 source_currency=source,
@@ -197,7 +202,7 @@ async def test_usd_quote_to_try_budget_conversion():
             prices=[Decimal("10000.00"), Decimal("12000.00")],
         )
 
-        target_date = date(2026, 10, 20)
+        target_date = CURRENT_TEST_DATE
         mock_provider = DeterministicMockFXProvider()
         mock_provider.add_rate("USD", "TRY", rate=Decimal("40.000000"), rate_date=target_date)
 
@@ -233,7 +238,7 @@ async def test_try_quote_to_usd_budget_inverse_conversion():
         )
 
         # USD/TRY = 40.000000 -> Ters Kur: 1 / 40 = 0.025000
-        target_date = date(2026, 10, 20)
+        target_date = CURRENT_TEST_DATE
         mock_provider = DeterministicMockFXProvider()
         mock_provider.add_rate("USD", "TRY", rate=Decimal("40.000000"), rate_date=target_date)
 
@@ -273,7 +278,7 @@ async def test_mixed_eur_and_usd_quotes_compared_under_try_budget():
             prices=[Decimal("10000.00"), Decimal("10000.00")],
         )
 
-        target_date = date(2026, 10, 20)
+        target_date = CURRENT_TEST_DATE
         mock_provider = DeterministicMockFXProvider()
         mock_provider.add_rate("EUR", "TRY", rate=Decimal("44.000000"), rate_date=target_date)
         mock_provider.add_rate("USD", "TRY", rate=Decimal("40.000000"), rate_date=target_date)
@@ -311,7 +316,7 @@ async def test_cross_rate_calculation_using_try_reference():
             prices=[Decimal("10000.00"), Decimal("10000.00")],
         )
 
-        target_date = date(2026, 10, 20)
+        target_date = CURRENT_TEST_DATE
         mock_provider = DeterministicMockFXProvider()
         mock_provider.add_rate("EUR", "TRY", rate=Decimal("44.000000"), rate_date=target_date)
         mock_provider.add_rate("USD", "TRY", rate=Decimal("40.000000"), rate_date=target_date)
@@ -352,7 +357,7 @@ async def test_comparable_tco_ranking_with_different_quote_currencies():
         )
 
         mock_provider = DeterministicMockFXProvider()
-        mock_provider.add_rate("USD", "TRY", rate=Decimal("40.000000"), rate_date=date(2026, 10, 20))
+        mock_provider.add_rate("USD", "TRY", rate=Decimal("40.000000"), rate_date=CURRENT_TEST_DATE)
 
         fx_service = ExchangeRateService(db=session, provider=mock_provider, redis_client=MockRedis())
         engine = DeterministicEngine(db=session, fx_service=fx_service)
@@ -463,7 +468,7 @@ async def test_historical_audit_fields_persisted_on_tco_result():
             prices=[Decimal("5000.00"), Decimal("6000.00")],
         )
 
-        test_date = date(2026, 10, 20)
+        test_date = CURRENT_TEST_DATE
         mock_provider = DeterministicMockFXProvider()
         mock_provider.add_rate("USD", "TRY", rate=Decimal("40.123456"), rate_date=test_date)
 
@@ -624,7 +629,7 @@ async def test_fx_audit_evidence_and_api_schema_serialization():
             prices=[Decimal("10000.00"), Decimal("12000.00")],
         )
 
-        target_date = date(2026, 10, 20)
+        target_date = CURRENT_TEST_DATE
         mock_provider = DeterministicMockFXProvider()
         mock_provider.add_rate("USD", "TRY", rate=Decimal("40.000000"), rate_date=target_date)
 
@@ -640,7 +645,7 @@ async def test_fx_audit_evidence_and_api_schema_serialization():
         for ev in fx_evidence_items:
             assert "TCMB" in ev.source_reference
             assert "ForexSelling" in ev.source_reference
-            assert "2026-10-20" in ev.source_reference
+            assert target_date.isoformat() in ev.source_reference
             assert "Doğrudan Kur: USD/TRY = 40.000000" in ev.content
 
             # Pydantic EvidenceItemResponse şemasına serialize et

@@ -61,6 +61,7 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning(f"Qdrant collection initialization warning: {exc}")
 
+
     yield
 
     logger.info(f"Shutting down {settings.APP_NAME}")

@@ -38,6 +38,7 @@ from app.services.fx.exceptions import (
     FXRateNotFoundError,
 )
 from app.services.fx.policy import (
+    is_rate_fresh,
     resolve_candidate_dates,
     validate_currency_code,
 )
@@ -119,6 +120,13 @@ class ExchangeRateService:
         except Exception as exc:
             logger.warning(f"[FXService] Redis SET error on key '{key}': {exc}.")
 
+    @property
+    def allowed_db_sources(self) -> Tuple[str, ...]:
+        """PostgreSQL arşivinden okunabilecek yetkili kaynaklar."""
+        if isinstance(self.provider, TCMBExchangeRateProvider):
+            return ("TCMB",)
+        return ("TCMB", "MOCK", "DETERMINISTIC_MOCK", "TEST")
+
     async def _db_get(
         self,
         source_currency: str,
@@ -134,7 +142,9 @@ class ExchangeRateService:
                 ExchangeRate.target_currency == target_currency,
                 ExchangeRate.rate_type == rate_type,
                 ExchangeRate.rate_date == rate_date,
+                ExchangeRate.source.in_(self.allowed_db_sources),
             )
+            .order_by(ExchangeRate.created_at.desc())
             .limit(1)
         )
         res = await self.db.execute(stmt)
@@ -230,6 +240,11 @@ class ExchangeRateService:
             return archived
 
         # 3. Sağlayıcıdan Çekim
+        today = datetime.now(timezone.utc).date()
+        # Hafta sonu tarihlerinde TCMB bülten yayımlamadığından harici ağ çağrısı atlanır
+        if cand_date < today and cand_date.weekday() >= 5:
+            return None
+
         try:
             fetched_rates = await self.bulk_fetch_and_store(cand_date)
             matching = next(
@@ -239,12 +254,20 @@ class ExchangeRateService:
                     if r.source_currency == source_currency
                     and r.target_currency == target_currency
                     and r.rate_type == rate_type
-                    and r.rate_date == cand_date
+                    and (
+                        r.rate_date == cand_date
+                        or (cand_date == today and is_rate_fresh(cand_date, r.rate_date))
+                    )
                 ),
                 None,
             )
             if matching:
-                logger.info(f"[FXService] Provider fetch SUCCESS for {source_currency}/{target_currency} on {cand_date}")
+                logger.info(
+                    f"[FXService] Provider fetch SUCCESS for {source_currency}/{target_currency} on {cand_date} "
+                    f"(actual bulletin date: {matching.rate_date})"
+                )
+                if cand_date == today and matching.rate_date != cand_date:
+                    await self._cache_set(cache_key, matching)
                 return matching
         except (FXRateNotFoundError, FXProviderError) as exc:
             logger.debug(f"[FXService] Provider fetch failed for {cand_date}: {exc}.")
@@ -311,12 +334,24 @@ class ExchangeRateService:
             # 1. Doğrudan çift kontrolü (örn. USD -> TRY veya mevcut önbellek kaydı)
             direct_dto = await self._resolve_direct_pair(src, tgt, cand_date, rate_type)
             if direct_dto:
+                if not is_rate_fresh(
+                    requested_date=ref_date,
+                    rate_date=direct_dto.rate_date,
+                    max_lookback_days=max_lookback_days,
+                ):
+                    logger.warning(
+                        f"[FXService] Direct rate {src}/{tgt} from {direct_dto.rate_date} is STALE "
+                        f"for requested date {ref_date}. Skipping candidate date."
+                    )
+                    continue
+
                 if direct_dto.rate <= Decimal("0"):
                     raise CurrencyConversionUnavailableException(
                         f"Geçersiz döviz kuru ({direct_dto.rate}): Kur değeri pozitif olmalıdır."
                     )
                 calc_note = direct_dto.calculation_notes or (
-                    f"[Doğrudan Kur: {src}/{tgt} = {direct_dto.rate} (Tarih: {cand_date}, {direct_dto.source} {rate_type})]"
+                    f"[Doğrudan Kur: {src}/{tgt} = {direct_dto.rate} (Tarih: {direct_dto.rate_date}, "
+                    f"{direct_dto.source} {rate_type}, Bülten: {direct_dto.bulletin_no or 'N/A'})]"
                 )
                 return ExchangeRateDTO(
                     source_currency=direct_dto.source_currency,
@@ -336,6 +371,17 @@ class ExchangeRateService:
             if src == "TRY" and tgt != "TRY":
                 tgt_try_dto = await self._resolve_direct_pair(tgt, "TRY", cand_date, rate_type)
                 if tgt_try_dto:
+                    if not is_rate_fresh(
+                        requested_date=ref_date,
+                        rate_date=tgt_try_dto.rate_date,
+                        max_lookback_days=max_lookback_days,
+                    ):
+                        logger.warning(
+                            f"[FXService] Inverse rate leg {tgt}/TRY from {tgt_try_dto.rate_date} is STALE "
+                            f"for requested date {ref_date}. Skipping candidate date."
+                        )
+                        continue
+
                     if tgt_try_dto.rate <= Decimal("0"):
                         raise CurrencyConversionUnavailableException(
                             f"Geçersiz döviz kuru ({tgt_try_dto.rate}): Kur değeri sıfır veya negatif olamaz."
@@ -349,12 +395,12 @@ class ExchangeRateService:
                         rate=inv_rate,
                         rate_type=rate_type,
                         source=tgt_try_dto.source,
-                        rate_date=cand_date,
+                        rate_date=tgt_try_dto.rate_date,
                         fetched_at=tgt_try_dto.fetched_at,
                         unit=1,
                         bulletin_no=tgt_try_dto.bulletin_no,
                         conversion_path="INVERSE",
-                        calculation_notes=f"[Ters Kur: 1 ÷ {tgt}/TRY ({tgt_try_dto.rate}) = {inv_rate} (Tarih: {cand_date}, {tgt_try_dto.source} {rate_type})]",
+                        calculation_notes=f"[Ters Kur: 1 ÷ {tgt}/TRY ({tgt_try_dto.rate}) = {inv_rate} (Tarih: {tgt_try_dto.rate_date}, {tgt_try_dto.source} {rate_type}, Bülten: {tgt_try_dto.bulletin_no or 'N/A'})]",
                     )
                     await self._cache_set(self._cache_key(src, tgt, cand_date, rate_type), inv_dto)
                     return inv_dto
@@ -366,10 +412,21 @@ class ExchangeRateService:
 
                 # Katı Tarih Tutarlılığı: İki bacağın da AYNI resmi bülten gününde mevcut olması şarttır.
                 if src_try_dto and tgt_try_dto:
-                    if src_try_dto.rate_date != tgt_try_dto.rate_date or src_try_dto.rate_date != cand_date:
+                    if src_try_dto.rate_date != tgt_try_dto.rate_date:
                         logger.warning(
                             f"[FXService] Date mismatch for cross rate legs on {cand_date}: "
                             f"{src}/TRY date={src_try_dto.rate_date}, {tgt}/TRY date={tgt_try_dto.rate_date}. Skipping candidate date."
+                        )
+                        continue
+
+                    if not is_rate_fresh(
+                        requested_date=ref_date,
+                        rate_date=src_try_dto.rate_date,
+                        max_lookback_days=max_lookback_days,
+                    ):
+                        logger.warning(
+                            f"[FXService] Cross rate legs from {src_try_dto.rate_date} are STALE "
+                            f"for requested date {ref_date}. Skipping candidate date."
                         )
                         continue
 
@@ -387,14 +444,14 @@ class ExchangeRateService:
                         rate=cross_rate,
                         rate_type=rate_type,
                         source=src_try_dto.source,
-                        rate_date=cand_date,
+                        rate_date=src_try_dto.rate_date,
                         fetched_at=max(src_try_dto.fetched_at, tgt_try_dto.fetched_at),
                         unit=1,
                         bulletin_no=src_try_dto.bulletin_no,
                         conversion_path="CROSS",
                         calculation_notes=(
                             f"[Çapraz Kur: {src}/TRY ({src_try_dto.rate}) ÷ {tgt}/TRY ({tgt_try_dto.rate}) = "
-                            f"{cross_rate} (Ortak Tarih: {cand_date}, {src_try_dto.source} {rate_type})]"
+                            f"{cross_rate} (Ortak Tarih: {src_try_dto.rate_date}, {src_try_dto.source} {rate_type}, Bülten: {src_try_dto.bulletin_no or 'N/A'})]"
                         ),
                     )
                     await self._cache_set(self._cache_key(src, tgt, cand_date, rate_type), cross_dto)

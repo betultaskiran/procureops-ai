@@ -128,10 +128,19 @@ class AgentService:
                 tco = next((t for t in analysis.tco_results if t.quote_id == quote.id), None)
                 missing = TCOCalculator.get_missing_financial_fields(quote)
                 warnings = [c.notes for c in checks if c.result == ComplianceResult.WARNING]
+                tco_val = (
+                    float(tco.converted_total_tco)
+                    if (tco and tco.converted_total_tco is not None)
+                    else (float(tco.total_tco) if tco else 0.0)
+                )
                 eligible_quotes.append({
                     "quote_id": str(quote.id),
                     "supplier_name": quote.supplier.name,
-                    "total_tco": float(tco.total_tco) if tco else 0.0,
+                    "total_tco": tco_val,
+                    "original_tco": float(tco.total_tco) if tco else 0.0,
+                    "currency": quote.currency,
+                    "target_currency": tco.target_currency if tco else quote.currency,
+                    "exchange_rate": float(tco.exchange_rate) if (tco and tco.exchange_rate) else 1.0,
                     "delivery_days": quote.delivery_days,
                     "warranty_months": quote.warranty_months,
                     "payment_terms": quote.payment_terms,
